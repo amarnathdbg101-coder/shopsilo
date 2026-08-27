@@ -23,7 +23,7 @@ func main() {
 
 	switch os.Args[1]{
 	case "up":
-		if err := m.Steps(1); err != nil && err != migrate.ErrNoChange{
+		if err := m.Up(); err != nil && err != migrate.ErrNoChange{
 		log.Fatal(err)
 	}
 	case "down":

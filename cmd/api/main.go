@@ -1,20 +1,27 @@
 package main
 
 import (
+	"log"
 	"net/http"
 	"shopMe/internal/routes"
 	"shopMe/internal/utils"
 )
 
-
-
 func main() {
+	cfg := utils.MustLoad()
 
-	db := utils.ConnectDB(utils.MustLoad().DatabaseUrl)
+	// 1. Connect to Neon DB
+	db := utils.ConnectDB(cfg.DatabaseUrl)
+	defer db.Close()
 
-	routes := routes.RouteSetup(db)
+	// 2. Initialize Firebase Admin SDK
+	firebaseAuth := utils.InitFirebase()
+
+	// 3. Setup Routes
+	router := routes.RouteSetup(db, firebaseAuth)
    
-    if err:= http.ListenAndServe(":" + utils.MustLoad().Port, routes); err != nil{
-		return
+	log.Printf("Server starting on port %s...\n", cfg.Port)
+	if err := http.ListenAndServe(":" + cfg.Port, router); err != nil {
+		log.Fatalf("Server failed to start: %v\n", err)
 	}
 }
