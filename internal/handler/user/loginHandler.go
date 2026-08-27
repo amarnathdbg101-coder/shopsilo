@@ -55,7 +55,7 @@ func (uh UserHandler) Login(w http.ResponseWriter, r *http.Request) {
         "userId": userID,              // 👈 important
         "name":   userName,
         "email":  userEmail,
-        "exp":    time.Now().Add(time.Hour * 24).Unix(),
+        "exp":    time.Now().Add(time.Hour *720).Unix(),
     }
 
     tokens := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
