@@ -25,7 +25,7 @@ func MustLoad() Config {
 	if env == "" {
 		log.Fatal("env is required")
 	}
-	database := os.Getenv("DATABASEURL")
+	database := os.Getenv("DATABASE_URL")
 	if database == "" {
 		log.Fatal("databaseUrl is required")
 	}

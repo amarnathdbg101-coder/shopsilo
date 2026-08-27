@@ -14,7 +14,7 @@ func main() {
 
 	routes := routes.RouteSetup(db)
    
-    if err:= http.ListenAndServe(":8080", routes); err != nil{
+    if err:= http.ListenAndServe(":" + utils.MustLoad().Port, routes); err != nil{
 		return
 	}
 }
