@@ -1,0 +1,21 @@
+version: '3'
+tasks:
+  run:
+    desc: run the API SERVER
+    cmds:
+      - ./bin/api.exe
+
+  build:
+    desc: build binary file
+    cmds:
+      - go build -o bin/api.exe ./cmd/api
+
+  migrate-up:
+    desc: migrate up
+    cmds:
+      - go run ./cmd/migrate up
+
+  migrate-down:
+    desc: migrate down
+    cmds:
+      - go run ./cmd/migrate down
