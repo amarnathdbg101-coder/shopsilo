@@ -1,27 +1,26 @@
 package main
 
 import (
-	"log"
+	"fmt"
 	"net/http"
+	"shopMe/internal/logger"
 	"shopMe/internal/routes"
 	"shopMe/internal/utils"
+
+	"go.uber.org/zap"
 )
 
 func main() {
+	
 	cfg := utils.MustLoad()
-
-	// 1. Connect to Neon DB
-	db := utils.ConnectDB(cfg.DatabaseUrl)
+	log := logger.New()
+	db := utils.ConnectDB(cfg.DbUrl)
 	defer db.Close()
 
-	// 2. Initialize Firebase Admin SDK
-	firebaseAuth := utils.InitFirebase()
+	router := routes.RouteSetup(db)
 
-	// 3. Setup Routes
-	router := routes.RouteSetup(db, firebaseAuth)
-   
-	log.Printf("Server starting on port %s...\n", cfg.Port)
-	if err := http.ListenAndServe(":" + cfg.Port, router); err != nil {
-		log.Fatalf("Server failed to start: %v\n", err)
+	log.Info("server starting",zap.Int("port",cfg.Port))
+	if err := http.ListenAndServe(fmt.Sprintf(":%d",cfg.Port), router); err != nil && err != http.ErrServerClosed {
+		log.Fatal("server failed", zap.Error(err))
 	}
 }

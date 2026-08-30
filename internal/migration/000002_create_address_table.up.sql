@@ -1,5 +1,5 @@
 
-CREATE TABLE addresses (
+CREATE TABLE if NOT EXISTS addresses (
     id SERIAL PRIMARY KEY,
     village   VARCHAR(100),
     post      VARCHAR(100),

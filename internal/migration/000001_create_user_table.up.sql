@@ -1,6 +1,7 @@
-CREATE TABLE IF NOT EXISTS users(
+CREATE TABLE if NOT EXISTS  products(
 	id serial primary key,
 	name text null,
-	email text null,
-	password text null
+	title text null,
+	price float,
+	create_at timestamp default now()
 );

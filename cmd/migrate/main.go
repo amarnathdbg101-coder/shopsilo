@@ -16,7 +16,7 @@ func main() {
 		return
 	}
 
-	m, err := migrate.New("file://internal/migration",utils.MustLoad().DatabaseUrl)
+	m, err := migrate.New("file://internal/migration",utils.MustLoad().DbUrl)
 	if err != nil{
 		log.Fatal(err)
 	}

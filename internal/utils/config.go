@@ -1,43 +1,33 @@
 package utils
 
 import (
+	"fmt"
 	"log"
-	"os"
 
-	"github.com/joho/godotenv"
+	"github.com/knadh/koanf/parsers/yaml"
+	"github.com/knadh/koanf/providers/file"
+	"github.com/knadh/koanf/v2"
 )
 
+var k = koanf.New(".")
+
 type Config struct {
-	Port        string
-	Env         string
-	DatabaseUrl string
-	JwtSecret   string
+	Port        int    `koanf:"port"`
+	Env         string `koanf:"env"`
+	DbUrl string `koanf:"dburl"`
+	JwtSecret   string `koanf:"jwt_secret"`
 }
 
 func MustLoad() Config {
-	_ = godotenv.Load()
-
-	port := os.Getenv("PORT")
-	if port == "" {
-		log.Fatal("Port is required")
-	}
-	env := os.Getenv("ENV")
-	if env == "" {
-		log.Fatal("env is required")
-	}
-	database := os.Getenv("DATABASE_URL")
-	if database == "" {
-		log.Fatal("databaseUrl is required")
-	}
-	jwtsecret := os.Getenv("JWT_SECRET")
-	if jwtsecret == ""{
-		log.Fatal("jwt secret is required")
+	if err := k.Load(file.Provider("config.yaml"), yaml.Parser()); err != nil {
+		log.Fatalf("error loading  config :%v", err)
 	}
 
-	return Config{
-		Port:        port,
-		Env:         env,
-		DatabaseUrl: database,
-		JwtSecret: jwtsecret,
+	var cfg Config
+	if err := k.Unmarshal("", &cfg); err != nil {
+		log.Fatalf("error unmarshalling config: %v", err)
 	}
+
+	fmt.Printf("loaded database url:%v",cfg.DbUrl)
+	return cfg
 }
