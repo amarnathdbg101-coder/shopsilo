@@ -4,12 +4,14 @@ go 1.26.5
 
 require (
 	github.com/go-chi/chi/v5 v5.3.2
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/knadh/koanf/parsers/yaml v1.1.1
 	github.com/knadh/koanf/providers/env v1.1.0
 	github.com/knadh/koanf/v2 v2.3.6
 	go.uber.org/zap v1.28.0
+	golang.org/x/crypto v0.45.0
 )
 
 require github.com/kr/pretty v0.3.1 // indirect

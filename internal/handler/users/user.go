@@ -24,8 +24,6 @@ type LoginInput struct {
 
 type LoginOutput struct {
 	UserId   int
-	Name     string
-	Email    string
 	JwtToken string
 }
 

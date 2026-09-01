@@ -17,7 +17,7 @@ type Config struct {
 	Port        int    `koanf:"port"`
 	Env         string `koanf:"env"`
 	DbUrl string `koanf:"dburl"`
-	JwtSecret   string `koanf:"jwt_secret"`
+	Jwt   string `koanf:"jwt"`
 }
 
 func MustLoad() Config {
