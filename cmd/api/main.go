@@ -19,8 +19,8 @@ func main() {
 
 	router := routes.RouteSetup(db, logger)
 
-	logger.Info("server starting", zap.Int("port", cfg.Port))
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", cfg.Port), router); err != nil && err != http.ErrServerClosed {
+	logger.Info("server starting", zap.String("port",cfg.Port))
+	if err := http.ListenAndServe(fmt.Sprintf(":%s", cfg.Port), router); err != nil && err != http.ErrServerClosed {
 		logger.Fatal("server failed", zap.Error(err))
 	}
 }
