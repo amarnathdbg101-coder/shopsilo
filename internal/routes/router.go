@@ -2,6 +2,7 @@ package routes
 
 import (
 	"shopMe/internal/handler/products"
+	"shopMe/internal/handler/shop"
 	"shopMe/internal/handler/users"
 	"shopMe/internal/middleware"
 
@@ -13,6 +14,7 @@ import (
 func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	ph := products.NewProductHandler(db, logger)
 	uh := users.NewUserHandler(db, logger)
+	sh := shop.NewShopHandler(db,logger)
 	r := chi.NewRouter()
 
 	// Group for product
@@ -36,6 +38,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/profile",uh.GetProfile)
 		r.Put("/profile",uh.UpdateProfile)
 		r.Put("/profile/password",uh.ChangePassword)
+		r.Post("/shop/create",sh.CreateShop)
 	})
 
 	return r
