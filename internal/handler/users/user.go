@@ -33,3 +33,9 @@ type RegisterInput struct {
 	Email    string
 	Password string
 }
+
+type ProfileOutput struct {
+	UserId int
+	Name string
+	Email string
+}

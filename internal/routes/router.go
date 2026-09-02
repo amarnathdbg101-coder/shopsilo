@@ -3,6 +3,7 @@ package routes
 import (
 	"shopMe/internal/handler/products"
 	"shopMe/internal/handler/users"
+	"shopMe/internal/middleware"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -29,6 +30,12 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/", uh.Login)
 		r.Delete("/:id", uh.DeleteAccount)
 		r.Put("/:id", uh.ForgetPassword)
+	})
+
+	// Group for protected routes
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.JWTAuthMiddleware)
+		r.Get("/profile",uh.GetProfile)
 	})
 
 	return r
