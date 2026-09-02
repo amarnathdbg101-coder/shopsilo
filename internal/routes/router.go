@@ -29,13 +29,13 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Post("/", uh.Register)
 		r.Get("/", uh.Login)
 		r.Delete("/:id", uh.DeleteAccount)
-		r.Put("/:id", uh.ForgetPassword)
 	})
 
 	// Group for protected routes
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.JWTAuthMiddleware)
 		r.Get("/profile",uh.GetProfile)
+		r.Put("/password",uh.ChangePassword)
 	})
 
 	return r
