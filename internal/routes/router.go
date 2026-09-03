@@ -14,31 +14,41 @@ import (
 func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	ph := products.NewProductHandler(db, logger)
 	uh := users.NewUserHandler(db, logger)
-	sh := shop.NewShopHandler(db,logger)
+	sh := shop.NewShopHandler(db, logger)
+
 	r := chi.NewRouter()
 
-	// Group for product
-	r.Route("/products", func(r chi.Router) {
-		r.Post("/", ph.AddProduct)
-		r.Get("/:id", ph.GetProduct)
-		r.Get("/", ph.GetProducts)
-		r.Put("/:id", ph.UpdateProduct)
-		r.Delete("/:id", ph.DeleteProduct)
+	// Public routes
+	r.Route("/auth", func(r chi.Router) {
+		r.Post("/register", uh.Register)
+		r.Post("/login", uh.Login) // login should be POST
 	})
 
-	// Group for users
-	r.Route("/users", func(r chi.Router) {
-		r.Post("/", uh.Register)
-		r.Get("/", uh.Login)
-	})
-
-	// Group for protected routes
+	// Protected routes (JWT required)
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.JWTAuthMiddleware)
-		r.Get("/profile",uh.GetProfile)
-		r.Put("/profile",uh.UpdateProfile)
-		r.Put("/profile/password",uh.ChangePassword)
-		r.Post("/shop/create",sh.CreateShop)
+
+		// Profile
+		r.Route("/profile", func(r chi.Router) {
+			r.Get("/", uh.GetProfile)
+			r.Put("/", uh.UpdateProfile)
+			r.Put("/password", uh.ChangePassword)
+		})
+
+		// Shop
+		r.Route("/shops", func(r chi.Router) {
+			r.Post("/", sh.CreateShop)
+
+		})
+
+		// Product 
+		r.Route("/products", func(r chi.Router) {
+			r.Post("/", ph.AddProduct)
+			r.Get("/{id}", ph.GetProduct)
+			r.Get("/", ph.GetProducts)
+			r.Put("/{id}", ph.UpdateProduct)
+			r.Delete("/{id}", ph.DeleteProduct)
+		})
 	})
 
 	return r

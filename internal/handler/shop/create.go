@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"shopMe/internal/middleware"
+	"shopMe/internal/reuseable"
 )
 
 type Input struct {
@@ -24,7 +25,7 @@ func (sh *ShopHandler) CreateShop(w http.ResponseWriter, r *http.Request) {
 	var input Input
 	err := json.NewDecoder(r.Body).Decode(&input)
 	if err != nil {
-		http.Error(w, `{"status":"error","message":"invalid input"}`, http.StatusBadRequest)
+		reuseable.Error(w,http.StatusBadRequest,"invalid input","Invalid data")
 		return
 	}
 
@@ -33,7 +34,7 @@ func (sh *ShopHandler) CreateShop(w http.ResponseWriter, r *http.Request) {
 	query1 := `insert into addresses (village,post,district,state,pincode,landmark,latitude,longitude) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id`
 	err = sh.db.QueryRow(r.Context(), query1, input.Village, input.Post, input.District, input.State, input.Pincode, input.Landmark, input.Latitude, input.Longitude).Scan(&addressId)
 	if err != nil {
-		http.Error(w, `{"status":"error","message":"address insert failed"}`, http.StatusInternalServerError)
+		reuseable.Error(w,http.StatusInternalServerError,"address insert failed","internal_error")
 		return
 	}
 
@@ -42,11 +43,11 @@ func (sh *ShopHandler) CreateShop(w http.ResponseWriter, r *http.Request) {
 	query2 := `insert into shops (owner_id,name,address_id,timing) values ($1,$2,$3,$4) returning id`
 	err = sh.db.QueryRow(r.Context(), query2, userId, input.ShopName, addressId, input.Timing).Scan(&shopId)
 	if err != nil {
-		http.Error(w, `{"status":"error","message":"shop insert failed"}`, http.StatusInternalServerError)
+		reuseable.Error(w,http.StatusInternalServerError,"Shop data insert failed","internal_error")
 		return
 	}
 
-	err = json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status":    "success",
 		"message":   "shop created successfully",
 		"shopId":    shopId,
@@ -54,8 +55,4 @@ func (sh *ShopHandler) CreateShop(w http.ResponseWriter, r *http.Request) {
 		"timing":    input.Timing,
 		"addressId": addressId,
 	})
-	if err != nil {
-		http.Error(w, `{"status":"error","message":"response encoding failed"}`, http.StatusInternalServerError)
-		return
-	}
 }
