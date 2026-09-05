@@ -22,28 +22,26 @@ func (ph *ProductHandler) GetProducts(w http.ResponseWriter, r *http.Request) {
 	shopIDStr := r.URL.Query().Get("shop_id")
 	category := r.URL.Query().Get("category")
 
-	query := `SELECT id, shop_id, name, COALESCE(title, ''), price, mrp, COALESCE(category, ''), COALESCE(description, '') FROM products WHERE 1=1`
-	var args []interface{}
-	argCount := 1
-
+	shopID := 0
 	if shopIDStr != "" {
-		shopID, err := strconv.Atoi(shopIDStr)
-		if err == nil {
-			query += ` AND shop_id = $` + strconv.Itoa(argCount)
-			args = append(args, shopID)
-			argCount++
+		if id, err := strconv.Atoi(shopIDStr); err == nil {
+			shopID = id
 		}
 	}
 
-	if category != "" {
-		query += ` AND category = $` + strconv.Itoa(argCount)
-		args = append(args, category)
-		argCount++
-	}
+	query := `
+		SELECT p.id, p.shop_id, p.name, COALESCE(p.title, ''), p.price, p.mrp,
+		       COALESCE(p.category, ''), COALESCE(p.description, ''),
+		       COALESCE(ARRAY_AGG(pi.image_url) FILTER (WHERE pi.image_url IS NOT NULL), '{}') AS images
+		FROM products p
+		LEFT JOIN product_images pi ON p.id = pi.product_id
+		WHERE ($1::int = 0 OR p.shop_id = $1)
+		  AND ($2::text = '' OR p.category = $2)
+		GROUP BY p.id
+		ORDER BY p.id DESC
+	`
 
-	query += ` ORDER BY id DESC`
-
-	rows, err := ph.db.Query(r.Context(), query, args...)
+	rows, err := ph.db.Query(r.Context(), query, shopID, category)
 	if err != nil {
 		reuse.Error(w, http.StatusInternalServerError, reuse.ErrDBFailure, "Failed to fetch products: "+err.Error())
 		return
@@ -54,20 +52,13 @@ func (ph *ProductHandler) GetProducts(w http.ResponseWriter, r *http.Request) {
 
 	for rows.Next() {
 		var p ProductResponse
-		err := rows.Scan(&p.ID, &p.ShopID, &p.Name, &p.Title, &p.Price, &p.Mrp, &p.Category, &p.Description)
+		var imgArray []string
+		err := rows.Scan(
+			&p.ID, &p.ShopID, &p.Name, &p.Title, &p.Price, &p.Mrp,
+			&p.Category, &p.Description, &imgArray,
+		)
 		if err == nil {
-			// Fetch images
-			p.Images = []string{}
-			imgRows, errImg := ph.db.Query(r.Context(), "SELECT image_url FROM product_images WHERE product_id = $1", p.ID)
-			if errImg == nil {
-				for imgRows.Next() {
-					var url string
-					if err := imgRows.Scan(&url); err == nil {
-						p.Images = append(p.Images, url)
-					}
-				}
-				imgRows.Close()
-			}
+			p.Images = imgArray
 			products = append(products, p)
 		}
 	}
