@@ -6,36 +6,13 @@ import (
 )
 
 type UserHandler struct {
-	db *pgxpool.Pool
+	db     *pgxpool.Pool
 	logger *zap.Logger
 }
 
-func NewUserHandler(db *pgxpool.Pool,logger *zap.Logger)*UserHandler{
+func NewUserHandler(db *pgxpool.Pool, logger *zap.Logger) *UserHandler {
 	return &UserHandler{
-		db: db,
+		db:     db,
 		logger: logger,
 	}
-}
-
-type LoginInput struct {
-	Email    string
-	Password string
-}
-
-type LoginOutput struct {
-	UserId   int
-	JwtToken string
-}
-
-type RegisterInput struct {
-	UserId   int
-	Name     string
-	Email    string
-	Password string
-}
-
-type ProfileOutput struct {
-	UserId int
-	Name string
-	Email string
 }

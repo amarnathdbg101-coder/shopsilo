@@ -1,27 +1,30 @@
 package users
 
 import (
-	"encoding/json"
 	"net/http"
 	"shopMe/internal/middleware"
-	"shopMe/internal/reuseable"
+	"shopMe/internal/reuse"
 )
 
-func (uh *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request){
-	
+type profileOutput struct {
+	UserID int
+	Name   string
+	Email  string
+}
+
+func (uh *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
+
 	userId := r.Context().Value(middleware.UserIDContextKey).(int)
 
-	var output ProfileOutput
+	var output profileOutput
 	qurey := `select id,name,email from users where id=$1`
-	err := uh.db.QueryRow(r.Context(),qurey,userId).Scan(&output.UserId,&output.Name,&output.Email)
+	err := uh.db.QueryRow(r.Context(), qurey, userId).Scan(&output.UserID, &output.Name, &output.Email)
 	if err != nil {
-		reuseable.Error(w,http.StatusNotFound,"User not found","Data not found")
+		reuse.Error(w, http.StatusNotFound, reuse.ErrNotFound, "User not found")
 		return
 	}
 
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"status":"success",
-		"message":"Profile fetch successfully",
+	reuse.Success(w, "Profile get successfully", map[string]any{
 		"data": output,
 	})
 }

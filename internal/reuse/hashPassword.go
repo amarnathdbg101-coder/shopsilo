@@ -1,4 +1,4 @@
-package reuseable
+package reuse
 
 import "golang.org/x/crypto/bcrypt"
 

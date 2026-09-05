@@ -1,4 +1,4 @@
-package reuseable
+package reuse
 
 import (
 	"shopMe/internal/utils"

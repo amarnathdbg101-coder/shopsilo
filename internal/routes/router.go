@@ -33,21 +33,26 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 			r.Get("/", uh.GetProfile)
 			r.Put("/", uh.UpdateProfile)
 			r.Put("/password", uh.ChangePassword)
+			r.Post("/images",uh.UploadProfileImage)
 		})
 
 		// Shop
 		r.Route("/shops", func(r chi.Router) {
 			r.Post("/", sh.CreateShop)
+			r.Delete("/", sh.DeleteShop)
+			r.Put("/", sh.UpdateShop)
+			r.Post("/images", sh.UploadImage)
 
 		})
 
-		// Product 
+		// Product
 		r.Route("/products", func(r chi.Router) {
 			r.Post("/", ph.AddProduct)
 			r.Get("/{id}", ph.GetProduct)
 			r.Get("/", ph.GetProducts)
 			r.Put("/{id}", ph.UpdateProduct)
 			r.Delete("/{id}", ph.DeleteProduct)
+			r.Post("/images", ph.UploadImage)
 		})
 	})
 

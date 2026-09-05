@@ -16,16 +16,3 @@ func NewProductHandler(db *pgxpool.Pool,logger *zap.Logger)*ProductHandler{
 		logger: logger,
 	}
 }
-
-type ProductAddInput struct {
-	ProuductId int
-	Name string
-	Price float64
-	Title string
-}
-
-type ProductUpdateInput struct {
-	Name string
-	Price string
-	Title string
-}

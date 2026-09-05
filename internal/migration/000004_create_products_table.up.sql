@@ -2,8 +2,11 @@
 CREATE TABLE IF NOT EXISTS products (
     id SERIAL PRIMARY KEY,
     shop_id INT NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
-    name VARCHAR(150) NOT NULL,
+    name VARCHAR(150) unique NOT NULL,
     title VARCHAR(200),
     price NUMERIC(10,2) NOT NULL,
+    mrp NUMERIC(10,2) NOT NULL,
+    category VARCHAR(100),
+    description TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
