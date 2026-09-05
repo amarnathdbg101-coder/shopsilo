@@ -21,8 +21,14 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	// Public routes
 	r.Route("/auth", func(r chi.Router) {
 		r.Post("/register", uh.Register)
-		r.Post("/login", uh.Login) // login should be POST
+		r.Post("/login", uh.Login)
 	})
+
+	// Public Browsing (Shops & Products)
+	r.Get("/shops", sh.GetShops)
+	r.Get("/shops/{id}", sh.GetShopByID)
+	r.Get("/products", ph.GetProducts)
+	r.Get("/products/{id}", ph.GetProduct)
 
 	// Protected routes (JWT required)
 	r.Group(func(r chi.Router) {
@@ -33,23 +39,21 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 			r.Get("/", uh.GetProfile)
 			r.Put("/", uh.UpdateProfile)
 			r.Put("/password", uh.ChangePassword)
-			r.Post("/images",uh.UploadProfileImage)
+			r.Post("/images", uh.UploadProfileImage)
 		})
 
-		// Shop
+		// Shop Management
 		r.Route("/shops", func(r chi.Router) {
+			r.Get("/my-shop", sh.GetMyShop)
 			r.Post("/", sh.CreateShop)
 			r.Delete("/", sh.DeleteShop)
 			r.Put("/", sh.UpdateShop)
 			r.Post("/images", sh.UploadImage)
-
 		})
 
-		// Product
+		// Product Management
 		r.Route("/products", func(r chi.Router) {
 			r.Post("/", ph.AddProduct)
-			r.Get("/{id}", ph.GetProduct)
-			r.Get("/", ph.GetProducts)
 			r.Put("/{id}", ph.UpdateProduct)
 			r.Delete("/{id}", ph.DeleteProduct)
 			r.Post("/images", ph.UploadImage)
