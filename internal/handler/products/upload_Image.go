@@ -3,8 +3,8 @@ package products
 import (
 	"fmt"
 	"net/http"
-	"os"
 	"shopMe/internal/reuse"
+	"shopMe/internal/utils"
 	"strconv"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -70,7 +70,7 @@ func (ph *ProductHandler) UploadImage(w http.ResponseWriter, r *http.Request) {
 		objectKey := fmt.Sprintf("products/%d_%s", productID, fileHeader.Filename)
 
 		_, err = s3Client.PutObject(&s3.PutObjectInput{
-			Bucket: aws.String(os.Getenv("R2_BUCKET")),
+			Bucket: aws.String(utils.MustLoad().Bucket),
 			Key:    aws.String(objectKey),
 			Body:   file,
 			ACL:    aws.String("public-read"),
@@ -81,8 +81,8 @@ func (ph *ProductHandler) UploadImage(w http.ResponseWriter, r *http.Request) {
 		}
 
 		fileURL := fmt.Sprintf("%s/%s/%s",
-			os.Getenv("R2_ENDPOINT"),
-			os.Getenv("R2_BUCKET"),
+			utils.MustLoad().Endpoint,
+			utils.MustLoad().Bucket,
 			objectKey,
 		)
 
