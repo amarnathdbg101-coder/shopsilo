@@ -3,8 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
-	"shopMe/internal/logger"
-	"shopMe/internal/routes"
+	"shopMe/internal/handler/routes"
 	"shopMe/internal/utils"
 
 	"go.uber.org/zap"
@@ -12,10 +11,9 @@ import (
 
 func main() {
 
-	logger := logger.New()
-	db,_ := utils.ConnectDB(utils.MustLoad().DbUrl)
+	logger := utils.New()
+	db, _ := utils.ConnectDB(utils.MustLoad().DbUrl)
 	defer db.Close()
-
 	router := routes.RouteSetup(db, logger)
 
 	logger.Info("server starting", zap.String("port", utils.MustLoad().Port))
