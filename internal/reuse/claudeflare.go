@@ -1,7 +1,7 @@
 package reuse
 
 import (
-	"os"
+	"shopMe/internal/utils"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -12,10 +12,10 @@ import (
 func NewR2Client() *s3.S3 {
 	sess := session.Must(session.NewSession(&aws.Config{
 		Region:   aws.String("auto"),
-		Endpoint: aws.String(os.Getenv("R2_ENDPOINT")),
+		Endpoint: aws.String(utils.MustLoad().Endpoint),
 		Credentials: credentials.NewStaticCredentials(
-			os.Getenv("R2_ACCESS_KEY"),
-			os.Getenv("R2_SECRET_KEY"),
+			utils.MustLoad().AccessKey,
+			utils.MustLoad().SecretKey,
 			"",
 		),
 	}))

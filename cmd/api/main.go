@@ -12,15 +12,14 @@ import (
 
 func main() {
 
-	cfg := utils.MustLoad()
 	logger := logger.New()
-	db := utils.ConnectDB(cfg.DbUrl)
+	db,_ := utils.ConnectDB(utils.MustLoad().DbUrl)
 	defer db.Close()
 
 	router := routes.RouteSetup(db, logger)
 
-	logger.Info("server starting", zap.String("port",cfg.Port))
-	if err := http.ListenAndServe(fmt.Sprintf(":%s", cfg.Port), router); err != nil && err != http.ErrServerClosed {
+	logger.Info("server starting", zap.String("port", utils.MustLoad().Port))
+	if err := http.ListenAndServe(fmt.Sprintf(":%s", utils.MustLoad().Port), router); err != nil && err != http.ErrServerClosed {
 		logger.Fatal("server failed", zap.Error(err))
 	}
 }
