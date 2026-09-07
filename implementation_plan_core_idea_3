@@ -1,0 +1,82 @@
+# Implementation Plan: Smart Inventory & Wholesale Buying Sheet (Phase A)
+
+Implement high-efficiency Inventory Management, Low-Stock Alerts, and an automated Wholesale Re-order PDF Purchase Sheet generator for physical retail store owners.
+
+---
+
+## Objectives
+
+1. **Stock In / Stock Out Adjustments**:
+   - Dukaandaar can quickly adjust inventory (+50 on receiving fresh wholesale stock, or -2 for damaged/audited goods) with threshold customization.
+2. **Low Stock Alert Dashboard**:
+   - Immediate visibility into products where available stock is below the threshold (`quantity <= low_stock_threshold`).
+   - Displays suggested re-order quantity.
+3. **Wholesale Re-Order PDF Purchase Sheet**:
+   - 1-click professional PDF purchase order sheet (`GET /shops/me/inventory/reorder-sheet.pdf`).
+   - Dukaandaar can print or share directly with their wholesale supplier/distributor.
+4. **Enhanced Product Search & Sorting**:
+   - Sort by: `price_asc`, `price_desc`, `newest`, `stock_desc`.
+   - Search by: name, SKU, tags.
+
+---
+
+## Proposed Changes
+
+### 1. DTO Layer
+#### [NEW] [dto/inventory.go](file:///c:/Go/shopMe/internal/handler/dto/inventory.go)
+- `AdjustStockRequest`: `product_id`, `adjustment`, `low_stock_threshold`, `notes`.
+- `LowStockProduct`: `product_id`, `name`, `sku`, `current_stock`, `reserved_stock`, `available_stock`, `low_stock_threshold`, `price`, `suggested_reorder_qty`.
+- `LowStockResponse`: `total_low_stock_items`, `items`.
+
+#### [MODIFY] [dto/product.go](file:///c:/Go/shopMe/internal/handler/dto/product.go)
+- Support additional sort modes (`stock_desc`, `oldest`).
+
+---
+
+### 2. PDF Generator Utility
+#### [NEW] [utils/pdf.go](file:///c:/Go/shopMe/internal/utils/pdf.go)
+- `GenerateWholesaleReorderPDF(shop *model.Shop, items []*dto.LowStockProduct) ([]byte, error)`
+- Uses `gofpdf` to render a clean, branded tabular purchase sheet ready for printing or WhatsApp sharing.
+
+---
+
+### 3. Repository Layer
+#### [MODIFY] [repository/product.go](file:///c:/Go/shopMe/internal/handler/repository/product.go)
+- Add `AdjustInventoryStock(ctx context.Context, shopID, productID string, adjustment int, threshold *int) (*model.Inventory, error)`.
+- Add `GetLowStockProducts(ctx context.Context, shopID string) ([]*dto.LowStockProduct, error)`.
+- Update `FindAll` query to support `stock_desc` sorting.
+
+---
+
+### 4. Service Layer
+#### [NEW] [services/inventory.go](file:///c:/Go/shopMe/internal/handler/services/inventory.go)
+- `AdjustStock(ctx context.Context, shopOwnerUserID string, input dto.AdjustStockRequest)`
+- `GetLowStockAlerts(ctx context.Context, shopOwnerUserID string)`
+- `GenerateReorderSheetPDF(ctx context.Context, shopOwnerUserID string)`
+
+---
+
+### 5. Controller & Routes
+#### [NEW] [controller/inventory.go](file:///c:/Go/shopMe/internal/handler/controller/inventory.go)
+- `POST /shops/me/inventory/adjust` (Protected - Shop Owner)
+- `GET /shops/me/inventory/low-stock` (Protected - Shop Owner)
+- `GET /shops/me/inventory/reorder-sheet.pdf` (Protected - Shop Owner, returns `application/pdf`)
+
+#### [MODIFY] [routes/router.go](file:///c:/Go/shopMe/internal/handler/routes/router.go)
+- Register inventory endpoints under the authenticated shop group.
+
+---
+
+## Verification Plan
+
+### Automated Tests
+- Unit test for stock adjustment validation.
+- Unit test for PDF generation (`utils/pdf_test.go`).
+- Controller tests for low stock and inventory routes.
+  ```powershell
+  go test -v ./...
+  ```
+- Build check:
+  ```powershell
+  go build ./...
+  ```

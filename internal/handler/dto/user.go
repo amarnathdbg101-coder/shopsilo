@@ -1,0 +1,43 @@
+// Package dto handler request and response struct.
+package dto
+
+import "shopMe/internal/handler/model"
+
+type UserRegisterRequest struct {
+	FullName string `json:"full_name" validate:"required,min=2,max=100"`
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required,min=6,max=72"`
+	Phone    string `json:"phone,omitempty" validate:"omitempty,max=20"`
+}
+
+type RegisterResponse struct {
+	User        *model.User `json:"user"`
+	AccessToken string      `json:"access_token,omitempty"`
+}
+
+type UserLoginRequest struct {
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required"`
+}
+
+type TokenResponse struct {
+	AccessToken string      `json:"access_token"`
+	TokenType   string      `json:"token_type"`
+	ExpiresIn   int64       `json:"expires_in"`
+	User        *model.User `json:"user"`
+}
+
+type ForgotPasswordRequest struct {
+	Email string `json:"email" validate:"required,email"`
+}
+
+type ForgotPasswordResponse struct {
+	Message    string `json:"message"`
+	ResetToken string `json:"reset_token,omitempty"`
+}
+
+type ResetPasswordRequest struct {
+	Token       string `json:"token" validate:"required"`
+	NewPassword string `json:"new_password" validate:"required,min=6,max=72"`
+}
+

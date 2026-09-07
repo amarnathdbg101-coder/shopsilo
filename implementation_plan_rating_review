@@ -1,0 +1,93 @@
+# Implementation Plan: Shop Reviews & Trust Ratings (Phase 3)
+
+### Core Philosophy: **"Simplicity is Best"**
+Keep the architecture lean, minimalist, and directly focused on customer trust when visiting local physical shops.
+
+---
+
+## What This Feature Accomplishes
+
+When visiting an offline local store, customer trust is the #1 deciding factor:
+1. **1-5 Star Rating & Feedback**: Customers can rate a shop (1 to 5 stars) with an optional review comment.
+2. **One Review per Customer per Shop**: Clean and spam-free (a customer can update their existing review anytime).
+3. **"Verified Visitor" Badge**: If the customer completed an in-store reservation at this shop, their review gets a `is_verified_visitor = true` trust badge.
+4. **Average Rating & Review Count**: Automatically reflected on the shop's profile (`rating: 4.8`, `total_reviews: 24`).
+
+---
+
+## Proposed Changes
+
+### 1. Database Migration
+#### [NEW] [000011_create_shop_reviews_table.up.sql](file:///c:/Go/shopMe/internal/migration/000011_create_shop_reviews_table.up.sql)
+```sql
+CREATE TABLE IF NOT EXISTS shop_reviews (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    shop_id UUID NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    rating INT NOT NULL CHECK (rating >= 1 AND rating <= 5),
+    comment VARCHAR(500),
+    is_verified_visitor BOOLEAN DEFAULT false,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(shop_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_shop_reviews_shop ON shop_reviews(shop_id);
+CREATE INDEX IF NOT EXISTS idx_shop_reviews_user ON shop_reviews(user_id);
+```
+
+#### [NEW] [000011_create_shop_reviews_table.down.sql](file:///c:/Go/shopMe/internal/migration/000011_create_shop_reviews_table.down.sql)
+
+---
+
+### 2. Model & DTO Layer
+#### [NEW] [model/review.go](file:///c:/Go/shopMe/internal/handler/model/review.go)
+- `ShopReview`: `id`, `shop_id`, `user_id`, `rating`, `comment`, `is_verified_visitor`, `user_name`, `created_at`.
+
+#### [MODIFY] [model/shop.go](file:///c:/Go/shopMe/internal/handler/model/shop.go)
+- Add `AverageRating float64` and `TotalReviews int` to `Shop` struct.
+
+#### [NEW] [dto/review.go](file:///c:/Go/shopMe/internal/handler/dto/review.go)
+- `CreateReviewRequest`: `rating` (1-5), `comment` (max 500 chars).
+- `ReviewPaginationResponse`: list of reviews, total count, average rating breakdown.
+
+---
+
+### 3. Repository Layer
+#### [NEW] [repository/review.go](file:///c:/Go/shopMe/internal/handler/repository/review.go)
+- `UpsertReview`: Insert or update user's review for a shop (calculates verified visitor status based on completed reservations).
+- `FindByShopID`: List reviews with pagination.
+- `GetShopRatingStats`: Calculate `avg_rating` and `total_reviews` in 1 fast query.
+
+---
+
+### 4. Service & Controller Layer
+#### [NEW] [services/review.go](file:///c:/Go/shopMe/internal/handler/services/review.go)
+- Prevents shop owners from reviewing their own shops.
+- Enforces 1-5 rating range.
+
+#### [NEW] [controller/review.go](file:///c:/Go/shopMe/internal/handler/controller/review.go)
+- `POST /shops/{slug}/reviews`: Add or update review (Protected).
+- `GET /shops/{slug}/reviews`: View shop reviews & ratings (Public).
+- `DELETE /shops/{slug}/reviews`: Delete my review (Protected).
+
+---
+
+### 5. Routes
+#### [MODIFY] [routes/router.go](file:///c:/Go/shopMe/internal/handler/routes/router.go)
+- Register `GET /shops/{slug}/reviews` (Public).
+- Register `POST /shops/{slug}/reviews` & `DELETE /shops/{slug}/reviews` (Protected).
+
+---
+
+## Verification Plan
+
+### Automated Tests
+- Controller validation tests for reviews (rating bounds 1-5, self-review prevention, auth requirement).
+  ```powershell
+  go test -v ./internal/handler/...
+  ```
+- Build compilation check:
+  ```powershell
+  go build ./...
+  ```

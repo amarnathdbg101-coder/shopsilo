@@ -1,3 +1,4 @@
+// Package utils contains common project helpers and configuration loading.
 package utils
 
 import (
@@ -9,7 +10,7 @@ import (
 
 type Config struct {
 	Port      string `koanf:"PORT"`
-	DbUrl     string `koanf:"DATABASE_URL"`
+	DBURL     string `koanf:"DATABASE_URL"`
 	Jwt       string `koanf:"JWT_SECRET"`
 	Bucket    string `koanf:"R2_BUCKET"`
 	AccessKey string `koanf:"R2_ACCESS_KEY"`
@@ -39,25 +40,25 @@ func MustLoad() Config {
 		log.Fatalf("R2 BUCKET is required")
 	}
 
-	access_key := os.Getenv("R2_ACCESS_KEY")
-	if access_key == "" {
+	accessKey := os.Getenv("R2_ACCESS_KEY")
+	if accessKey == "" {
 		log.Fatalf("R2 BUCKET is required")
 	}
-	secert_key := os.Getenv("R2_SECRET_KEY")
-	if secert_key == "" {
+	secertKey := os.Getenv("R2_SECRET_KEY")
+	if secertKey == "" {
 		log.Fatalf("R2 BUCKET is required")
 	}
-	r2_endpoint := os.Getenv("R2_ENDPOINT")
-	if r2_endpoint == "" {
+	r2Endpoint := os.Getenv("R2_ENDPOINT")
+	if r2Endpoint == "" {
 		log.Fatalf("R2 BUCKET is required")
 	}
 	return Config{
-		Port:  port,
-		DbUrl: database,
-		Jwt:   jwt,
-        AccessKey: access_key,
-        Endpoint: r2_endpoint,
-        SecretKey: secert_key,
-        Bucket: bucket,
+		Port:      port,
+		DBURL:     database,
+		Jwt:       jwt,
+		AccessKey: accessKey,
+		Endpoint:  r2Endpoint,
+		SecretKey: secertKey,
+		Bucket:    bucket,
 	}
 }

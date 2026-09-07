@@ -11,27 +11,27 @@ import (
 )
 
 func main() {
-	if len(os.Args) < 2{
+	if len(os.Args) < 2 {
 		log.Fatal("use migrate up or down")
 		return
 	}
 
-	m, err := migrate.New("file://internal/migration",utils.MustLoad().DbUrl)
-	if err != nil{
+	m, err := migrate.New("file://internal/migration", utils.MustLoad().DBURL)
+	if err != nil {
 		log.Fatal(err)
 	}
 
-	switch os.Args[1]{
+	switch os.Args[1] {
 	case "up":
-		if err := m.Up(); err != nil && err != migrate.ErrNoChange{
-		log.Fatal(err)
-	}
+		if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+			log.Fatal(err)
+		}
 	case "down":
-		if err := m.Steps(-1); err != nil && err != migrate.ErrNoChange{
-		log.Fatal(err)
-	}
+		if err := m.Steps(-1); err != nil && err != migrate.ErrNoChange {
+			log.Fatal(err)
+		}
 	default:
-		log.Fatalf("migration command wrong:%v",err)
+		log.Fatalf("migration command wrong:%v", err)
 
 	}
 }
