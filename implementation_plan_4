@@ -1,0 +1,88 @@
+# Implementation Plan: Profit Engine & Product Performance Matrix (Phase B)
+
+Enable retail shop owners to track product cost prices, calculate unit profit margins, view monthly revenue & net profit, and identify top performers vs. dead inventory.
+
+---
+
+## Objectives
+
+1. **Product Cost Price & Margin Calculation**:
+   - Add `cost_price` (wholesale purchase price) to products — strictly confidential (visible only to shopkeeper).
+   - Calculate unit profit: `Profit = Price - CostPrice`, Margin %: `((Price - CostPrice) / Price) * 100`.
+2. **Monthly Profit & Revenue Analytics (`GET /shops/me/analytics/profit`)**:
+   - Total sales count, total revenue, total cost, and **Net Munafa (Net Profit)** for any selected month.
+3. **Product Performance Matrix (`GET /shops/me/analytics/products`)**:
+   - **Best Products**: Top profit-generating products and highest margin items.
+   - **Worst Products**: Lowest profit margin items.
+   - **Old / Dead Stock Warning**: Items added > 60 days ago with low/zero sales (stagnant inventory tying up capital).
+   - **New Products**: Recently added products within the last 30 days.
+
+---
+
+## Proposed Changes
+
+### 1. Database Migration
+#### [NEW] [000012_add_cost_price_to_products.up.sql](file:///c:/Go/shopMe/internal/migration/000012_add_cost_price_to_products.up.sql)
+```sql
+ALTER TABLE products
+    ADD COLUMN IF NOT EXISTS cost_price DECIMAL(10,2) DEFAULT 0;
+```
+#### [NEW] [000012_add_cost_price_to_products.down.sql](file:///c:/Go/shopMe/internal/migration/000012_add_cost_price_to_products.down.sql)
+
+---
+
+### 2. Model & DTO Layer
+#### [MODIFY] [model/product.go](file:///c:/Go/shopMe/internal/handler/model/product.go)
+- Add `CostPrice float64` to `Product` struct (with `json:"cost_price,omitempty"`).
+- Add `UnitProfit float64` and `ProfitMarginPct float64`.
+
+#### [NEW] [dto/analytics.go](file:///c:/Go/shopMe/internal/handler/dto/analytics.go)
+- `MonthlyProfitResponse`:
+  - `Month string`, `Year int`, `TotalCompletedSales int`, `TotalRevenue float64`, `TotalCost float64`, `NetProfit float64`, `AverageMarginPct float64`.
+- `ProductPerformanceItem`:
+  - `ProductID`, `Name`, `SKU`, `Price`, `CostPrice`, `UnitProfit`, `ProfitMarginPct`, `TotalSoldQty`, `TotalProfit`, `DaysInStock`.
+- `ProductMatrixResponse`:
+  - `BestProfitable []*ProductPerformanceItem`
+  - `WorstProfitable []*ProductPerformanceItem`
+  - `OldDeadStock    []*ProductPerformanceItem` (Shelf-life > 60 days)
+  - `NewArrivals     []*ProductPerformanceItem` (Added in last 30 days)
+
+#### [MODIFY] [dto/product.go](file:///c:/Go/shopMe/internal/handler/dto/product.go)
+- Add `CostPrice float64` to `CreateProductRequest` and `*float64` to `UpdateProductRequest`.
+
+---
+
+### 3. Repository Layer
+#### [MODIFY] [repository/product.go](file:///c:/Go/shopMe/internal/handler/repository/product.go)
+- Update `Create`, `Update`, `FindByID`, `FindAll` to handle `cost_price`.
+- Add `GetMonthlyProfitAnalytics(ctx, shopID string, year, month int) (*dto.MonthlyProfitResponse, error)`.
+- Add `GetProductPerformanceMatrix(ctx, shopID string) (*dto.ProductMatrixResponse, error)`.
+
+---
+
+### 4. Service & Controller Layer
+#### [NEW] [services/analytics.go](file:///c:/Go/shopMe/internal/handler/services/analytics.go)
+- `GetMonthlyProfit(ctx, shopOwnerUserID string, year, month int)`
+- `GetProductMatrix(ctx, shopOwnerUserID string)`
+
+#### [NEW] [controller/analytics.go](file:///c:/Go/shopMe/internal/handler/controller/analytics.go)
+- `GET /shops/me/analytics/profit` (Protected - Shop Owner)
+- `GET /shops/me/analytics/products` (Protected - Shop Owner)
+
+#### [MODIFY] [routes/router.go](file:///c:/Go/shopMe/internal/handler/routes/router.go)
+- Register analytics routes under protected shop owner group.
+
+---
+
+## Verification Plan
+
+### Automated Tests
+- Unit tests for cost price validation and profit calculations.
+- Controller tests for analytics endpoints.
+  ```powershell
+  go test -v ./...
+  ```
+- Build check:
+  ```powershell
+  go build ./...
+  ```

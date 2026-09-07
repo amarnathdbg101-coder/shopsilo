@@ -1,0 +1,121 @@
+# Implementation Plan: In-Store Product Reservation & Item Hold (O2O) - Phase 2
+
+Enable customers to hold/reserve products for physical in-store pickup, preventing items from being sold out while traveling to the store. Includes 6-digit pickup codes, auto-expiration, and a shopkeeper verification terminal.
+
+---
+
+## User Flow & Design
+
+```
+[ Customer ]
+     │
+     ├── 1. POST /reservations (Reserve product, default 4-hour hold)
+     │       └── Generates Reservation Number (e.g. HLD-729401) & 6-digit Pickup Code (e.g. 842910)
+     │       └── Locks inventory: increases `inventory.reserved_quantity`
+     │
+     ├── 2. GET /reservations (View active reservations with timer, shop address & maps link)
+     │
+     └── 3. Visits physical shop & shows 6-digit Pickup Code to shopkeeper
+                                   │
+                                   ▼
+                            [ Shopkeeper ]
+                                   │
+     ┌─────────────────────────────┴─────────────────────────────┐
+     ▼                                                           ▼
+POST /shops/me/reservations/verify                       POST /shops/me/reservations/{id}/cancel
+(Enters 6-digit code at billing counter)                 (If customer doesn't show up or out of stock)
+- Verifies pickup code                                   - Releases inventory hold
+- Marks reservation `completed`                          - Sets status to `cancelled`/`expired`
+- Deducts product inventory stock
+```
+
+---
+
+## Proposed Changes
+
+### 1. Database Migration
+#### [NEW] [000010_create_reservations_table.up.sql](file:///c:/Go/shopMe/internal/migration/000010_create_reservations_table.up.sql)
+- Create `reservation_status` ENUM: `'active'`, `'completed'`, `'cancelled'`, `'expired'`.
+- Create `reservations` table:
+  - `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`
+  - `reservation_number VARCHAR(50) UNIQUE NOT NULL`
+  - `user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE`
+  - `shop_id UUID NOT NULL REFERENCES shops(id) ON DELETE CASCADE`
+  - `product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE`
+  - `quantity INT NOT NULL DEFAULT 1 CHECK (quantity > 0)`
+  - `pickup_code VARCHAR(10) NOT NULL` (6-digit numeric OTP)
+  - `status reservation_status DEFAULT 'active'`
+  - `expires_at TIMESTAMP NOT NULL`
+  - `completed_at TIMESTAMP`
+  - `notes TEXT`
+  - `created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`
+  - `updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`
+- Create indices on `user_id`, `shop_id`, `status`, `pickup_code`, `expires_at`.
+
+#### [NEW] [000010_create_reservations_table.down.sql](file:///c:/Go/shopMe/internal/migration/000010_create_reservations_table.down.sql)
+- Drops table and enum.
+
+---
+
+### 2. Model & DTO Layer
+#### [NEW] [model/reservation.go](file:///c:/Go/shopMe/internal/handler/model/reservation.go)
+- Define `Reservation` struct with associated nested details (`Shop`, `Product`, `User`).
+
+#### [NEW] [dto/reservation.go](file:///c:/Go/shopMe/internal/handler/dto/reservation.go)
+- `CreateReservationRequest`: `product_id`, `quantity` (default 1, max 5), `hold_hours` (1 to 12 hours, default 4), `notes`.
+- `VerifyReservationRequest`: `pickup_code`, `reservation_number` (either is accepted).
+- `ReservationResponse`: includes time remaining in minutes, formatted status, and shop details.
+- `ReservationFilter`: `status`, `page`, `limit`.
+
+---
+
+### 3. Repository Layer
+#### [NEW] [repository/reservation.go](file:///c:/Go/shopMe/internal/handler/repository/reservation.go)
+- `CreateWithTx(ctx, tx, res)`: Insert reservation and increment `reserved_quantity` in `inventory` table.
+- `FindByUserID(ctx, userID, filter)`: Get customer's reservations with auto-expiry check.
+- `FindByShopID(ctx, shopID, filter)`: Get shop's incoming reservations.
+- `FindByID(ctx, id)`: Retrieve single reservation.
+- `VerifyAndCompleteWithTx(ctx, tx, shopID, code)`: Validate code, mark status `completed`, deduct stock `quantity -= reserved_qty`, `reserved_quantity -= reserved_qty`.
+- `CancelWithTx(ctx, tx, id, isShopOwner)`: Release `reserved_quantity`, mark `cancelled`.
+
+---
+
+### 4. Service & Controller Layer
+#### [NEW] [services/reservation.go](file:///c:/Go/shopMe/internal/handler/services/reservation.go)
+- Enforce business logic:
+  - Check product availability (`quantity - reserved_quantity >= requested_qty`).
+  - Max active reservations per customer limit (e.g., max 3 active holds to prevent hoarding).
+  - Secure random 6-digit `pickup_code` generator.
+  - Expiry calculation based on `hold_hours`.
+
+#### [NEW] [controller/reservation.go](file:///c:/Go/shopMe/internal/handler/controller/reservation.go)
+- Customer Endpoints:
+  - `POST /reservations` — Create hold request.
+  - `GET /reservations` — List my reservations.
+  - `GET /reservations/{id}` — View reservation details.
+  - `POST /reservations/{id}/cancel` — Cancel hold request.
+- Shopkeeper Endpoints:
+  - `GET /shops/me/reservations` — List reservations for my shop.
+  - `POST /shops/me/reservations/verify` — Verify customer's 6-digit code at counter.
+  - `POST /shops/me/reservations/{id}/cancel` — Reject/cancel hold from shop side.
+
+---
+
+### 5. Routes
+#### [MODIFY] [routes/router.go](file:///c:/Go/shopMe/internal/handler/routes/router.go)
+- Register customer reservation routes under protected JWT group.
+- Register shopkeeper reservation routes under protected JWT group.
+
+---
+
+## Verification Plan
+
+### Automated Tests
+- Unit tests for reservation creation, pickup code generation, validation, and counter verification.
+  ```powershell
+  go test -v ./internal/handler/...
+  ```
+- Full compilation check:
+  ```powershell
+  go build ./...
+  ```

@@ -1,0 +1,120 @@
+# Implementation Plan: Counter Billing POS & Digital Receipts (Phase D)
+
+### Physical Store Reality
+In a local physical shop, **80% of customers are direct walk-ins** who don't pre-reserve on the app.
+If walk-in sales aren't recorded:
+1. Inventory numbers become inaccurate (items are sold physically, but the app still shows them in stock).
+2. Monthly profit analytics miss out on walk-in revenue.
+
+Phase D introduces a **Lightweight Counter Billing POS (Point of Sale)** and **Digital PDF Receipts**.
+
+---
+
+## Objectives
+
+1. **Quick Counter Sale (`POST /shops/me/pos/sale`)**:
+   - Dukaandaar selects items (or scans barcodes) at the billing counter.
+   - Payment method: `cash`, `upi`, `card`.
+   - Customer phone number (optional: if entered, automatically links to user account and credits loyalty points!).
+   - Atomically deducts inventory stock and records sale for revenue & profit analytics.
+2. **Digital Receipt / Bill Generator (`GET /shops/me/pos/receipts/{bill_number}.pdf`)**:
+   - Generates a clean, branded digital receipt in PDF format (Store Name, GST/Tax if any, Itemized Table, Total, Payment Mode).
+   - Dukaandaar can print it or share directly with the customer on WhatsApp (Paperless billing!).
+3. **Daily Sales Register (`GET /shops/me/pos/daily-summary`)**:
+   - Cash in drawer, UPI collections, total bills cut today.
+
+---
+
+## Proposed Changes
+
+### 1. Database Migration
+#### [NEW] [000014_create_pos_sales_table.up.sql](file:///c:/Go/shopMe/internal/migration/000014_create_pos_sales_table.up.sql)
+```sql
+CREATE TABLE IF NOT EXISTS pos_bills (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    shop_id UUID NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+    bill_number VARCHAR(50) UNIQUE NOT NULL,
+    customer_phone VARCHAR(20),
+    customer_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    subtotal DECIMAL(10,2) NOT NULL,
+    discount_amount DECIMAL(10,2) DEFAULT 0,
+    total_amount DECIMAL(10,2) NOT NULL,
+    total_cost DECIMAL(10,2) DEFAULT 0,
+    payment_method VARCHAR(20) NOT NULL DEFAULT 'cash', -- 'cash', 'upi', 'card'
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS pos_bill_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    bill_id UUID NOT NULL REFERENCES pos_bills(id) ON DELETE CASCADE,
+    product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    quantity INT NOT NULL CHECK (quantity > 0),
+    unit_price DECIMAL(10,2) NOT NULL,
+    unit_cost DECIMAL(10,2) DEFAULT 0,
+    total_price DECIMAL(10,2) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pos_bills_shop ON pos_bills(shop_id);
+CREATE INDEX IF NOT EXISTS idx_pos_bills_created ON pos_bills(created_at);
+```
+
+#### [NEW] [000014_create_pos_sales_table.down.sql](file:///c:/Go/shopMe/internal/migration/000014_create_pos_sales_table.down.sql)
+
+---
+
+### 2. Model & DTO Layer
+#### [NEW] [model/pos.go](file:///c:/Go/shopMe/internal/handler/model/pos.go)
+- `POSBill`, `POSBillItem`, `DailySalesSummary`.
+
+#### [NEW] [dto/pos.go](file:///c:/Go/shopMe/internal/handler/dto/pos.go)
+- `POSSaleItemRequest`: `product_id`, `quantity`, `custom_price` (optional override).
+- `CreatePOSSaleRequest`: `customer_phone`, `items`, `discount_amount`, `payment_method`.
+- `DailySalesSummaryResponse`: `total_bills`, `total_revenue`, `total_profit`, `cash_total`, `upi_total`.
+
+---
+
+### 3. Repository Layer
+#### [NEW] [repository/pos.go](file:///c:/Go/shopMe/internal/handler/repository/pos.go)
+- `CreateSaleWithTx`:
+  - Inserts bill & items.
+  - Deducts stock: `UPDATE inventory SET quantity = GREATEST(0, quantity - $1) WHERE product_id = $2`.
+  - Auto-credits customer loyalty points if phone matches a registered user: `UPDATE users SET loyalty_points = loyalty_points + $1 WHERE phone = $2`.
+- `GetDailySummary`: Aggregates today's cash, UPI, total bills, and profit.
+- `GetBillByNumber`: Fetches bill with items for receipt PDF generation.
+
+---
+
+### 4. Receipt PDF Generator
+#### [NEW] [utils/receipt_pdf.go](file:///c:/Go/shopMe/internal/utils/receipt_pdf.go)
+- Generates a standard receipt PDF with store header, bill details, itemized table, total, and payment mode.
+
+---
+
+### 5. Service & Controller Layer
+#### [NEW] [services/pos.go](file:///c:/Go/shopMe/internal/handler/services/pos.go)
+- Validates stock availability for walk-in sales.
+- Calculates bill totals, cost, and net profit.
+
+#### [NEW] [controller/pos.go](file:///c:/Go/shopMe/internal/handler/controller/pos.go)
+- `POST /shops/me/pos/sale` — Record counter sale & deduct stock (Protected - Shop)
+- `GET /shops/me/pos/daily-summary` — Today's cash/UPI register (Protected - Shop)
+- `GET /shops/me/pos/receipts/{bill_number}.pdf` — Download digital receipt (Protected - Shop)
+- `GET /receipts/{bill_number}` — Public customer digital receipt view
+
+#### [MODIFY] [routes/router.go](file:///c:/Go/shopMe/internal/handler/routes/router.go)
+- Register POS endpoints.
+
+---
+
+## Verification Plan
+
+### Automated Tests
+- Controller validation tests for POS bill creation and payment method checks.
+- Unit test for receipt PDF generation (`utils/receipt_pdf_test.go`).
+  ```powershell
+  go test -v ./...
+  ```
+- Compilation check:
+  ```powershell
+  go build ./...
+  ```

@@ -1,6 +1,0 @@
-CREATE TABLE shop_images(
-    id SERIAL PRIMARY KEY,
-    shop_id INT NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
-    image_url TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);

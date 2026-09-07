@@ -1,0 +1,101 @@
+# Implementation Plan: Loyalty Points, In-Store Returns & Barcode Scanner Lookup (Phase C)
+
+Implement customer loyalty points on in-store purchases, VIP early-bird offers for high-point customers, in-store product returns with atomic restock, and instant barcode/camera scanning lookup.
+
+---
+
+## Objectives
+
+1. **Customer Loyalty Points Ledger**:
+   - Points automatically credited to customer upon completing an in-store reservation pickup (e.g., 1 point per ₹20 spent).
+   - Customer profile tracks current balance: `total_loyalty_points`, tier status (`Bronze`, `Silver`, `Gold`).
+2. **In-Store VIP Offers**:
+   - Shopkeeper can post in-store deals requiring a minimum loyalty points threshold (`min_points_required`) so regular customers get priority deals before walk-ins.
+3. **In-Store Product Returns & Restock (`POST /shops/me/returns`)**:
+   - Physical return handling: item is restocked back into `inventory` (`quantity += returned_qty`), customer points are refunded/adjusted, and an audit trail log is preserved.
+4. **Barcode / Camera Scanner Lookup (`GET /products/scan/{code}`)**:
+   - Dukaandaar or customer scans barcode/QR with camera; instantly returns product details, stock, and price.
+
+---
+
+## Proposed Changes
+
+### 1. Database Migration
+#### [NEW] [000013_create_loyalty_and_returns_table.up.sql](file:///c:/Go/shopMe/internal/migration/000013_create_loyalty_and_returns_table.up.sql)
+- Add `loyalty_points INT DEFAULT 0` to `users` table.
+- Create `product_returns` table:
+  - `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`
+  - `shop_id UUID REFERENCES shops(id) ON DELETE CASCADE`
+  - `user_id UUID REFERENCES users(id) ON DELETE SET NULL`
+  - `product_id UUID REFERENCES products(id) ON DELETE CASCADE`
+  - `reservation_id UUID REFERENCES reservations(id) ON DELETE SET NULL`
+  - `quantity INT NOT NULL`
+  - `refund_amount DECIMAL(10,2) NOT NULL`
+  - `reason VARCHAR(255)`
+  - `created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`
+- Create `store_offers` table:
+  - `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`
+  - `shop_id UUID REFERENCES shops(id) ON DELETE CASCADE`
+  - `title VARCHAR(200) NOT NULL`
+  - `description TEXT`
+  - `discount_text VARCHAR(100) NOT NULL` (e.g. "Flat 25% Off")
+  - `min_points_required INT DEFAULT 0` (0 for all, e.g. 100 for VIP regular customers)
+  - `is_active BOOLEAN DEFAULT true`
+  - `expires_at TIMESTAMP`
+  - `created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`
+
+#### [NEW] [000013_create_loyalty_and_returns_table.down.sql](file:///c:/Go/shopMe/internal/migration/000013_create_loyalty_and_returns_table.down.sql)
+
+---
+
+### 2. Model & DTO Layer
+#### [NEW] [model/loyalty.go](file:///c:/Go/shopMe/internal/handler/model/loyalty.go)
+- `ProductReturn`, `StoreOffer`, and `LoyaltySummary` structs.
+
+#### [NEW] [dto/loyalty.go](file:///c:/Go/shopMe/internal/handler/dto/loyalty.go)
+- `CreateReturnRequest`: `product_id`, `reservation_id`, `quantity`, `refund_amount`, `reason`.
+- `CreateOfferRequest`: `title`, `description`, `discount_text`, `min_points_required`, `expires_in_days`.
+- `ScanProductResponse`: product information with current stock and loyalty points that will be earned.
+
+---
+
+### 3. Repository Layer
+#### [NEW] [repository/loyalty.go](file:///c:/Go/shopMe/internal/handler/repository/loyalty.go)
+- `RecordReturnWithTx`: Restocks inventory and records return audit.
+- `CreateOffer`, `ListShopOffers`, `ListCustomerOffers`.
+- `AddLoyaltyPoints`: Add points to user account.
+- `GetProductByBarcode`: Fast lookup by SKU or barcode code.
+
+---
+
+### 4. Service & Controller Layer
+#### [NEW] [services/loyalty.go](file:///c:/Go/shopMe/internal/handler/services/loyalty.go)
+- Enforce business logic for returns, points tiering, and VIP offer eligibility.
+
+#### [NEW] [controller/loyalty.go](file:///c:/Go/shopMe/internal/handler/controller/loyalty.go)
+- `POST /shops/me/returns` — Process in-store return & restock (Protected - Shop)
+- `GET /shops/me/returns` — View return history (Protected - Shop)
+- `POST /shops/me/offers` — Create in-store deal/offer (Protected - Shop)
+- `GET /shops/{slug}/offers` — View in-store offers (Customer/Public)
+- `GET /user/loyalty` — View my points & VIP status (Protected - Customer)
+- `GET /products/scan/{code}` — Barcode / Camera instant product lookup (Public)
+
+---
+
+### 5. Routes
+#### [MODIFY] [routes/router.go](file:///c:/Go/shopMe/internal/handler/routes/router.go)
+- Connect all customer loyalty, shopkeeper return, offer, and barcode scan routes.
+
+---
+
+## Verification Plan
+
+### Automated Tests
+- Controller validation tests for returns, offers, and barcode scanning.
+  ```powershell
+  go test -v ./...
+  ```
+- Build check:
+  ```powershell
+  go build ./...
+  ```

@@ -1,0 +1,123 @@
+# Implementation Plan: In-Store Discovery & Local Retail (O2O) - Phase 1
+
+Convert **shopMe** into an Online-to-Offline (O2O) physical retail platform where customers discover nearby local shops, check in-store products & availability, navigate via Google Maps, contact shopkeepers via WhatsApp/Call, and visit the physical store to purchase.
+
+---
+
+## Phase 1 Objectives (Best Starting Foundation)
+
+Before building reservations or in-store hold features, the foundation of physical store discovery must be in place:
+1. **Geo-Location & Near-Me Search**: Store Latitude/Longitude and calculate real-time distance in KM (`distance_km`) using the Haversine formula in PostgreSQL.
+2. **City & Pincode Filter**: Allow users to filter shops by city/pincode or search radius.
+3. **Direct In-Store Contact**: Add WhatsApp number and auto-generate WhatsApp inquiry links & Google Maps direction URLs.
+4. **Shop Counter QR Code**: An endpoint (`GET /shops/{slug}/qr` & `GET /shops/me/qr`) that generates a downloadable/scannable QR code for the shopkeeper's billing counter.
+
+---
+
+## User Review Required
+
+> [!NOTE]
+> **Cart & Payment tables in DB**: 
+> Previously created migrations for `carts`, `orders`, `payments` can remain untouched or be archived, since we are pivoting from e-commerce delivery to in-store visits. The next phase will introduce an **In-Store Reservation / Item Hold** module instead of online checkout.
+
+> [!TIP]
+> **Haversine Distance Query**: 
+> We will use the standard earth radius formula (6371 km) in PostgreSQL SQL query. This requires no external GIS plugins (works natively on standard PostgreSQL without needing PostGIS extensions).
+
+---
+
+## Proposed Changes
+
+### 1. Database Migration
+#### [NEW] [000009_add_location_and_contact_to_shops.up.sql](file:///c:/Go/shopMe/internal/migration/000009_add_location_and_contact_to_shops.up.sql)
+- Add columns to `shops` table:
+  - `latitude DOUBLE PRECISION`
+  - `longitude DOUBLE PRECISION`
+  - `city VARCHAR(100)`
+  - `pincode VARCHAR(20)`
+  - `whatsapp_number VARCHAR(20)`
+- Add indices for `city`, `pincode`, and `(latitude, longitude)`.
+
+#### [NEW] [000009_add_location_and_contact_to_shops.down.sql](file:///c:/Go/shopMe/internal/migration/000009_add_location_and_contact_to_shops.down.sql)
+- Revert added columns.
+
+---
+
+### 2. Model & DTO Layer
+#### [MODIFY] [model/shop.go](file:///c:/Go/shopMe/internal/handler/model/shop.go)
+- Add `Latitude *float64`, `Longitude *float64`, `City string`, `Pincode string`, `WhatsAppNumber string`.
+- Add computed fields: `DistanceKm *float64`, `GoogleMapsURL string`, `WhatsAppURL string`.
+
+#### [MODIFY] [dto/shop.go](file:///c:/Go/shopMe/internal/handler/dto/shop.go)
+- Update `CreateShopRequest`: include `latitude`, `longitude`, `city`, `pincode`, `whatsapp_number`.
+- Update `UpdateShopRequest`: include optional pointers for the new fields.
+- Update `ShopFilter`:
+  - `Lat *float64`
+  - `Lng *float64`
+  - `RadiusKm *float64` (default e.g. 10km if lat/lng passed)
+  - `City string`
+  - `Pincode string`
+
+---
+
+### 3. Repository Layer
+#### [MODIFY] [repository/shop.go](file:///c:/Go/shopMe/internal/handler/repository/shop.go)
+- Update `Create` and `Update` queries to persist the new location & contact fields.
+- Update `List` query:
+  - If `Lat` & `Lng` are provided in filter, calculate:
+    ```sql
+    6371 * acos(
+      least(1.0, greatest(-1.0,
+        cos(radians($lat)) * cos(radians(latitude)) * cos(radians(longitude) - radians($lng)) +
+        sin(radians($lat)) * sin(radians(latitude))
+      ))
+    ) AS distance_km
+    ```
+  - Filter `WHERE distance_km <= $radius` (if radius provided).
+  - Sort by `distance_km ASC` (nearest shops first).
+  - Filter by `city` or `pincode` when provided.
+
+---
+
+### 4. Service & Controller Layer
+#### [MODIFY] [services/shop.go](file:///c:/Go/shopMe/internal/handler/services/shop.go)
+- Format `GoogleMapsURL` (e.g., `https://www.google.com/maps/search/?api=1&query={lat},{lng}`) and `WhatsAppURL` (e.g., `https://wa.me/{phone}?text=...`).
+
+#### [MODIFY] [controller/shop.go](file:///c:/Go/shopMe/internal/handler/controller/shop.go)
+- Parse query parameters: `?lat=28.6139&lng=77.2090&radius=5&city=Delhi&pincode=110001`.
+- Add `GetShopQR` handler: generates PNG QR code containing shop page URL.
+
+---
+
+### 5. QR Code Generation Utility
+#### [NEW] [utils/qr.go](file:///c:/Go/shopMe/internal/utils/qr.go)
+- Use standard Go QR package (`github.com/skip2/go-qrcode`) to generate counter-ready QR codes.
+
+---
+
+### 6. Routes
+#### [MODIFY] [routes/router.go](file:///c:/Go/shopMe/internal/handler/routes/router.go)
+- Add public route `GET /shops/{slug}/qr`
+- Add protected route `GET /shops/me/qr`
+
+---
+
+## Verification Plan
+
+### Automated Tests
+- Run unit/integration tests for shop repository and controllers:
+  ```powershell
+  go test -v ./internal/handler/...
+  ```
+
+### Manual API Verification (Local Test)
+1. Run migration up:
+   ```powershell
+   go run cmd/migrate/main.go up
+   ```
+2. Create/Update a shop with latitude, longitude, city, pincode, whatsapp_number.
+3. Test `GET /shops?lat=...&lng=...&radius=10`:
+   - Verify returned shops include `distance_km` sorted nearest first.
+   - Verify `google_maps_url` and `whatsapp_url` are present.
+4. Test `GET /shops/{slug}/qr`:
+   - Verify returns `image/png` containing the shop URL.
