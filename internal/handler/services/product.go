@@ -65,6 +65,7 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 		Description:  strings.TrimSpace(input.Description),
 		SKU:          strings.TrimSpace(strings.ToUpper(input.SKU)),
 		Price:        input.Price,
+		CostPrice:    input.CostPrice,
 		ComparePrice: input.ComparePrice,
 		CategoryID:   input.CategoryID,
 		Images:       input.Images,
@@ -72,6 +73,7 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 		IsActive:     true,
 		IsFeatured:   input.IsFeatured,
 		Tags:         input.Tags,
+		Attributes:   input.Attributes,
 	}
 
 	return s.productRepo.Create(ctx, product, input.StockQuantity)
@@ -165,6 +167,12 @@ func (s *ProductService) UpdateProduct(ctx context.Context, userID, productID st
 	}
 	if input.Tags != nil {
 		existing.Tags = *input.Tags
+	}
+	if input.CostPrice != nil {
+		existing.CostPrice = *input.CostPrice
+	}
+	if input.Attributes != nil {
+		existing.Attributes = *input.Attributes
 	}
 
 	// Handle images update & clean orphaned images from R2

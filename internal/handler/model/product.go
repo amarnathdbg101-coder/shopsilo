@@ -35,6 +35,7 @@ type Product struct {
     IsActive        bool      `json:"is_active"`
     IsFeatured      bool      `json:"is_featured"`
     Tags            []string  `json:"tags"`
+    Attributes      map[string]interface{} `json:"attributes,omitempty"` // Brand, Model, Size, Color, Gender, Season, etc.
     Inventory       *Inventory `json:"inventory,omitempty"`
     CreatedAt       time.Time `json:"created_at"`
     UpdatedAt       time.Time `json:"updated_at"`

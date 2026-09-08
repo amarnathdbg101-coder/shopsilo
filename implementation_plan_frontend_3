@@ -1,0 +1,91 @@
+# Implementation Plan: Fix Pickup Glitch, Streamline Bottom Bar, Add Side Menu Drawer, and Production API Config
+
+Aapke feedback ke mutabiq frontend me pickup glitch ko fix kiya jayega, bottom bar se pickup ko hatakar clean kiya jayega, secondary aur shop ke extra features ko ek sleek **Side Menu Drawer** me shift kiya jayega, aur frontend ko backend ke production URL configuration se connect karke deploy-ready banaya jayega.
+
+---
+
+## 1. User Review Required & Open Questions
+
+> [!IMPORTANT]
+> **Backend Production Server URL**:
+> Frontend me `VITE_API_BASE_URL` configure kiya gaya hai. Agar aapke paas already deployed backend ka Render/Railway/Cloud URL hai (jaise `https://shopme-api.onrender.com`), toh kripya use share karein taaki hum use direct `.env.production` me set kar sakein. Otherwise, humne dynamic fallback setup kiya hai jo environment variable ya current origin se auto-connect karega.
+
+---
+
+## 2. Proposed Changes
+
+### A. Fix Pickup Glitch & Safe Handling
+- **Root Cause of Glitch**:
+  - Jab kisi user ke paas 0 reservations hote hain, Go backend `nil` slice serialize karta hai (`"reservations": null`).
+  - Frontend me `data.reservations || data || []` likha tha. Kyunki `data.reservations` null tha, JavaScript ne truthy pagination object `{ reservations: null, ... }` ko state me set kar diya.
+  - Phir rendering ke dauran `reservations.map()` call hone par `TypeError: reservations.map is not a function` crash (white screen/glitch) aa jata tha.
+  - Saath hi `r.id.slice(0, 8)` aur date formatting me safe fallbacks nahi the.
+- **Files to Modify**:
+  - `frontend/src/pages/customer/ReservationsScreen.jsx`: Safe array fallback (`Array.isArray(data?.reservations) ? data.reservations : []`), safe ID format, safe date rendering, aur empty state polish.
+  - `internal/handler/repository/reservation.go`: Slice initialization `make([]*model.Reservation, 0)` ensure karein taaki backend hamesha empty JSON array `[]` return kare, `null` nahi.
+
+### B. Streamline Bottom Nav (Remove Pickup)
+- **Files to Modify**:
+  - `frontend/src/components/layout/BottomNav.jsx`:
+    - Customer view se `Pickup` tab ko remove karenge (user feedback ke anusar bottom bar me iska use nahi hai).
+    - Customer view me ab clean 2-3 essential tabs honge: **Dukaan / Shops** (`/`), **Search / Explore**, aur **Profile / Login**.
+    - Merchant view me core frequent counter tabs rahenge: **Home** (`/merchant`), **POS** (`/merchant/pos`), **Khata** (`/merchant/khata`), **Stock** (`/merchant/inventory`), aur **Profile** (`/profile`).
+
+### C. Rich Side Menu Bar (Side Drawer)
+- **[NEW] Component**: `frontend/src/components/layout/SideDrawer.jsx`
+  - Glassmorphic slide-out navigation drawer with dark backdrop blur.
+  - Top Profile Card: User avatar, Name, Phone/Email, Role badge (`Dukaandar` ya `Grahak`), Shop live status (`Online / Khuli Hai`).
+  - **Merchant Secondary & Infrequent Features**:
+    - 📊 **Net Pocket Profit & Analytics** (`/merchant/analytics`)
+    - 💸 **Daily Expenses / Kharche** (`/merchant/expenses`)
+    - 🛍️ **Customer Pickup Holds / Counter Verification** (Verify 6-digit code directly)
+    - 🏪 **Storefront Public Preview** (View shop from customer's perspective)
+    - ⚙️ **Shop Settings & QR Code** (`/profile`)
+  - **Customer Menu Items**:
+    - 🏪 **Aas-Paas Ki Dukaanein** (`/`)
+    - 🛍️ **My Pickup Holds & Codes** (`/reservations`) - Yahan aasan access me available!
+    - 👤 **My Profile & Settings** (`/profile`)
+    - 💼 **Dukaandar Banein (Open Your Shop)** (`/register`)
+  - Bottom Footer:
+    - 🚪 **Logout** button (with confirmation)
+    - App version info.
+- **Files to Modify**:
+  - `frontend/src/components/layout/AppHeader.jsx`: Hamburger menu icon (☰) add karein jo `SideDrawer` toggle kare.
+  - `frontend/src/styles/components.css`: Side drawer animation, sliding transitions, backdrop blur, badges, and responsive styling.
+
+### D. Centralized & Production-Ready Backend URL Connection
+- **Files to Modify**:
+  - `frontend/src/api/client.js`: Centralize `API_BASE_URL` with clean environment detection, trailing slash trim, and export `API_BASE_URL` constant.
+  - `frontend/src/api/pos.api.js` & `frontend/src/api/inventory.api.js`: Use the centralized `API_BASE_URL` from `client.js` instead of duplicating `import.meta.env`.
+  - `frontend/.env` & `frontend/.env.production`: Production-ready environment configuration.
+
+---
+
+## 3. Verification Plan
+
+### Automated Checks
+1. **Frontend Production Build**:
+   ```powershell
+   cd c:\Go\shopMe\frontend
+   npm run build
+   ```
+2. **Go Backend Tests & Build**:
+   ```powershell
+   cd c:\Go\shopMe
+   go test -v ./...
+   go build ./...
+   ```
+
+### Manual / Functional Verification
+1. **Pickup Page Glitch Fix**:
+   - Access `/reservations` both when logged out, logged in with 0 reservations, and logged in with active holds. Verify no white screen, no JS console errors, and clean UI state.
+2. **Bottom Bar Streamlining**:
+   - Verify that Pickup is removed from the bottom bar.
+   - Verify that primary tabs (Shops, POS, Khata, Stock, Profile) work seamlessly.
+3. **Side Menu Drawer**:
+   - Click the hamburger button (☰) in `AppHeader`.
+   - Verify smooth slide-in drawer opens.
+   - Test navigating to Analytics (`/merchant/analytics`), Expenses (`/merchant/expenses`), Reservations (`/reservations`), and Profile.
+   - Verify close on backdrop tap and close button.
+4. **Production Readiness**:
+   - Verify all API calls work with the configured base URL without 404 or CORS issues.

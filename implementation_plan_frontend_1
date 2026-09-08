@@ -1,0 +1,114 @@
+# Mobile-First Frontend Implementation Plan (ShopMe)
+
+Bilkul clean, reliable aur zero-confusion architecture ke sath hum Go backend ke liye ek dedicated `frontend/` folder banayenge. 
+Har file me **crystal-clear Hinglish/English comments aur hints** rahenge taaki aapko code samajhne aur maintain karne me 1% bhi dikkat na ho.
+
+---
+
+## 1. Tech Stack & Decisions
+
+- **Folder Location**: `c:\Go\shopMe\frontend` (Backend se alag, koi khichdi nahi).
+- **Core Tech**: **React + Vite** (Super fast, hot reloading in milliseconds, lightweight).
+- **Styling**: **Mobile-First Modern CSS Design System** (Variables, glassmorphism, responsive touch controls, bottom sheets, mobile bottom navigation bar). Koi heavy ya confusing CSS framework setup nahi—sab transparent aur readable classes hongi.
+- **Icons**: `lucide-react` (Crisp, clean icons for POS, Inventory, Khata, etc.).
+- **Routing**: `react-router-dom` (Clean role-based route separation: Public / Customer / Merchant).
+- **API Client**: Standard `axios` with interceptors (JWT token automatically attach hoga, response standard format me extract hoga).
+
+---
+
+## 2. Clean Architecture & Folder Structure
+
+```text
+frontend/
+├── index.html
+├── package.json
+├── vite.config.js
+└── src/
+    ├── api/                     # Sare backend API calls (har Go controller ka 1-to-1 match)
+    │   ├── client.js            # Axios instance with JWT interceptor & base URL (http://localhost:8080)
+    │   ├── auth.api.js          # /auth/login, /auth/register, forgot/reset password
+    │   ├── shop.api.js          # /shops/me, /shops/me/status, QR code, images
+    │   ├── product.api.js       # /products, /products/images, barcode scan
+    │   ├── pos.api.js           # /shops/me/pos/sale, /shops/me/pos/daily-summary, receipts
+    │   ├── khata.api.js         # /shops/me/khata, udhar recording, payments
+    │   ├── expense.api.js       # /shops/me/expenses
+    │   └── inventory.api.js     # /shops/me/inventory/adjust, low-stock alerts, reorder PDF
+    │
+    ├── context/                 # Global state (simple, reliable)
+    │   ├── AuthContext.jsx      # User login state, token persistence, role check
+    │   └── POSContext.jsx       # Counter billing cart, barcode fast-scanner buffer
+    │
+    ├── components/              # Reusable UI pieces
+    │   ├── common/              # Button, Input, Modal, Badge, Toast, Loader
+    │   └── layout/              # MobileFrame, TopHeader, BottomNav, Sidebar (for desktop)
+    │
+    ├── pages/                   # Mobile-First Screens
+    │   ├── auth/                # Login & Register screens
+    │   ├── merchant/            # Shopkeeper Operating System
+    │   │   ├── Dashboard.jsx    # Quick overview, today's sales & low stock alerts
+    │   │   ├── POSScreen.jsx    # Counter billing (Barcode scan, quick add, cash/khata settlement)
+    │   │   ├── KhataScreen.jsx  # Customer Udhar Khata (Add credit, record settlement, history)
+    │   │   ├── InventoryScreen.jsx # Stock adjust, low-stock warning, reorder PDF download
+    │   │   ├── ExpenseScreen.jsx   # Dukan ke roz ke kharche (tea, rent, electricity, etc.)
+    │   │   └── AnalyticsScreen.jsx # Net pocket profit & fast/dead stock matrix
+    │   └── customer/            # Storefront & Discovery
+    │       ├── Storefront.jsx   # Public shop page, product list, offers, reviews
+    │       └── Reservation.jsx  # Item reservation & counter pickup OTP/QR
+    │
+    ├── styles/                  # Clean modern design system
+    │   ├── variables.css        # Colors, fonts, radius, shadows
+    │   ├── mobile.css           # Mobile touch layout, bottom sheets, navigation
+    │   └── components.css       # Cards, tables, forms, badges
+    │
+    ├── App.jsx                  # Main routing with ProtectedRoute
+    └── main.jsx                 # React root
+```
+
+---
+
+## 3. Step-by-Step Execution Plan
+
+### Phase 1: Vite Project Setup & Design System
+1. `frontend/` directory me Vite + React project initialize karna.
+2. Dependencies install karna: `react-router-dom`, `lucide-react`, `axios`.
+3. Design tokens (`variables.css`, `mobile.css`) create karna (Modern indigo/emerald palette, dark/light contrast, mobile shell).
+4. Configure Vite proxy for seamless API requests to `http://localhost:8080`.
+
+### Phase 2: API Client & Auth Flow (Matching Go Backend)
+1. `client.js`: Axios instance with Bearer token header handling & standard error format (`err.response.data.error`).
+2. `AuthContext.jsx`: User login, registration, role detection (`shop` vs `customer`), logout, local-storage token persistence.
+3. Login & Register UI with role toggle (Customer vs Dukaandar/Shop Owner).
+
+### Phase 3: Merchant Mobile POS Terminal (Counter Billing)
+1. Quick search & Barcode scan box (supports USB barcode scanner / manual code).
+2. Tap-to-add cart, quantity adjust (+ / -).
+3. Payment modes: Cash, Online/UPI, Khata (Customer Udhar).
+4. Print/View Digital Receipt generation.
+5. Daily POS summary widget (Today's cash vs online vs udhar).
+
+### Phase 4: Khata Book & Expense Management
+1. **Khata Screen**:
+   - Total market udhar summary.
+   - Customer list with search by phone.
+   - Record Udhar (+ Credit) and Jama (- Payment).
+2. **Expense Screen**:
+   - Quick expense logging (Rent, Electricity, Chai/Snacks, Packaging).
+   - Date-wise list & deletion.
+
+### Phase 5: Inventory Alerts & Analytics
+1. Low stock warnings badge.
+2. 1-click Download Wholesale Reorder PDF sheet.
+3. Monthly Profit vs Expense vs Real Net Pocket Profit breakdown.
+
+---
+
+## 4. Verification Plan
+
+### Automated / Build Verification
+- Run `npm run build` in `frontend/` to ensure 0 TypeScript/Babel/JSX compilation errors.
+- Check bundle size and clean imports.
+
+### Manual Live Testing
+- Start Go backend (`go run cmd/api/main.go` or task).
+- Start Vite frontend (`npm run dev`).
+- Test login, create shop, test POS sale, test Khata entry, and verify responses match Go backend exactly.

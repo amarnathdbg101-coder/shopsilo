@@ -58,14 +58,18 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 	if p.Images == nil {
 		imagesJSON = []byte("[]")
 	}
+	attributesJSON, _ := json.Marshal(p.Attributes)
+	if p.Attributes == nil {
+		attributesJSON = []byte("{}")
+	}
 
 	query := `
-		INSERT INTO products (shop_id, name, slug, description, sku, price, cost_price, compare_price, category_id, images, weight, is_active, is_featured, tags, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
-		RETURNING id, shop_id, name, slug, COALESCE(description, ''), sku, price, COALESCE(cost_price, 0), COALESCE(compare_price, 0), category_id, images, COALESCE(weight, 0), is_active, is_featured, tags, created_at, updated_at
+		INSERT INTO products (shop_id, name, slug, description, sku, price, cost_price, compare_price, category_id, images, weight, is_active, is_featured, tags, attributes, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
+		RETURNING id, shop_id, name, slug, COALESCE(description, ''), sku, price, COALESCE(cost_price, 0), COALESCE(compare_price, 0), category_id, images, COALESCE(weight, 0), is_active, is_featured, tags, COALESCE(attributes, '{}'::jsonb), created_at, updated_at
 	`
 	created := &model.Product{}
-	var imagesBytes []byte
+	var imagesBytes, attributesBytes []byte
 
 	err = tx.QueryRow(
 		ctx,
@@ -84,6 +88,7 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 		p.IsActive,
 		p.IsFeatured,
 		p.Tags,
+		attributesJSON,
 	).Scan(
 		&created.ID,
 		&created.ShopID,
@@ -100,6 +105,7 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 		&created.IsActive,
 		&created.IsFeatured,
 		&created.Tags,
+		&attributesBytes,
 		&created.CreatedAt,
 		&created.UpdatedAt,
 	)
@@ -118,6 +124,11 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 	created.Images = []string{}
 	if len(imagesBytes) > 0 {
 		_ = json.Unmarshal(imagesBytes, &created.Images)
+	}
+
+	created.Attributes = make(map[string]interface{})
+	if len(attributesBytes) > 0 {
+		_ = json.Unmarshal(attributesBytes, &created.Attributes)
 	}
 
 	// Insert into inventory
@@ -149,7 +160,7 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 func (r *ProductRepo) FindByID(ctx context.Context, id string) (*model.Product, error) {
 	query := `
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
-		       p.category_id, p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, p.created_at, p.updated_at,
+		       p.category_id, p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 10)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
@@ -157,7 +168,7 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*model.Product, 
 		LIMIT 1
 	`
 	p := &model.Product{}
-	var imagesBytes []byte
+	var imagesBytes, attributesBytes []byte
 	inv := &model.Inventory{ProductID: id}
 
 	err := r.db.QueryRow(ctx, query, id).Scan(
@@ -176,6 +187,7 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*model.Product, 
 		&p.IsActive,
 		&p.IsFeatured,
 		&p.Tags,
+		&attributesBytes,
 		&p.CreatedAt,
 		&p.UpdatedAt,
 		&inv.Quantity,
@@ -195,6 +207,11 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*model.Product, 
 		_ = json.Unmarshal(imagesBytes, &p.Images)
 	}
 
+	p.Attributes = make(map[string]interface{})
+	if len(attributesBytes) > 0 {
+		_ = json.Unmarshal(attributesBytes, &p.Attributes)
+	}
+
 	inv.AvailableQuantity = inv.Quantity - inv.ReservedQuantity
 	p.Inventory = inv
 
@@ -205,7 +222,7 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*model.Product, 
 func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*model.Product, error) {
 	query := `
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
-		       p.category_id, p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, p.created_at, p.updated_at,
+		       p.category_id, p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 10)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
@@ -213,7 +230,7 @@ func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*model.Produ
 		LIMIT 1
 	`
 	p := &model.Product{}
-	var imagesBytes []byte
+	var imagesBytes, attributesBytes []byte
 	inv := &model.Inventory{}
 
 	err := r.db.QueryRow(ctx, query, slug).Scan(
@@ -232,6 +249,7 @@ func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*model.Produ
 		&p.IsActive,
 		&p.IsFeatured,
 		&p.Tags,
+		&attributesBytes,
 		&p.CreatedAt,
 		&p.UpdatedAt,
 		&inv.Quantity,
@@ -249,6 +267,11 @@ func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*model.Produ
 	p.Images = []string{}
 	if len(imagesBytes) > 0 {
 		_ = json.Unmarshal(imagesBytes, &p.Images)
+	}
+
+	p.Attributes = make(map[string]interface{})
+	if len(attributesBytes) > 0 {
+		_ = json.Unmarshal(attributesBytes, &p.Attributes)
 	}
 
 	inv.AvailableQuantity = inv.Quantity - inv.ReservedQuantity
@@ -330,7 +353,7 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 
 	query := fmt.Sprintf(`
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
-		       p.category_id, p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, p.created_at, p.updated_at,
+		       p.category_id, p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 10),
 		       COUNT(*) OVER() AS total_count
 		FROM products p
@@ -354,7 +377,7 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 
 	for rows.Next() {
 		p := &model.Product{}
-		var imagesBytes []byte
+		var imagesBytes, attributesBytes []byte
 		inv := &model.Inventory{}
 
 		err := rows.Scan(
@@ -373,6 +396,7 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 			&p.IsActive,
 			&p.IsFeatured,
 			&p.Tags,
+			&attributesBytes,
 			&p.CreatedAt,
 			&p.UpdatedAt,
 			&inv.Quantity,
@@ -388,6 +412,11 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 		p.Images = []string{}
 		if len(imagesBytes) > 0 {
 			_ = json.Unmarshal(imagesBytes, &p.Images)
+		}
+
+		p.Attributes = make(map[string]interface{})
+		if len(attributesBytes) > 0 {
+			_ = json.Unmarshal(attributesBytes, &p.Attributes)
 		}
 
 		inv.AvailableQuantity = inv.Quantity - inv.ReservedQuantity
@@ -412,15 +441,20 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 		imagesJSON = []byte("[]")
 	}
 
+	attributesJSON, _ := json.Marshal(p.Attributes)
+	if p.Attributes == nil {
+		attributesJSON = []byte("{}")
+	}
+
 	query := `
 		UPDATE products
 		SET name = $1, slug = $2, description = $3, sku = $4, price = $5, cost_price = $6, compare_price = $7,
-		    category_id = $8, images = $9, weight = $10, is_active = $11, is_featured = $12, tags = $13, updated_at = NOW()
-		WHERE id = $14 AND shop_id = $15
-		RETURNING id, shop_id, name, slug, COALESCE(description, ''), sku, price, COALESCE(cost_price, 0), COALESCE(compare_price, 0), category_id, images, COALESCE(weight, 0), is_active, is_featured, tags, created_at, updated_at
+		    category_id = $8, images = $9, weight = $10, is_active = $11, is_featured = $12, tags = $13, attributes = $14, updated_at = NOW()
+		WHERE id = $15 AND shop_id = $16
+		RETURNING id, shop_id, name, slug, COALESCE(description, ''), sku, price, COALESCE(cost_price, 0), COALESCE(compare_price, 0), category_id, images, COALESCE(weight, 0), is_active, is_featured, tags, COALESCE(attributes, '{}'::jsonb), created_at, updated_at
 	`
 	updated := &model.Product{}
-	var imagesBytes []byte
+	var imagesBytes, attributesBytes []byte
 
 	err = tx.QueryRow(
 		ctx,
@@ -438,6 +472,7 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 		p.IsActive,
 		p.IsFeatured,
 		p.Tags,
+		attributesJSON,
 		p.ID,
 		p.ShopID,
 	).Scan(
@@ -456,6 +491,7 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 		&updated.IsActive,
 		&updated.IsFeatured,
 		&updated.Tags,
+		&attributesBytes,
 		&updated.CreatedAt,
 		&updated.UpdatedAt,
 	)

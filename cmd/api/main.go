@@ -10,6 +10,7 @@ import (
 	"shopMe/internal/handler/repository"
 	"shopMe/internal/handler/routes"
 	"shopMe/internal/middleware"
+	"shopMe/internal/migration"
 	"shopMe/internal/utils"
 	"syscall"
 	"time"
@@ -28,6 +29,13 @@ func main() {
 		logger.Fatal("database connection failed", zap.Error(err))
 	}
 	defer db.Close()
+
+	// Automatically run database migrations to keep schema up-to-date in production (e.g. Render)
+	if err := migration.RunAutoMigrations(cfg.DBURL); err != nil {
+		logger.Warn("auto-migration notice", zap.Error(err))
+	} else {
+		logger.Info("database auto-migrations verified successfully")
+	}
 
 	router := routes.RouteSetup(db, logger)
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"shopMe/internal/utils"
@@ -30,8 +31,25 @@ func main() {
 		if err := m.Steps(-1); err != nil && err != migrate.ErrNoChange {
 			log.Fatal(err)
 		}
+	case "force":
+		if len(os.Args) < 3 {
+			log.Fatal("use: migrate force <version>")
+		}
+		var version int
+		if _, err := fmt.Sscanf(os.Args[2], "%d", &version); err != nil {
+			log.Fatalf("invalid version: %v", err)
+		}
+		if err := m.Force(version); err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("Forced migration to version %d", version)
+	case "version":
+		v, dirty, err := m.Version()
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("Current version: %d, Dirty: %v", v, dirty)
 	default:
-		log.Fatalf("migration command wrong:%v", err)
-
+		log.Fatalf("migration command wrong: %v", os.Args[1])
 	}
 }

@@ -242,7 +242,7 @@ func (r *ReservationRepo) FindByUserID(ctx context.Context, userID string, filte
 	}
 	defer rows.Close()
 
-	var reservations []*model.Reservation
+	reservations := make([]*model.Reservation, 0)
 	totalCount := 0
 
 	for rows.Next() {
@@ -348,7 +348,7 @@ func (r *ReservationRepo) FindByShopID(ctx context.Context, shopID string, filte
 	}
 	defer rows.Close()
 
-	var reservations []*model.Reservation
+	reservations := make([]*model.Reservation, 0)
 	totalCount := 0
 
 	for rows.Next() {
