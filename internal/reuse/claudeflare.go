@@ -4,6 +4,7 @@ package reuse
 import (
 	"errors"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/url"
 	"path/filepath"
@@ -79,8 +80,41 @@ func UploadImage(file multipart.File, header *multipart.FileHeader, folder strin
 	}
 
 	// Construct public/accessible URL
-	imageURL := fmt.Sprintf("%s/%s/%s", strings.TrimRight(cfg.Endpoint, "/"), cfg.Bucket, key)
-	return imageURL, nil
+	if cfg.PublicURL != "" {
+		return fmt.Sprintf("%s/%s", strings.TrimRight(cfg.PublicURL, "/"), key), nil
+	}
+	// Default to backend /images proxy endpoint
+	return fmt.Sprintf("/images/%s", key), nil
+}
+
+// GetImageStream fetches an object from Cloudflare R2 and returns its stream and MIME content-type
+func GetImageStream(key string) (io.ReadCloser, string, error) {
+	cfg := utils.MustLoad()
+	svc := NewR2Client()
+
+	cleanKey := strings.TrimPrefix(key, "/")
+	// If path starts with /images/, strip it
+	cleanKey = strings.TrimPrefix(cleanKey, "images/")
+	// If path starts with bucket name, strip it
+	prefix := cfg.Bucket + "/"
+	if strings.HasPrefix(cleanKey, prefix) {
+		cleanKey = strings.TrimPrefix(cleanKey, prefix)
+	}
+
+	out, err := svc.GetObject(&s3.GetObjectInput{
+		Bucket: aws.String(cfg.Bucket),
+		Key:    aws.String(cleanKey),
+	})
+	if err != nil {
+		return nil, "", err
+	}
+
+	contentType := "image/jpeg"
+	if out.ContentType != nil && *out.ContentType != "" {
+		contentType = *out.ContentType
+	}
+
+	return out.Body, contentType, nil
 }
 
 // DeleteImage removes an image from Cloudflare R2 to prevent storage bloat
@@ -94,9 +128,9 @@ func DeleteImage(imageURL string) error {
 		return nil
 	}
 
-	// Extract object key (removes bucket name if path starts with /<bucket>/<key>)
 	cfg := utils.MustLoad()
 	path := strings.TrimPrefix(u.Path, "/")
+	path = strings.TrimPrefix(path, "images/")
 	prefix := cfg.Bucket + "/"
 	if strings.HasPrefix(path, prefix) {
 		path = strings.TrimPrefix(path, prefix)

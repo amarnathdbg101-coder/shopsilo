@@ -19,6 +19,14 @@ type Category struct {
 type Product struct {
     ID              string    `json:"id"`
     ShopID          string    `json:"shop_id"`
+    ShopName        string    `json:"shop_name,omitempty"`
+    ShopSlug        string    `json:"shop_slug,omitempty"`
+    ShopPhone       string    `json:"shop_phone,omitempty"`
+    ShopAddress     string    `json:"shop_address,omitempty"`
+    ShopCity        string    `json:"shop_city,omitempty"`
+    ShopLatitude    *float64  `json:"shop_latitude,omitempty"`
+    ShopLongitude   *float64  `json:"shop_longitude,omitempty"`
+    CategoryName    string    `json:"category_name,omitempty"`
     Name            string    `json:"name"`
     Slug            string    `json:"slug"`
     Description     string    `json:"description"`
@@ -37,6 +45,7 @@ type Product struct {
     Tags            []string  `json:"tags"`
     Attributes      map[string]interface{} `json:"attributes,omitempty"` // Brand, Model, Size, Color, Gender, Season, etc.
     Inventory       *Inventory `json:"inventory,omitempty"`
+    StockQuantity   int        `json:"stock_quantity"`
     CreatedAt       time.Time `json:"created_at"`
     UpdatedAt       time.Time `json:"updated_at"`
 }

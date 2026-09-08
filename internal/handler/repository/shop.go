@@ -394,7 +394,7 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 		lngIdx := argIdx + 1
 		distanceExpr = fmt.Sprintf(`
 			CASE
-				WHEN latitude IS NOT NULL AND longitude IS NOT NULL THEN
+				WHEN latitude IS NOT NULL AND longitude IS NOT NULL AND (latitude != 0 OR longitude != 0) THEN
 					(6371 * acos(LEAST(1.0, GREATEST(-1.0,
 						cos(radians($%d)) * cos(radians(latitude)) * cos(radians(longitude) - radians($%d)) +
 						sin(radians($%d)) * sin(radians(latitude))
@@ -412,7 +412,7 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 
 	var outerWhereClauses []string
 	if hasGeo && filter.RadiusKm != nil && *filter.RadiusKm > 0 {
-		outerWhereClauses = append(outerWhereClauses, fmt.Sprintf("distance_km IS NOT NULL AND distance_km <= $%d", argIdx))
+		outerWhereClauses = append(outerWhereClauses, fmt.Sprintf("(distance_km IS NULL OR distance_km <= $%d)", argIdx))
 		args = append(args, *filter.RadiusKm)
 		argIdx++
 	}

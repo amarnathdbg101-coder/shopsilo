@@ -3,11 +3,14 @@ package controller
 
 import (
 	"errors"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"shopMe/internal/handler/services"
 	"shopMe/internal/middleware"
 	"shopMe/internal/reuse"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type UploadController struct {
@@ -173,4 +176,25 @@ func (c *UploadController) UploadProductImages(w http.ResponseWriter, r *http.Re
 	reuse.Success(w, "Product images uploaded successfully", map[string]interface{}{
 		"images": urls,
 	})
+}
+
+// ServeImage proxies and streams public images directly from Cloudflare R2
+func (c *UploadController) ServeImage(w http.ResponseWriter, r *http.Request) {
+	key := chi.URLParam(r, "*")
+	if key == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	body, contentType, err := reuse.GetImageStream(key)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer body.Close()
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=604800, immutable")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	_, _ = io.Copy(w, body)
 }

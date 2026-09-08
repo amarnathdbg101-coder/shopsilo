@@ -19,3 +19,23 @@ tasks:
     desc: migrate down
     cmds:
       - go run ./cmd/migrate down
+
+  merchant-dev:
+    desc: run merchant frontend dev server (port 5173)
+    cmds:
+      - cd frontend-merchant && npm run dev
+
+  customer-dev:
+    desc: run customer frontend dev server (port 5174)
+    cmds:
+      - cd frontend-customer && npm run dev
+
+  merchant-build:
+    desc: build merchant frontend
+    cmds:
+      - cd frontend-merchant && npm run build
+
+  customer-build:
+    desc: build customer frontend
+    cmds:
+      - cd frontend-customer && npm run build

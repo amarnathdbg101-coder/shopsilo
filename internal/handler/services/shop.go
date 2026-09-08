@@ -90,6 +90,15 @@ func (s *ShopService) CreateShop(ctx context.Context, userID, userEmail string, 
 	defer tx.Rollback(ctx)
 
 	// 4. Create shop record
+	shopLat := input.Latitude
+	shopLng := input.Longitude
+	if shopLat == nil || shopLng == nil || (*shopLat == 0 && *shopLng == 0) {
+		defaultLat := 26.1542
+		defaultLng := 85.8918
+		shopLat = &defaultLat
+		shopLng = &defaultLng
+	}
+
 	shopToCreate := &model.Shop{
 		UserID:         userID,
 		Name:           strings.TrimSpace(input.Name),
@@ -101,8 +110,8 @@ func (s *ShopService) CreateShop(ctx context.Context, userID, userEmail string, 
 		Address:        strings.TrimSpace(input.Address),
 		City:           strings.TrimSpace(input.City),
 		Pincode:        strings.TrimSpace(input.Pincode),
-		Latitude:       input.Latitude,
-		Longitude:      input.Longitude,
+		Latitude:       shopLat,
+		Longitude:      shopLng,
 		LogoURL:        strings.TrimSpace(input.LogoURL),
 		Banners:        input.Banners,
 		Timing:         strings.TrimSpace(input.Timing),

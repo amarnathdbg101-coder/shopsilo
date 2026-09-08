@@ -12,7 +12,7 @@ type CreateProductRequest struct {
 	ComparePrice  float64  `json:"compare_price,omitempty" validate:"omitempty,gte=0"`
 	CategoryID    string   `json:"category_id" validate:"required"`
 	StockQuantity int      `json:"stock_quantity" validate:"gte=0"`
-	Images        []string `json:"images,omitempty" validate:"omitempty,max=4,dive,url"` // Max 4 images professional standard
+	Images        []string `json:"images,omitempty" validate:"omitempty,max=4"` // Max 4 images professional standard
 	Weight        float64  `json:"weight,omitempty" validate:"omitempty,gte=0"`
 	IsActive      bool                   `json:"is_active"`
 	IsFeatured    bool                   `json:"is_featured"`
@@ -29,7 +29,7 @@ type UpdateProductRequest struct {
 	ComparePrice  *float64                `json:"compare_price,omitempty" validate:"omitempty,gte=0"`
 	CategoryID    *string                 `json:"category_id,omitempty"`
 	StockQuantity *int                    `json:"stock_quantity,omitempty" validate:"omitempty,gte=0"`
-	Images        *[]string               `json:"images,omitempty" validate:"omitempty,max=4,dive,url"` // Max 4 images
+	Images        *[]string               `json:"images,omitempty" validate:"omitempty,max=4"` // Max 4 images
 	Weight        *float64                `json:"weight,omitempty" validate:"omitempty,gte=0"`
 	IsActive      *bool                   `json:"is_active,omitempty"`
 	IsFeatured    *bool                   `json:"is_featured,omitempty"`

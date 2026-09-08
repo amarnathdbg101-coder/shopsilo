@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"shopMe/internal/handler/model"
 	"strings"
 
@@ -190,6 +191,70 @@ func (r *LoyaltyRepo) ListOffers(ctx context.Context, shopID string, userPoints 
 
 	return offers, nil
 }
+
+func (r *LoyaltyRepo) ListAllActiveOffers(ctx context.Context, category string, limit int) ([]*model.StoreOffer, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 30
+	}
+
+	query := `
+		SELECT 
+			so.id, so.shop_id, so.title, COALESCE(so.description, ''), so.discount_text, 
+			so.min_points_required, so.is_active, so.expires_at, so.created_at,
+			s.name, s.slug, COALESCE(s.category, 'Store'), s.logo_url, s.latitude, s.longitude
+		FROM store_offers so
+		JOIN shops s ON s.id = so.shop_id
+		WHERE so.is_active = true 
+		  AND (so.expires_at IS NULL OR so.expires_at > NOW())
+		  AND s.is_active = true
+	`
+	args := []interface{}{}
+	if strings.TrimSpace(category) != "" {
+		query += ` AND s.category ILIKE $1`
+		args = append(args, "%"+strings.TrimSpace(category)+"%")
+		query += fmt.Sprintf(` ORDER BY so.created_at DESC LIMIT %d`, limit)
+	} else {
+		query += fmt.Sprintf(` ORDER BY so.created_at DESC LIMIT %d`, limit)
+	}
+
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		r.logger.Error("failed to list all active offers", zap.Error(err))
+		return nil, err
+	}
+	defer rows.Close()
+
+	var offers []*model.StoreOffer
+	for rows.Next() {
+		off := &model.StoreOffer{}
+		err := rows.Scan(
+			&off.ID,
+			&off.ShopID,
+			&off.Title,
+			&off.Description,
+			&off.DiscountText,
+			&off.MinPointsRequired,
+			&off.IsActive,
+			&off.ExpiresAt,
+			&off.CreatedAt,
+			&off.ShopName,
+			&off.ShopSlug,
+			&off.ShopCategory,
+			&off.ShopLogoURL,
+			&off.ShopLatitude,
+			&off.ShopLongitude,
+		)
+		if err != nil {
+			r.logger.Error("failed to scan active offer row", zap.Error(err))
+			return nil, err
+		}
+		off.IsUnlocked = true
+		offers = append(offers, off)
+	}
+
+	return offers, nil
+}
+
 
 func (r *LoyaltyRepo) GetUserLoyalty(ctx context.Context, userID string) (*model.LoyaltySummary, error) {
 	query := `SELECT COALESCE(name, 'Customer'), COALESCE(loyalty_points, 0) FROM users WHERE id = $1`

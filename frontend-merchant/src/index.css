@@ -1,0 +1,8 @@
+/**
+ * ShopMe Global CSS Entry
+ * Hinglish Hint: Sare design system files ko ek jagah import karta hai.
+ */
+
+@import './styles/variables.css';
+@import './styles/mobile.css';
+@import './styles/components.css';

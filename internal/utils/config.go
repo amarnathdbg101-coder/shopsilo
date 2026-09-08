@@ -16,6 +16,7 @@ type Config struct {
 	AccessKey string `koanf:"R2_ACCESS_KEY"`
 	SecretKey string `koanf:"R2_SECRET_KEY"`
 	Endpoint  string `koanf:"R2_ENDPOINT"`
+	PublicURL string `koanf:"R2_PUBLIC_URL"`
 }
 
 func MustLoad() Config {
@@ -60,5 +61,6 @@ func MustLoad() Config {
 		Endpoint:  r2Endpoint,
 		SecretKey: secertKey,
 		Bucket:    bucket,
+		PublicURL: os.Getenv("R2_PUBLIC_URL"),
 	}
 }

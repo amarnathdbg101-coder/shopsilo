@@ -41,6 +41,9 @@ func computeProfit(p *model.Product) {
 	if p == nil {
 		return
 	}
+	if p.Inventory != nil {
+		p.StockQuantity = p.Inventory.AvailableQuantity
+	}
 	if p.CostPrice > 0 {
 		p.UnitProfit = p.Price - p.CostPrice
 		p.ProfitMarginPct = math.Round((p.UnitProfit/p.Price)*1000) / 10
@@ -355,9 +358,13 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
 		       p.category_id, p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 10),
+		       COALESCE(s.name, ''), COALESCE(s.slug, ''), COALESCE(s.phone, ''), COALESCE(s.address, ''), COALESCE(s.city, ''),
+		       s.latitude, s.longitude, COALESCE(c.name, ''),
 		       COUNT(*) OVER() AS total_count
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
+		LEFT JOIN shops s ON s.id = p.shop_id
+		LEFT JOIN categories c ON c.id = p.category_id
 		WHERE %s
 		ORDER BY %s
 		LIMIT $%d OFFSET $%d
@@ -402,6 +409,14 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 			&inv.Quantity,
 			&inv.ReservedQuantity,
 			&inv.LowStockThreshold,
+			&p.ShopName,
+			&p.ShopSlug,
+			&p.ShopPhone,
+			&p.ShopAddress,
+			&p.ShopCity,
+			&p.ShopLatitude,
+			&p.ShopLongitude,
+			&p.CategoryName,
 			&totalCount,
 		)
 		if err != nil {
@@ -521,6 +536,29 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 			r.logger.Error("failed to update inventory", zap.Error(err), zap.String("product_id", updated.ID))
 			return nil, err
 		}
+		updated.Inventory = &model.Inventory{
+			ProductID:         updated.ID,
+			Quantity:          *stock,
+			ReservedQuantity:  0,
+			AvailableQuantity: *stock,
+			LowStockThreshold: 10,
+		}
+		updated.StockQuantity = *stock
+	} else {
+		var qty, reserved, lowStock int
+		_ = tx.QueryRow(ctx, `SELECT COALESCE(quantity, 0), COALESCE(reserved_quantity, 0), COALESCE(low_stock_threshold, 10) FROM inventory WHERE product_id = $1`, updated.ID).Scan(&qty, &reserved, &lowStock)
+		avail := qty - reserved
+		if avail < 0 {
+			avail = 0
+		}
+		updated.Inventory = &model.Inventory{
+			ProductID:         updated.ID,
+			Quantity:          qty,
+			ReservedQuantity:  reserved,
+			AvailableQuantity: avail,
+			LowStockThreshold: lowStock,
+		}
+		updated.StockQuantity = avail
 	}
 
 	if err := tx.Commit(ctx); err != nil {
