@@ -43,6 +43,16 @@ func computeProfit(p *model.Product) {
 	}
 	if p.Inventory != nil {
 		p.StockQuantity = p.Inventory.AvailableQuantity
+		if p.Inventory.LowStockThreshold <= 0 {
+			p.Inventory.LowStockThreshold = 1
+		}
+		p.LowStockThreshold = p.Inventory.LowStockThreshold
+		p.MinStock = p.Inventory.LowStockThreshold
+	} else if p.LowStockThreshold <= 0 {
+		p.LowStockThreshold = 1
+		p.MinStock = 1
+	} else {
+		p.MinStock = p.LowStockThreshold
 	}
 	if p.CostPrice > 0 {
 		p.UnitProfit = p.Price - p.CostPrice
@@ -134,12 +144,19 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 		_ = json.Unmarshal(attributesBytes, &created.Attributes)
 	}
 
-	// Insert into inventory
+	// Insert into inventory with shop-owner configured min stock (default: 1)
+	lowStock := 1
+	if p.LowStockThreshold > 0 {
+		lowStock = p.LowStockThreshold
+	} else if p.MinStock > 0 {
+		lowStock = p.MinStock
+	}
+
 	invQuery := `
 		INSERT INTO inventory (product_id, quantity, reserved_quantity, low_stock_threshold, updated_at)
-		VALUES ($1, $2, 0, 10, NOW())
+		VALUES ($1, $2, 0, $3, NOW())
 	`
-	if _, err := tx.Exec(ctx, invQuery, created.ID, initialStock); err != nil {
+	if _, err := tx.Exec(ctx, invQuery, created.ID, initialStock, lowStock); err != nil {
 		r.logger.Error("failed to create inventory for product", zap.Error(err), zap.String("product_id", created.ID))
 		return nil, err
 	}
@@ -153,8 +170,10 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 		Quantity:          initialStock,
 		ReservedQuantity:  0,
 		AvailableQuantity: initialStock,
-		LowStockThreshold: 10,
+		LowStockThreshold: lowStock,
 	}
+	created.MinStock = lowStock
+	created.LowStockThreshold = lowStock
 
 	computeProfit(created)
 	return created, nil
@@ -164,7 +183,7 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*model.Product, 
 	query := `
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
 		       p.category_id, p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
-		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 10)
+		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
 		WHERE p.id = $1 AND p.is_active = true
@@ -226,7 +245,7 @@ func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*model.Produ
 	query := `
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
 		       p.category_id, p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
-		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 10)
+		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
 		WHERE p.slug = LOWER(TRIM($1)) AND p.is_active = true
@@ -357,7 +376,7 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 	query := fmt.Sprintf(`
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
 		       p.category_id, p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
-		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 10),
+		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1),
 		       COALESCE(s.name, ''), COALESCE(s.slug, ''), COALESCE(s.phone, ''), COALESCE(s.address, ''), COALESCE(s.city, ''),
 		       s.latitude, s.longitude, COALESCE(c.name, ''),
 		       COUNT(*) OVER() AS total_count
@@ -530,8 +549,15 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 		_ = json.Unmarshal(imagesBytes, &updated.Images)
 	}
 
+	lowLimit := 1
+	if p.LowStockThreshold > 0 {
+		lowLimit = p.LowStockThreshold
+	} else if p.MinStock > 0 {
+		lowLimit = p.MinStock
+	}
+
 	if stock != nil {
-		_, err = tx.Exec(ctx, `UPDATE inventory SET quantity = $1, updated_at = NOW() WHERE product_id = $2`, *stock, updated.ID)
+		_, err = tx.Exec(ctx, `UPDATE inventory SET quantity = $1, low_stock_threshold = $2, updated_at = NOW() WHERE product_id = $3`, *stock, lowLimit, updated.ID)
 		if err != nil {
 			r.logger.Error("failed to update inventory", zap.Error(err), zap.String("product_id", updated.ID))
 			return nil, err
@@ -541,12 +567,15 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 			Quantity:          *stock,
 			ReservedQuantity:  0,
 			AvailableQuantity: *stock,
-			LowStockThreshold: 10,
+			LowStockThreshold: lowLimit,
 		}
 		updated.StockQuantity = *stock
+		updated.MinStock = lowLimit
+		updated.LowStockThreshold = lowLimit
 	} else {
+		_, _ = tx.Exec(ctx, `UPDATE inventory SET low_stock_threshold = $1, updated_at = NOW() WHERE product_id = $2`, lowLimit, updated.ID)
 		var qty, reserved, lowStock int
-		_ = tx.QueryRow(ctx, `SELECT COALESCE(quantity, 0), COALESCE(reserved_quantity, 0), COALESCE(low_stock_threshold, 10) FROM inventory WHERE product_id = $1`, updated.ID).Scan(&qty, &reserved, &lowStock)
+		_ = tx.QueryRow(ctx, `SELECT COALESCE(quantity, 0), COALESCE(reserved_quantity, 0), COALESCE(low_stock_threshold, 1) FROM inventory WHERE product_id = $1`, updated.ID).Scan(&qty, &reserved, &lowStock)
 		avail := qty - reserved
 		if avail < 0 {
 			avail = 0
@@ -559,6 +588,8 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 			LowStockThreshold: lowStock,
 		}
 		updated.StockQuantity = avail
+		updated.MinStock = lowStock
+		updated.LowStockThreshold = lowStock
 	}
 
 	if err := tx.Commit(ctx); err != nil {

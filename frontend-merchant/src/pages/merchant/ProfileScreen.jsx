@@ -38,6 +38,7 @@ import { uploadApi } from '../../api/upload.api';
 import { AppLayout } from '../../components/layout/AppLayout';
 import { getImageUrl } from '../../utils/imageUrl';
 import { EditShopModal } from '../../components/common/EditShopModal';
+import { ThemeLanguageBar } from '../../components/common/ThemeLanguageBar';
 
 export const ProfileScreen = () => {
   const navigate = useNavigate();
@@ -571,6 +572,11 @@ export const ProfileScreen = () => {
             Active
           </span>
         </div>
+      </div>
+
+      {/* Theme & Language Preferences */}
+      <div style={{ marginBottom: '16px' }}>
+        <ThemeLanguageBar />
       </div>
 
       {/* Account Actions */}

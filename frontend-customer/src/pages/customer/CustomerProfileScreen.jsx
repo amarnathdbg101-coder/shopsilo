@@ -26,6 +26,7 @@ import { useAuth } from '../../context/AuthContext';
 import { uploadApi } from '../../api/upload.api';
 import { AppLayout } from '../../components/layout/AppLayout';
 import { getImageUrl } from '../../utils/imageUrl';
+import { ThemeLanguageBar } from '../../components/common/ThemeLanguageBar';
 
 export const CustomerProfileScreen = () => {
   const navigate = useNavigate();
@@ -211,6 +212,11 @@ export const CustomerProfileScreen = () => {
             <ChevronRight size={18} style={{ color: '#64748b' }} />
           </div>
 
+        </div>
+
+        {/* Theme & Language Preferences Card */}
+        <div style={{ marginBottom: '1.5rem' }}>
+          <ThemeLanguageBar />
         </div>
 
         {/* Logout */}

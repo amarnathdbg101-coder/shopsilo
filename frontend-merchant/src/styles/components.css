@@ -575,6 +575,74 @@
 .drawer-footer {
   padding: 14px 16px;
   border-top: 1px solid var(--border-subtle);
-  background-color: #ffffff;
+  background-color: var(--bg-surface);
 }
+
+/* ==========================================================================
+   Dark Theme Component Enhancements
+   ========================================================================== */
+[data-theme="dark"] body {
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .bottom-sheet,
+[data-theme="dark"] .modal-content,
+[data-theme="dark"] .side-drawer,
+[data-theme="dark"] .drawer-header,
+[data-theme="dark"] .drawer-footer {
+  background-color: var(--bg-surface) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border-subtle) !important;
+}
+
+[data-theme="dark"] .drawer-shop-card {
+  background-color: var(--bg-surface-subtle) !important;
+  border-color: var(--border-subtle) !important;
+}
+
+[data-theme="dark"] .drawer-link-btn:hover {
+  background-color: var(--bg-surface-subtle) !important;
+}
+
+[data-theme="dark"] .form-input,
+[data-theme="dark"] .form-select,
+[data-theme="dark"] .form-textarea,
+[data-theme="dark"] .search-box input {
+  background-color: #1a233a !important;
+  color: var(--text-primary) !important;
+  border-color: #334155 !important;
+}
+
+[data-theme="dark"] .form-input:focus,
+[data-theme="dark"] .form-select:focus,
+[data-theme="dark"] .form-textarea:focus {
+  border-color: var(--color-primary) !important;
+  background-color: #1e293b !important;
+}
+
+[data-theme="dark"] .btn-secondary {
+  background-color: var(--bg-surface-subtle) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border-subtle) !important;
+}
+
+[data-theme="dark"] .btn-secondary:hover:not(:disabled) {
+  background-color: #273553 !important;
+}
+
+[data-theme="dark"] .tab-pills {
+  background-color: var(--bg-surface-subtle) !important;
+  border-color: var(--border-subtle) !important;
+}
+
+[data-theme="dark"] .tab-pill {
+  color: var(--text-secondary) !important;
+}
+
+[data-theme="dark"] .tab-pill.active {
+  background-color: var(--color-primary) !important;
+  color: #ffffff !important;
+}
+
 

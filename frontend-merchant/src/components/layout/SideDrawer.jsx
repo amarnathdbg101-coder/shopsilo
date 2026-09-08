@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { getImageUrl } from '../../utils/imageUrl';
+import { ThemeLanguageBar } from '../common/ThemeLanguageBar';
 
 export const SideDrawer = ({ isOpen, onClose }) => {
   const { user, shop, isAuthenticated, logout } = useAuth();
@@ -268,6 +269,11 @@ export const SideDrawer = ({ isOpen, onClose }) => {
               </div>
               <ChevronRight size={16} color="var(--text-muted)" />
             </button>
+          </div>
+
+          {/* Theme & Language Switcher Bar */}
+          <div style={{ marginTop: '16px', marginBottom: '8px' }}>
+            <ThemeLanguageBar />
           </div>
         </div>
 

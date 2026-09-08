@@ -24,6 +24,8 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { POSProvider } from './context/POSContext';
+import { ThemeProvider } from './context/ThemeContext';
+import { LanguageProvider } from './context/LanguageContext';
 
 // Auth Pages
 import { LoginScreen } from './pages/auth/LoginScreen';
@@ -77,108 +79,112 @@ const ProtectedMerchantRoute = ({ children }) => {
 
 function App() {
   return (
-    <AuthProvider>
-      <POSProvider>
-        <BrowserRouter>
-          <Routes>
-            {/* Merchant OS Root: Default to Merchant Dashboard/POS */}
-            <Route path="/" element={<Navigate to="/merchant" replace />} />
+    <ThemeProvider>
+      <LanguageProvider>
+        <AuthProvider>
+          <POSProvider>
+            <BrowserRouter>
+              <Routes>
+                {/* Merchant OS Root: Default to Merchant Dashboard/POS */}
+                <Route path="/" element={<Navigate to="/merchant" replace />} />
 
-            {/* Auth Routes */}
-            <Route path="/login" element={<LoginScreen />} />
-            <Route path="/register" element={<RegisterScreen />} />
+                {/* Auth Routes */}
+                <Route path="/login" element={<LoginScreen />} />
+                <Route path="/register" element={<RegisterScreen />} />
 
-            {/* Merchant Dashboard & Dukan OS (Protected) */}
-            <Route
-              path="/merchant"
-              element={
-                <ProtectedMerchantRoute>
-                  <DashboardScreen />
-                </ProtectedMerchantRoute>
-              }
-            />
-            <Route
-              path="/merchant/pos"
-              element={
-                <ProtectedMerchantRoute>
-                  <POSScreen />
-                </ProtectedMerchantRoute>
-              }
-            />
-            <Route path="/pos" element={<Navigate to="/merchant/pos" replace />} />
-            <Route
-              path="/merchant/khata"
-              element={
-                <ProtectedMerchantRoute>
-                  <KhataScreen />
-                </ProtectedMerchantRoute>
-              }
-            />
-            <Route path="/khata" element={<Navigate to="/merchant/khata" replace />} />
-            <Route
-              path="/merchant/expenses"
-              element={
-                <ProtectedMerchantRoute>
-                  <ExpenseScreen />
-                </ProtectedMerchantRoute>
-              }
-            />
-            <Route path="/expenses" element={<Navigate to="/merchant/expenses" replace />} />
-            <Route
-              path="/merchant/inventory"
-              element={
-                <ProtectedMerchantRoute>
-                  <InventoryScreen />
-                </ProtectedMerchantRoute>
-              }
-            />
-            <Route path="/inventory" element={<Navigate to="/merchant/inventory" replace />} />
-            <Route
-              path="/merchant/analytics"
-              element={
-                <ProtectedMerchantRoute>
-                  <AnalyticsScreen />
-                </ProtectedMerchantRoute>
-              }
-            />
-            <Route path="/analytics" element={<Navigate to="/merchant/analytics" replace />} />
+                {/* Merchant Dashboard & Dukan OS (Protected) */}
+                <Route
+                  path="/merchant"
+                  element={
+                    <ProtectedMerchantRoute>
+                      <DashboardScreen />
+                    </ProtectedMerchantRoute>
+                  }
+                />
+                <Route
+                  path="/merchant/pos"
+                  element={
+                    <ProtectedMerchantRoute>
+                      <POSScreen />
+                    </ProtectedMerchantRoute>
+                  }
+                />
+                <Route path="/pos" element={<Navigate to="/merchant/pos" replace />} />
+                <Route
+                  path="/merchant/khata"
+                  element={
+                    <ProtectedMerchantRoute>
+                      <KhataScreen />
+                    </ProtectedMerchantRoute>
+                  }
+                />
+                <Route path="/khata" element={<Navigate to="/merchant/khata" replace />} />
+                <Route
+                  path="/merchant/expenses"
+                  element={
+                    <ProtectedMerchantRoute>
+                      <ExpenseScreen />
+                    </ProtectedMerchantRoute>
+                  }
+                />
+                <Route path="/expenses" element={<Navigate to="/merchant/expenses" replace />} />
+                <Route
+                  path="/merchant/inventory"
+                  element={
+                    <ProtectedMerchantRoute>
+                      <InventoryScreen />
+                    </ProtectedMerchantRoute>
+                  }
+                />
+                <Route path="/inventory" element={<Navigate to="/merchant/inventory" replace />} />
+                <Route
+                  path="/merchant/analytics"
+                  element={
+                    <ProtectedMerchantRoute>
+                      <AnalyticsScreen />
+                    </ProtectedMerchantRoute>
+                  }
+                />
+                <Route path="/analytics" element={<Navigate to="/merchant/analytics" replace />} />
 
-            <Route
-              path="/merchant/offers"
-              element={
-                <ProtectedMerchantRoute>
-                  <OffersScreen />
-                </ProtectedMerchantRoute>
-              }
-            />
-            <Route path="/offers" element={<Navigate to="/merchant/offers" replace />} />
+                <Route
+                  path="/merchant/offers"
+                  element={
+                    <ProtectedMerchantRoute>
+                      <OffersScreen />
+                    </ProtectedMerchantRoute>
+                  }
+                />
+                <Route path="/offers" element={<Navigate to="/merchant/offers" replace />} />
 
-            <Route
-              path="/merchant/pickups"
-              element={
-                <ProtectedMerchantRoute>
-                  <PickupVerifyScreen />
-                </ProtectedMerchantRoute>
-              }
-            />
-            <Route path="/reservations" element={<Navigate to="/merchant/pickups" replace />} />
+                <Route
+                  path="/merchant/pickups"
+                  element={
+                    <ProtectedMerchantRoute>
+                      <PickupVerifyScreen />
+                    </ProtectedMerchantRoute>
+                  }
+                />
+                <Route path="/reservations" element={<Navigate to="/merchant/pickups" replace />} />
 
-            <Route
-              path="/profile"
-              element={
-                <ProtectedMerchantRoute>
-                  <ProfileScreen />
-                </ProtectedMerchantRoute>
-              }
-            />
-            <Route path="/merchant/profile" element={<Navigate to="/profile" replace />} />
+                <Route
+                  path="/profile"
+                  element={
+                    <ProtectedMerchantRoute>
+                      <ProfileScreen />
+                    </ProtectedMerchantRoute>
+                  }
+                />
+                <Route path="/merchant/profile" element={<Navigate to="/profile" replace />} />
 
-            {/* Fallback */}
-            <Route path="*" element={<Navigate to="/merchant" replace />} />
-          </Routes>
-        </BrowserRouter>
-      </POSProvider>
-    </AuthProvider>
+                {/* Fallback */}
+                <Route path="*" element={<Navigate to="/merchant" replace />} />
+              </Routes>
+            </BrowserRouter>
+          </POSProvider>
+        </AuthProvider>
+      </LanguageProvider>
+    </ThemeProvider>
   );
 }
 

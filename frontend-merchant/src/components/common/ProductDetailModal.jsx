@@ -327,6 +327,24 @@ export const ProductDetailModal = ({
                   {copiedSKU && <span style={{ color: '#15803d', fontWeight: 700 }}>✓ Copied</span>}
                 </button>
               )}
+
+              {isMerchant && (
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    padding: '3px 10px',
+                    borderRadius: 'var(--radius-full)',
+                    fontSize: '0.75rem',
+                    fontWeight: 700,
+                    backgroundColor: 'rgba(79, 70, 229, 0.1)',
+                    color: 'var(--color-primary)',
+                  }}
+                >
+                  🛡️ Min Alert Limit: {product.min_stock ?? product.low_stock_threshold ?? 1} pcs
+                </span>
+              )}
             </div>
           </div>
 

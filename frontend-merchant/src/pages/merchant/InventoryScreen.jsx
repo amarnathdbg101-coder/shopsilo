@@ -71,6 +71,7 @@ export const InventoryScreen = () => {
     price: '',
     cost_price: '',
     stock_quantity: '20',
+    min_stock: '1',
     category_id: '',
     // Flexible attributes (MongoDB inside PostgreSQL)
     attributes: {
@@ -167,6 +168,7 @@ export const InventoryScreen = () => {
       price: String(p.price || ''),
       cost_price: String(p.cost_price || ''),
       stock_quantity: String(getProductStock(p)),
+      min_stock: String(p.min_stock ?? p.low_stock_threshold ?? p.inventory?.low_stock_threshold ?? 1),
       category_id: p.category_id || p.category?.id || (categories[0]?.id || ''),
       description: p.description || '',
       attributes: { ...(p.attributes || {}) },
@@ -250,6 +252,7 @@ export const InventoryScreen = () => {
         price: Number(editProductForm.price),
         cost_price: Number(editProductForm.cost_price) || 0,
         stock_quantity: Number(editProductForm.stock_quantity) || 0,
+        min_stock: Math.max(1, Number(editProductForm.min_stock) || 1),
         category_id: editProductForm.category_id,
         description: editProductForm.description?.trim(),
         attributes: editProductForm.attributes,
@@ -291,10 +294,14 @@ export const InventoryScreen = () => {
       ]);
 
       if (prodRes.status === 'fulfilled') {
-        setProducts(prodRes.value?.products || prodRes.value || []);
-      }
-      if (lowRes.status === 'fulfilled') {
-        setLowStockItems(lowRes.value?.items || []);
+        const prodList = prodRes.value?.products || prodRes.value || [];
+        setProducts(prodList);
+        const customLowStock = prodList.filter((p) => {
+          const stock = getProductStock(p);
+          const minStock = Number(p.min_stock ?? p.low_stock_threshold ?? p.inventory?.low_stock_threshold ?? 1);
+          return stock <= minStock;
+        });
+        setLowStockItems(customLowStock);
       }
       if (catRes.status === 'fulfilled') {
         const catList = catRes.value || [];
@@ -469,6 +476,7 @@ export const InventoryScreen = () => {
         price: Number(newProductForm.price),
         cost_price: Number(newProductForm.cost_price) || 0,
         stock_quantity: Number(newProductForm.stock_quantity) || 0,
+        min_stock: Math.max(1, Number(newProductForm.min_stock) || 1),
         category_id: newProductForm.category_id,
         attributes: finalAttributes,
         images: uploadedImageUrls,
@@ -483,6 +491,7 @@ export const InventoryScreen = () => {
         price: '',
         cost_price: '',
         stock_quantity: '20',
+        min_stock: '1',
         category_id: categories[0]?.id || '',
         attributes: {
           company: '',
@@ -695,18 +704,27 @@ export const InventoryScreen = () => {
                   </div>
 
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px', flexShrink: 0 }}>
-                    <div style={{ textAlign: 'right' }}>
-                      <div
-                        style={{
-                          fontWeight: 800,
-                          fontSize: '0.95rem',
-                          color: getProductStock(p) <= 5 ? 'var(--color-danger)' : 'var(--color-success)',
-                        }}
-                      >
-                        {getProductStock(p)} pcs
-                      </div>
-                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Stock</div>
-                    </div>
+                    {(() => {
+                      const stockVal = getProductStock(p);
+                      const minVal = Number(p.min_stock ?? p.low_stock_threshold ?? p.inventory?.low_stock_threshold ?? 1);
+                      const isLow = stockVal <= minVal;
+                      return (
+                        <div style={{ textAlign: 'right' }}>
+                          <div
+                            style={{
+                              fontWeight: 800,
+                              fontSize: '0.95rem',
+                              color: isLow ? 'var(--color-danger)' : 'var(--color-success)',
+                            }}
+                          >
+                            {stockVal} pcs
+                          </div>
+                          <div style={{ fontSize: '0.68rem', fontWeight: 600, color: isLow ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                            {isLow ? `⚠️ Low (Min: ${minVal})` : `Min: ${minVal}`}
+                          </div>
+                        </div>
+                      );
+                    })()}
                     <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                       <button
                         onClick={(e) => {
@@ -1102,16 +1120,34 @@ export const InventoryScreen = () => {
                 </div>
               </div>
 
-              {/* Stock Quantity */}
-              <div className="form-group">
-                <label className="form-label">Shuruaati Stock (Units/Pcs)</label>
-                <input
-                  type="number"
-                  className="form-input"
-                  placeholder="20"
-                  value={newProductForm.stock_quantity}
-                  onChange={(e) => setNewProductForm({ ...newProductForm, stock_quantity: e.target.value })}
-                />
+              {/* Stock Quantity & Minimum Stock Threshold */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div className="form-group">
+                  <label className="form-label">Shuruaati Stock (Qty)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    className="form-input"
+                    placeholder="20"
+                    value={newProductForm.stock_quantity}
+                    onChange={(e) => setNewProductForm({ ...newProductForm, stock_quantity: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span>Minimum Stock</span>
+                    <span style={{ fontSize: '0.68rem', color: 'var(--color-primary)', fontWeight: 800 }}>*Aap Decide Karein</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    className="form-input"
+                    placeholder="1"
+                    value={newProductForm.min_stock}
+                    onChange={(e) => setNewProductForm({ ...newProductForm, min_stock: e.target.value })}
+                  />
+                  <div className="form-hint" style={{ fontSize: '0.68rem' }}>Default 1 (Kam stock warning ke liye)</div>
+                </div>
               </div>
 
               {/* 🚀 FLEXIBLE PRODUCT ATTRIBUTES SECTION (MongoDB inside PostgreSQL) */}
@@ -1546,17 +1582,33 @@ export const InventoryScreen = () => {
                 </div>
               </div>
 
-              {/* Stock Quantity */}
-              <div className="form-group">
-                <label className="form-label">Total Stock Quantity (Pieces/Units)</label>
-                <input
-                  type="number"
-                  min="0"
-                  required
-                  className="form-input"
-                  value={editProductForm.stock_quantity}
-                  onChange={(e) => setEditProductForm({ ...editProductForm, stock_quantity: e.target.value })}
-                />
+              {/* Stock Quantity & Minimum Stock Limit */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div className="form-group">
+                  <label className="form-label">Total Stock (Units)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    required
+                    className="form-input"
+                    value={editProductForm.stock_quantity}
+                    onChange={(e) => setEditProductForm({ ...editProductForm, stock_quantity: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span>Minimum Stock</span>
+                    <span style={{ fontSize: '0.68rem', color: 'var(--color-primary)', fontWeight: 800 }}>*Aap Decide Karein</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    className="form-input"
+                    value={editProductForm.min_stock}
+                    onChange={(e) => setEditProductForm({ ...editProductForm, min_stock: e.target.value })}
+                  />
+                  <div className="form-hint" style={{ fontSize: '0.68rem' }}>Default 1 (Kam stock warning ke liye)</div>
+                </div>
               </div>
 
               {/* Category */}

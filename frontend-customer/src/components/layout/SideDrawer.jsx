@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { getImageUrl } from '../../utils/imageUrl';
+import { ThemeLanguageBar } from '../common/ThemeLanguageBar';
 
 export const SideDrawer = ({ isOpen, onClose }) => {
   const { user, isAuthenticated, logout } = useAuth();
@@ -162,6 +163,11 @@ export const SideDrawer = ({ isOpen, onClose }) => {
               </div>
               <ChevronRight size={16} color="var(--text-muted)" />
             </button>
+          </div>
+
+          <div style={{ marginTop: '20px' }}>
+            <div className="drawer-section-title">THEME & LANGUAGE</div>
+            <ThemeLanguageBar />
           </div>
         </div>
 

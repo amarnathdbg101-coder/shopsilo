@@ -10,14 +10,16 @@
 
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Menu } from 'lucide-react';
+import { ArrowLeft, Menu, Sun, Moon } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useTheme } from '../../context/ThemeContext';
 import { SideDrawer } from './SideDrawer';
 import { getImageUrl } from '../../utils/imageUrl';
 
 export const AppHeader = ({ title, subtitle, showBack = false }) => {
   const navigate = useNavigate();
   const { user, shop, isMerchant } = useAuth();
+  const { theme, isDark, toggleTheme } = useTheme();
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   return (
@@ -107,6 +109,25 @@ export const AppHeader = ({ title, subtitle, showBack = false }) => {
               <Menu size={20} />
             </button>
           )}
+
+          {/* Quick Dark/Light Theme Toggle */}
+          <button
+            onClick={toggleTheme}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '6px',
+              borderRadius: 'var(--radius-sm)',
+              color: 'var(--text-primary)',
+            }}
+            title={isDark ? 'Switch to Normal Light Mode' : 'Switch to Dark Mode'}
+          >
+            {isDark ? <Sun size={19} color="#fbbf24" /> : <Moon size={19} />}
+          </button>
 
           {user ? (
             <button

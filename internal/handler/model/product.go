@@ -46,6 +46,8 @@ type Product struct {
     Attributes      map[string]interface{} `json:"attributes,omitempty"` // Brand, Model, Size, Color, Gender, Season, etc.
     Inventory       *Inventory `json:"inventory,omitempty"`
     StockQuantity   int        `json:"stock_quantity"`
+    MinStock        int        `json:"min_stock"`
+    LowStockThreshold int      `json:"low_stock_threshold"`
     CreatedAt       time.Time `json:"created_at"`
     UpdatedAt       time.Time `json:"updated_at"`
 }

@@ -61,3 +61,36 @@
   --top-header-height: 56px;
   --max-mobile-width: 480px;
 }
+
+/* ==========================================================================
+   Dark Theme Tokens & Neutral Inversions
+   ========================================================================== */
+[data-theme="dark"] {
+  /* Neutrals (High Contrast Sleek Dark OLED/Slate) */
+  --bg-app: #090d16;                /* Deep night background */
+  --bg-surface: #131b2e;            /* Dark indigo slate card surface */
+  --bg-surface-subtle: #1c2742;     /* Subtle interactive dark surface */
+  --bg-card: #131b2e;
+  --bg-dark-header: #05080f;
+
+  --text-primary: #f8fafc;          /* High readability white */
+  --text-secondary: #94a3b8;        /* Soft silver-slate */
+  --text-muted: #64748b;            /* Muted slate */
+  --text-inverse: #090d16;          /* Dark inverse text */
+
+  /* Borders & Dividers */
+  --border-subtle: #1e293b;
+  --border-strong: #334155;
+
+  /* Accent Lights with dark alpha */
+  --color-primary-light: rgba(99, 102, 241, 0.22);
+  --color-success-light: rgba(16, 185, 129, 0.22);
+  --color-warning-light: rgba(245, 158, 11, 0.22);
+  --color-danger-light: rgba(239, 68, 68, 0.22);
+  --color-info-light: rgba(2, 132, 199, 0.22);
+
+  /* Soft Ambient Dark Shadows */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 10px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.65);
+}

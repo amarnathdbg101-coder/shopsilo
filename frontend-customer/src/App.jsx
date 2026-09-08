@@ -17,6 +17,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LocationProvider } from './context/LocationContext';
 import { SavedProvider } from './context/SavedContext';
+import { ThemeProvider } from './context/ThemeContext';
+import { LanguageProvider } from './context/LanguageContext';
 
 // Auth Pages
 import { LoginScreen } from './pages/auth/LoginScreen';
@@ -51,41 +53,45 @@ const ProtectedCustomerRoute = ({ children }) => {
 
 function App() {
   return (
-    <AuthProvider>
-      <LocationProvider>
-        <SavedProvider>
-          <BrowserRouter>
-            <Routes>
-              {/* Public Store Discovery, Deals & Shopping */}
-              <Route path="/" element={<ExploreShopsScreen />} />
-              <Route path="/deals" element={<DealsScreen />} />
-              <Route path="/saved" element={<SavedScreen />} />
-              <Route path="/shop/:slug" element={<StorefrontScreen />} />
+    <ThemeProvider>
+      <LanguageProvider>
+        <AuthProvider>
+          <LocationProvider>
+            <SavedProvider>
+              <BrowserRouter>
+                <Routes>
+                  {/* Public Store Discovery, Deals & Shopping */}
+                  <Route path="/" element={<ExploreShopsScreen />} />
+                  <Route path="/deals" element={<DealsScreen />} />
+                  <Route path="/saved" element={<SavedScreen />} />
+                  <Route path="/shop/:slug" element={<StorefrontScreen />} />
 
-              {/* Customer Pickups & Orders */}
-              <Route path="/reservations" element={<ReservationsScreen />} />
+                  {/* Customer Pickups & Orders */}
+                  <Route path="/reservations" element={<ReservationsScreen />} />
 
-              {/* Customer Profile */}
-              <Route
-                path="/profile"
-                element={
-                  <ProtectedCustomerRoute>
-                    <CustomerProfileScreen />
-                  </ProtectedCustomerRoute>
-                }
-              />
+                  {/* Customer Profile */}
+                  <Route
+                    path="/profile"
+                    element={
+                      <ProtectedCustomerRoute>
+                        <CustomerProfileScreen />
+                      </ProtectedCustomerRoute>
+                    }
+                  />
 
-              {/* Auth Routes */}
-              <Route path="/login" element={<LoginScreen />} />
-              <Route path="/register" element={<RegisterScreen />} />
+                  {/* Auth Routes */}
+                  <Route path="/login" element={<LoginScreen />} />
+                  <Route path="/register" element={<RegisterScreen />} />
 
-              {/* Fallback */}
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </BrowserRouter>
-        </SavedProvider>
-      </LocationProvider>
-    </AuthProvider>
+                  {/* Fallback */}
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+              </BrowserRouter>
+            </SavedProvider>
+          </LocationProvider>
+        </AuthProvider>
+      </LanguageProvider>
+    </ThemeProvider>
   );
 }
 
