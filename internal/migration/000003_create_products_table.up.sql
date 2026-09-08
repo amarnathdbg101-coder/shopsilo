@@ -3,7 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS products (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    shop_id UUID NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+    shop_id UUID NOT NULL,
     name VARCHAR(200) NOT NULL,
     slug VARCHAR(200) UNIQUE NOT NULL,
     description TEXT,

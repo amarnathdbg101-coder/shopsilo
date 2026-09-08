@@ -11,28 +11,34 @@ type CreateProductRequest struct {
 	CostPrice     float64  `json:"cost_price,omitempty" validate:"omitempty,gte=0"`
 	ComparePrice  float64  `json:"compare_price,omitempty" validate:"omitempty,gte=0"`
 	CategoryID    string   `json:"category_id" validate:"required"`
-	StockQuantity int      `json:"stock_quantity" validate:"gte=0"`
-	Images        []string `json:"images,omitempty" validate:"omitempty,max=4,dive,url"` // Max 4 images professional standard
-	Weight        float64  `json:"weight,omitempty" validate:"omitempty,gte=0"`
-	IsActive      bool     `json:"is_active"`
-	IsFeatured    bool     `json:"is_featured"`
-	Tags          []string `json:"tags,omitempty"`
+	StockQuantity     int                    `json:"stock_quantity" validate:"gte=0"`
+	MinStock          *int                   `json:"min_stock,omitempty" validate:"omitempty,gte=0"` // Shop owner configured minimum stock threshold (default 1)
+	LowStockThreshold *int                   `json:"low_stock_threshold,omitempty" validate:"omitempty,gte=0"`
+	Images            []string               `json:"images,omitempty" validate:"omitempty,max=4"` // Max 4 images professional standard
+	Weight            float64                `json:"weight,omitempty" validate:"omitempty,gte=0"`
+	IsActive          bool                   `json:"is_active"`
+	IsFeatured        bool                   `json:"is_featured"`
+	Tags              []string               `json:"tags,omitempty"`
+	Attributes        map[string]interface{} `json:"attributes,omitempty"` // Brand, Model, Size, Color, Gender, Season, etc.
 }
 
 type UpdateProductRequest struct {
-	Name          *string   `json:"name,omitempty" validate:"omitempty,min=2,max=200"`
-	Description   *string   `json:"description,omitempty"`
-	SKU           *string   `json:"sku,omitempty" validate:"omitempty,min=2,max=100"`
-	Price         *float64  `json:"price,omitempty" validate:"omitempty,gt=0"`
-	CostPrice     *float64  `json:"cost_price,omitempty" validate:"omitempty,gte=0"`
-	ComparePrice  *float64  `json:"compare_price,omitempty" validate:"omitempty,gte=0"`
-	CategoryID    *string   `json:"category_id,omitempty"`
-	StockQuantity *int      `json:"stock_quantity,omitempty" validate:"omitempty,gte=0"`
-	Images        *[]string `json:"images,omitempty" validate:"omitempty,max=4,dive,url"` // Max 4 images
-	Weight        *float64  `json:"weight,omitempty" validate:"omitempty,gte=0"`
-	IsActive      *bool     `json:"is_active,omitempty"`
-	IsFeatured    *bool     `json:"is_featured,omitempty"`
-	Tags          *[]string `json:"tags,omitempty"`
+	Name              *string                 `json:"name,omitempty" validate:"omitempty,min=2,max=200"`
+	Description       *string                 `json:"description,omitempty"`
+	SKU               *string                 `json:"sku,omitempty" validate:"omitempty,min=2,max=100"`
+	Price             *float64                `json:"price,omitempty" validate:"omitempty,gt=0"`
+	CostPrice         *float64                `json:"cost_price,omitempty" validate:"omitempty,gte=0"`
+	ComparePrice      *float64                `json:"compare_price,omitempty" validate:"omitempty,gte=0"`
+	CategoryID        *string                 `json:"category_id,omitempty"`
+	StockQuantity     *int                    `json:"stock_quantity,omitempty" validate:"omitempty,gte=0"`
+	MinStock          *int                    `json:"min_stock,omitempty" validate:"omitempty,gte=0"`
+	LowStockThreshold *int                    `json:"low_stock_threshold,omitempty" validate:"omitempty,gte=0"`
+	Images            *[]string               `json:"images,omitempty" validate:"omitempty,max=4"` // Max 4 images
+	Weight            *float64                `json:"weight,omitempty" validate:"omitempty,gte=0"`
+	IsActive          *bool                   `json:"is_active,omitempty"`
+	IsFeatured        *bool                   `json:"is_featured,omitempty"`
+	Tags              *[]string               `json:"tags,omitempty"`
+	Attributes        *map[string]interface{} `json:"attributes,omitempty"` // Dynamic JSONB attributes
 }
 
 type ProductFilter struct {

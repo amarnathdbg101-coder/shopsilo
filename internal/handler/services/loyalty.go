@@ -135,6 +135,10 @@ func (s *LoyaltyService) ListShopOffers(ctx context.Context, slug string, custom
 	return s.loyaltyRepo.ListOffers(ctx, shop.ID, userPoints)
 }
 
+func (s *LoyaltyService) ListAllActiveOffers(ctx context.Context, category string) ([]*model.StoreOffer, error) {
+	return s.loyaltyRepo.ListAllActiveOffers(ctx, category, 30)
+}
+
 func (s *LoyaltyService) GetUserLoyalty(ctx context.Context, userID string) (*model.LoyaltySummary, error) {
 	return s.loyaltyRepo.GetUserLoyalty(ctx, userID)
 }

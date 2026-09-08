@@ -394,7 +394,7 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 		lngIdx := argIdx + 1
 		distanceExpr = fmt.Sprintf(`
 			CASE
-				WHEN latitude IS NOT NULL AND longitude IS NOT NULL THEN
+				WHEN latitude IS NOT NULL AND longitude IS NOT NULL AND (latitude != 0 OR longitude != 0) THEN
 					(6371 * acos(LEAST(1.0, GREATEST(-1.0,
 						cos(radians($%d)) * cos(radians(latitude)) * cos(radians(longitude) - radians($%d)) +
 						sin(radians($%d)) * sin(radians(latitude))
@@ -412,7 +412,7 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 
 	var outerWhereClauses []string
 	if hasGeo && filter.RadiusKm != nil && *filter.RadiusKm > 0 {
-		outerWhereClauses = append(outerWhereClauses, fmt.Sprintf("distance_km IS NOT NULL AND distance_km <= $%d", argIdx))
+		outerWhereClauses = append(outerWhereClauses, fmt.Sprintf("(distance_km IS NULL OR distance_km <= $%d)", argIdx))
 		args = append(args, *filter.RadiusKm)
 		argIdx++
 	}
@@ -429,10 +429,21 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 
 	query := fmt.Sprintf(`
 		WITH filtered_shops AS (
-			SELECT id, user_id, name, slug, COALESCE(description, ''), COALESCE(category, ''), COALESCE(phone, ''), COALESCE(address, ''),
-			       latitude, longitude, COALESCE(city, ''), COALESCE(pincode, ''), COALESCE(whatsapp_number, ''),
-			       COALESCE(logo_url, ''), banners, COALESCE(timing, ''),
-			       COALESCE(opening_time, '09:00') AS opening_time, COALESCE(closing_time, '21:00') AS closing_time, COALESCE(weekly_off, '') AS weekly_off,
+			SELECT id, user_id, name, slug, 
+			       COALESCE(description, '') AS description, 
+			       COALESCE(category, '') AS category, 
+			       COALESCE(phone, '') AS phone, 
+			       COALESCE(address, '') AS address,
+			       latitude, longitude, 
+			       COALESCE(city, '') AS city, 
+			       COALESCE(pincode, '') AS pincode, 
+			       COALESCE(whatsapp_number, '') AS whatsapp_number,
+			       COALESCE(logo_url, '') AS logo_url, 
+			       banners, 
+			       COALESCE(timing, '') AS timing,
+			       COALESCE(opening_time, '09:00') AS opening_time, 
+			       COALESCE(closing_time, '21:00') AS closing_time, 
+			       COALESCE(weekly_off, '') AS weekly_off,
 			       is_open, is_active, created_at, updated_at,
 			       %s AS distance_km
 			FROM shops

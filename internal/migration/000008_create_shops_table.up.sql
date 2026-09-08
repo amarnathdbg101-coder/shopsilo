@@ -23,3 +23,14 @@ CREATE INDEX IF NOT EXISTS idx_shops_user ON shops(user_id);
 CREATE INDEX IF NOT EXISTS idx_shops_slug ON shops(slug);
 CREATE INDEX IF NOT EXISTS idx_shops_category ON shops(category);
 CREATE INDEX IF NOT EXISTS idx_shops_name_lower ON shops(LOWER(name));
+
+DO $$ 
+BEGIN 
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_products_shop'
+    ) THEN 
+        ALTER TABLE products 
+        ADD CONSTRAINT fk_products_shop 
+        FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE;
+    END IF; 
+END $$;

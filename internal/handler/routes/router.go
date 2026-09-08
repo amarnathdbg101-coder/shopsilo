@@ -116,11 +116,14 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	r.Get("/shops/{slug}/products", pc.ListByShop)
 	r.Get("/shops/{slug}/reviews", revc.List)
 	r.Get("/shops/{slug}/offers", loyc.ListOffers)
+	r.Get("/offers", loyc.ListAllOffers)
+	r.Get("/deals", loyc.ListAllOffers)
 	r.Get("/products", pc.List)
 	r.Get("/products/{id}", pc.GetByID)
 	r.Get("/products/slug/{slug}", pc.GetBySlug)
 	r.Get("/products/scan/{code}", loyc.ScanProduct)
 	r.Get("/receipts/{bill_number}", posc.ViewPublicReceiptPDF)
+	r.Get("/images/*", upc.ServeImage) // Public Cloudflare R2 image streaming proxy
 
 	// Protected routes (JWT authentication required)
 	r.Group(func(r chi.Router) {

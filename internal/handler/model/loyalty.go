@@ -27,6 +27,12 @@ type StoreOffer struct {
 	ExpiresAt         *time.Time `json:"expires_at,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
 	IsUnlocked        bool       `json:"is_unlocked"` // true if customer has enough points
+	ShopName          string     `json:"shop_name,omitempty"`
+	ShopSlug          string     `json:"shop_slug,omitempty"`
+	ShopCategory      string     `json:"shop_category,omitempty"`
+	ShopLogoURL       *string    `json:"shop_logo_url,omitempty"`
+	ShopLatitude      *float64   `json:"shop_latitude,omitempty"`
+	ShopLongitude     *float64   `json:"shop_longitude,omitempty"`
 }
 
 type LoyaltySummary struct {

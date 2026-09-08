@@ -135,6 +135,19 @@ func (c *LoyaltyController) ListOffers(w http.ResponseWriter, r *http.Request) {
 	reuse.Success(w, "Store offers retrieved successfully", offers)
 }
 
+// ListAllOffers returns all active promotional offers across shops for marketplace deals feed (Public)
+func (c *LoyaltyController) ListAllOffers(w http.ResponseWriter, r *http.Request) {
+	category := r.URL.Query().Get("category")
+	offers, err := c.service.ListAllActiveOffers(r.Context(), category)
+	if err != nil {
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Active deals retrieved successfully", offers)
+}
+
+
 // GetUserLoyalty returns the customer's current points and VIP tier status (Protected - Customer)
 func (c *LoyaltyController) GetUserLoyalty(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())

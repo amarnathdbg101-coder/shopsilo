@@ -58,20 +58,31 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 		slug = fmt.Sprintf("%s-%d", slug, r.Intn(9000)+1000)
 	}
 
+	minStock := 1
+	if input.MinStock != nil && *input.MinStock > 0 {
+		minStock = *input.MinStock
+	} else if input.LowStockThreshold != nil && *input.LowStockThreshold > 0 {
+		minStock = *input.LowStockThreshold
+	}
+
 	product := &model.Product{
-		ShopID:       shop.ID,
-		Name:         strings.TrimSpace(input.Name),
-		Slug:         slug,
-		Description:  strings.TrimSpace(input.Description),
-		SKU:          strings.TrimSpace(strings.ToUpper(input.SKU)),
-		Price:        input.Price,
-		ComparePrice: input.ComparePrice,
-		CategoryID:   input.CategoryID,
-		Images:       input.Images,
-		Weight:       input.Weight,
-		IsActive:     true,
-		IsFeatured:   input.IsFeatured,
-		Tags:         input.Tags,
+		ShopID:            shop.ID,
+		Name:              strings.TrimSpace(input.Name),
+		Slug:              slug,
+		Description:       strings.TrimSpace(input.Description),
+		SKU:               strings.TrimSpace(strings.ToUpper(input.SKU)),
+		Price:             input.Price,
+		CostPrice:         input.CostPrice,
+		ComparePrice:      input.ComparePrice,
+		CategoryID:        input.CategoryID,
+		Images:            input.Images,
+		Weight:            input.Weight,
+		IsActive:          true,
+		IsFeatured:        input.IsFeatured,
+		Tags:              input.Tags,
+		Attributes:        input.Attributes,
+		MinStock:          minStock,
+		LowStockThreshold: minStock,
 	}
 
 	return s.productRepo.Create(ctx, product, input.StockQuantity)
@@ -165,6 +176,27 @@ func (s *ProductService) UpdateProduct(ctx context.Context, userID, productID st
 	}
 	if input.Tags != nil {
 		existing.Tags = *input.Tags
+	}
+	if input.CostPrice != nil {
+		existing.CostPrice = *input.CostPrice
+	}
+	if input.Attributes != nil {
+		existing.Attributes = *input.Attributes
+	}
+	if input.MinStock != nil {
+		val := *input.MinStock
+		if val < 1 {
+			val = 1
+		}
+		existing.MinStock = val
+		existing.LowStockThreshold = val
+	} else if input.LowStockThreshold != nil {
+		val := *input.LowStockThreshold
+		if val < 1 {
+			val = 1
+		}
+		existing.MinStock = val
+		existing.LowStockThreshold = val
 	}
 
 	// Handle images update & clean orphaned images from R2
