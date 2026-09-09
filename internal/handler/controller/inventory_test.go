@@ -73,4 +73,40 @@ func TestInventoryControllerValidation(t *testing.T) {
 			t.Fatalf("expected 401 Unauthorized, got %d", w.Code)
 		}
 	})
+
+	t.Run("GetSupplierReorderWhatsApp Unauthorized without claims", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/shops/me/inventory/reorder/whatsapp?supplier_phone=9876543210", nil)
+		w := httptest.NewRecorder()
+
+		ic.GetSupplierReorderWhatsApp(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401 Unauthorized, got %d", w.Code)
+		}
+	})
+
+	t.Run("SubscribeStockAlert Invalid Body - Short Phone", func(t *testing.T) {
+		body, _ := json.Marshal(dto.CreateStockAlertRequest{
+			CustomerPhone: "123", // too short (min 10)
+		})
+		req := httptest.NewRequest(http.MethodPost, "/products/prod-123/notify-me", bytes.NewBuffer(body))
+		w := httptest.NewRecorder()
+
+		ic.SubscribeStockAlert(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request, got %d", w.Code)
+		}
+	})
+
+	t.Run("GetDemandWatchlist Unauthorized without claims", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/shops/me/inventory/demand-watchlist", nil)
+		w := httptest.NewRecorder()
+
+		ic.GetDemandWatchlist(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401 Unauthorized, got %d", w.Code)
+		}
+	})
 }

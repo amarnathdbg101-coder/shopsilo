@@ -128,4 +128,77 @@ func TestKhataControllerValidation(t *testing.T) {
 			t.Fatalf("expected 401 Unauthorized, got %d", w.Code)
 		}
 	})
+
+	t.Run("GetPaymentReminder Unauthorized without claims", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/shops/me/khata/9876543210/reminder", nil)
+		w := httptest.NewRecorder()
+
+		kc.GetPaymentReminder(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401 Unauthorized, got %d", w.Code)
+		}
+	})
+
+	t.Run("UpdateCreditLimit Unauthorized without claims", func(t *testing.T) {
+		body, _ := json.Marshal(dto.SetCreditLimitRequest{CreditLimit: 5000})
+		req := httptest.NewRequest(http.MethodPut, "/shops/me/khata/9876543210/credit-limit", bytes.NewBuffer(body))
+		w := httptest.NewRecorder()
+
+		kc.UpdateCreditLimit(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401 Unauthorized, got %d", w.Code)
+		}
+	})
+
+	t.Run("UpdateCreditLimit Invalid Body - Negative Limit", func(t *testing.T) {
+		claims := &middleware.Claims{
+			UserID: "shop-owner-123",
+			Role:   "shop",
+		}
+		body, _ := json.Marshal(dto.SetCreditLimitRequest{CreditLimit: -100})
+		req := httptest.NewRequest(http.MethodPut, "/shops/me/khata/9876543210/credit-limit", bytes.NewBuffer(body))
+		req = req.WithContext(context.WithValue(req.Context(), middleware.ContextKeyUser, claims))
+		w := httptest.NewRecorder()
+
+		kc.UpdateCreditLimit(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request, got %d", w.Code)
+		}
+	})
+
+	t.Run("GetAgingReport Unauthorized without claims", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/shops/me/khata/aging", nil)
+		w := httptest.NewRecorder()
+
+		kc.GetAgingReport(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401 Unauthorized, got %d", w.Code)
+		}
+	})
+
+	t.Run("DownloadStatementPDF Unauthorized without claims", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/shops/me/khata/9876543210/statement.pdf", nil)
+		w := httptest.NewRecorder()
+
+		kc.DownloadStatementPDF(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401 Unauthorized, got %d", w.Code)
+		}
+	})
+
+	t.Run("GetStatementShare Unauthorized without claims", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/shops/me/khata/9876543210/statement/share", nil)
+		w := httptest.NewRecorder()
+
+		kc.GetStatementShare(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401 Unauthorized, got %d", w.Code)
+		}
+	})
 }

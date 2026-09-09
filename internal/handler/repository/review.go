@@ -28,31 +28,34 @@ func NewReviewRepo(db *pgxpool.Pool, logger *zap.Logger) *ReviewRepo {
 	}
 }
 
-// UpsertReview creates or updates a review and automatically checks if user is a verified in-store visitor.
+// UpsertReview creates or updates a review and automatically checks if user is a verified in-store visitor in a single atomic query.
 func (r *ReviewRepo) UpsertReview(ctx context.Context, shopID, userID string, rating int, comment string) (*model.ShopReview, error) {
-	// Check if user has completed an in-store reservation at this shop
-	var isVerified bool
-	checkQuery := `
-		SELECT EXISTS (
-			SELECT 1 FROM reservations
-			WHERE shop_id = $1 AND user_id = $2 AND status = 'completed'
-		)
-	`
-	_ = r.db.QueryRow(ctx, checkQuery, shopID, userID).Scan(&isVerified)
-
 	query := `
-		INSERT INTO shop_reviews (shop_id, user_id, rating, comment, is_verified_visitor, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-		ON CONFLICT (shop_id, user_id)
-		DO UPDATE SET
-			rating = EXCLUDED.rating,
-			comment = EXCLUDED.comment,
-			is_verified_visitor = EXCLUDED.is_verified_visitor,
-			updated_at = NOW()
-		RETURNING id, shop_id, user_id, rating, COALESCE(comment, ''), is_verified_visitor, created_at, updated_at
+		WITH inserted AS (
+			INSERT INTO shop_reviews (shop_id, user_id, rating, comment, is_verified_visitor, created_at, updated_at)
+			VALUES (
+				$1, 
+				$2, 
+				$3, 
+				$4, 
+				EXISTS (SELECT 1 FROM reservations WHERE shop_id = $1 AND user_id = $2 AND status = 'completed'), 
+				NOW(), 
+				NOW()
+			)
+			ON CONFLICT (shop_id, user_id)
+			DO UPDATE SET
+				rating = EXCLUDED.rating,
+				comment = EXCLUDED.comment,
+				is_verified_visitor = EXCLUDED.is_verified_visitor,
+				updated_at = NOW()
+			RETURNING id, shop_id, user_id, rating, COALESCE(comment, '') AS comment, is_verified_visitor, created_at, updated_at
+		)
+		SELECT i.id, i.shop_id, i.user_id, i.rating, i.comment, i.is_verified_visitor, i.created_at, i.updated_at, COALESCE(u.name, '')
+		FROM inserted i
+		LEFT JOIN users u ON u.id = i.user_id;
 	`
 	rev := &model.ShopReview{}
-	err := r.db.QueryRow(ctx, query, shopID, userID, rating, strings.TrimSpace(comment), isVerified).Scan(
+	err := r.db.QueryRow(ctx, query, shopID, userID, rating, strings.TrimSpace(comment)).Scan(
 		&rev.ID,
 		&rev.ShopID,
 		&rev.UserID,
@@ -61,16 +64,12 @@ func (r *ReviewRepo) UpsertReview(ctx context.Context, shopID, userID string, ra
 		&rev.IsVerifiedVisitor,
 		&rev.CreatedAt,
 		&rev.UpdatedAt,
+		&rev.UserName,
 	)
 	if err != nil {
 		r.logger.Error("failed to upsert review", zap.Error(err), zap.String("shop_id", shopID), zap.String("user_id", userID))
 		return nil, err
 	}
-
-	// Fetch user name
-	var name string
-	_ = r.db.QueryRow(ctx, `SELECT COALESCE(name, '') FROM users WHERE id = $1`, userID).Scan(&name)
-	rev.UserName = name
 
 	return rev, nil
 }

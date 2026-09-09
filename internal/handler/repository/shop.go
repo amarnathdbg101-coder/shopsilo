@@ -91,18 +91,26 @@ func (r *ShopRepo) CreateWithTx(ctx context.Context, tx pgx.Tx, s *model.Shop) (
 		closingTime = "21:00"
 	}
 
+	status := s.Status
+	if status == "" {
+		status = model.ShopStatusActive
+	}
+
 	query := `
 		INSERT INTO shops (
 			user_id, name, slug, description, category, phone, address,
 			latitude, longitude, city, pincode, whatsapp_number,
-			logo_url, banners, timing, opening_time, closing_time, weekly_off, is_open, is_active, created_at, updated_at
+			logo_url, banners, timing, opening_time, closing_time, weekly_off, is_open, is_active,
+			status, creation_ip, creation_user_agent, device_fingerprint, created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW(), NOW())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, NOW(), NOW())
 		RETURNING id, user_id, name, slug, COALESCE(description, ''), COALESCE(category, ''), COALESCE(phone, ''), COALESCE(address, ''),
 		          latitude, longitude, COALESCE(city, ''), COALESCE(pincode, ''), COALESCE(whatsapp_number, ''),
 		          COALESCE(logo_url, ''), banners, COALESCE(timing, ''),
 		          COALESCE(opening_time, '09:00'), COALESCE(closing_time, '21:00'), COALESCE(weekly_off, ''),
-		          is_open, is_active, created_at, updated_at
+		          is_open, is_active, status, flagged_count, COALESCE(suspension_reason, ''),
+		          COALESCE(creation_ip, ''), COALESCE(creation_user_agent, ''), COALESCE(device_fingerprint, ''),
+		          created_at, updated_at
 	`
 	created := &model.Shop{}
 	var bannersBytes []byte
@@ -130,6 +138,10 @@ func (r *ShopRepo) CreateWithTx(ctx context.Context, tx pgx.Tx, s *model.Shop) (
 		strings.TrimSpace(s.WeeklyOff),
 		s.IsOpen,
 		s.IsActive,
+		status,
+		strings.TrimSpace(s.CreationIP),
+		strings.TrimSpace(s.CreationUserAgent),
+		strings.TrimSpace(s.DeviceFingerprint),
 	).Scan(
 		&created.ID,
 		&created.UserID,
@@ -152,6 +164,12 @@ func (r *ShopRepo) CreateWithTx(ctx context.Context, tx pgx.Tx, s *model.Shop) (
 		&created.WeeklyOff,
 		&created.IsOpen,
 		&created.IsActive,
+		&created.Status,
+		&created.FlaggedCount,
+		&created.SuspensionReason,
+		&created.CreationIP,
+		&created.CreationUserAgent,
+		&created.DeviceFingerprint,
 		&created.CreatedAt,
 		&created.UpdatedAt,
 	)
@@ -182,7 +200,9 @@ func (r *ShopRepo) FindByUserID(ctx context.Context, userID string) (*model.Shop
 		       latitude, longitude, COALESCE(city, ''), COALESCE(pincode, ''), COALESCE(whatsapp_number, ''),
 		       COALESCE(logo_url, ''), banners, COALESCE(timing, ''),
 		       COALESCE(opening_time, '09:00'), COALESCE(closing_time, '21:00'), COALESCE(weekly_off, ''),
-		       is_open, is_active, created_at, updated_at
+		       is_open, is_active, status, flagged_count, COALESCE(suspension_reason, ''),
+		       COALESCE(creation_ip, ''), COALESCE(creation_user_agent, ''), COALESCE(device_fingerprint, ''),
+		       created_at, updated_at
 		FROM shops
 		WHERE user_id = $1
 		LIMIT 1
@@ -212,6 +232,12 @@ func (r *ShopRepo) FindByUserID(ctx context.Context, userID string) (*model.Shop
 		&s.WeeklyOff,
 		&s.IsOpen,
 		&s.IsActive,
+		&s.Status,
+		&s.FlaggedCount,
+		&s.SuspensionReason,
+		&s.CreationIP,
+		&s.CreationUserAgent,
+		&s.DeviceFingerprint,
 		&s.CreatedAt,
 		&s.UpdatedAt,
 	)
@@ -238,9 +264,11 @@ func (r *ShopRepo) FindByID(ctx context.Context, id string) (*model.Shop, error)
 		       latitude, longitude, COALESCE(city, ''), COALESCE(pincode, ''), COALESCE(whatsapp_number, ''),
 		       COALESCE(logo_url, ''), banners, COALESCE(timing, ''),
 		       COALESCE(opening_time, '09:00'), COALESCE(closing_time, '21:00'), COALESCE(weekly_off, ''),
-		       is_open, is_active, created_at, updated_at
+		       is_open, is_active, status, flagged_count, COALESCE(suspension_reason, ''),
+		       COALESCE(creation_ip, ''), COALESCE(creation_user_agent, ''), COALESCE(device_fingerprint, ''),
+		       created_at, updated_at
 		FROM shops
-		WHERE id = $1 AND is_active = true
+		WHERE id = $1
 		LIMIT 1
 	`
 	s := &model.Shop{}
@@ -268,6 +296,12 @@ func (r *ShopRepo) FindByID(ctx context.Context, id string) (*model.Shop, error)
 		&s.WeeklyOff,
 		&s.IsOpen,
 		&s.IsActive,
+		&s.Status,
+		&s.FlaggedCount,
+		&s.SuspensionReason,
+		&s.CreationIP,
+		&s.CreationUserAgent,
+		&s.DeviceFingerprint,
 		&s.CreatedAt,
 		&s.UpdatedAt,
 	)
@@ -294,9 +328,11 @@ func (r *ShopRepo) FindBySlug(ctx context.Context, slug string) (*model.Shop, er
 		       latitude, longitude, COALESCE(city, ''), COALESCE(pincode, ''), COALESCE(whatsapp_number, ''),
 		       COALESCE(logo_url, ''), banners, COALESCE(timing, ''),
 		       COALESCE(opening_time, '09:00'), COALESCE(closing_time, '21:00'), COALESCE(weekly_off, ''),
-		       is_open, is_active, created_at, updated_at
+		       is_open, is_active, status, flagged_count, COALESCE(suspension_reason, ''),
+		       COALESCE(creation_ip, ''), COALESCE(creation_user_agent, ''), COALESCE(device_fingerprint, ''),
+		       created_at, updated_at
 		FROM shops
-		WHERE slug = LOWER(TRIM($1)) AND is_active = true
+		WHERE slug = LOWER(TRIM($1)) AND is_active = true AND status = 'active'
 		LIMIT 1
 	`
 	s := &model.Shop{}
@@ -324,6 +360,12 @@ func (r *ShopRepo) FindBySlug(ctx context.Context, slug string) (*model.Shop, er
 		&s.WeeklyOff,
 		&s.IsOpen,
 		&s.IsActive,
+		&s.Status,
+		&s.FlaggedCount,
+		&s.SuspensionReason,
+		&s.CreationIP,
+		&s.CreationUserAgent,
+		&s.DeviceFingerprint,
 		&s.CreatedAt,
 		&s.UpdatedAt,
 	)
@@ -360,6 +402,7 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 	argIdx := 1
 
 	innerWhereClauses = append(innerWhereClauses, "is_active = true")
+	innerWhereClauses = append(innerWhereClauses, "status = 'active'")
 
 	if filter.Search != "" {
 		searchTerm := "%" + strings.TrimSpace(filter.Search) + "%"
@@ -444,7 +487,12 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 			       COALESCE(opening_time, '09:00') AS opening_time, 
 			       COALESCE(closing_time, '21:00') AS closing_time, 
 			       COALESCE(weekly_off, '') AS weekly_off,
-			       is_open, is_active, created_at, updated_at,
+			       is_open, is_active, status, flagged_count,
+			       COALESCE(suspension_reason, '') AS suspension_reason,
+			       COALESCE(creation_ip, '') AS creation_ip,
+			       COALESCE(creation_user_agent, '') AS creation_user_agent,
+			       COALESCE(device_fingerprint, '') AS device_fingerprint,
+			       created_at, updated_at,
 			       %s AS distance_km
 			FROM shops
 			WHERE %s
@@ -452,7 +500,9 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 		SELECT id, user_id, name, slug, description, category, phone, address,
 		       latitude, longitude, city, pincode, whatsapp_number,
 		       logo_url, banners, timing, opening_time, closing_time, weekly_off,
-		       is_open, is_active, created_at, updated_at,
+		       is_open, is_active, status, flagged_count, suspension_reason,
+		       creation_ip, creation_user_agent, device_fingerprint,
+		       created_at, updated_at,
 		       distance_km,
 		       COUNT(*) OVER() AS total_count
 		FROM filtered_shops
@@ -500,6 +550,12 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 			&s.WeeklyOff,
 			&s.IsOpen,
 			&s.IsActive,
+			&s.Status,
+			&s.FlaggedCount,
+			&s.SuspensionReason,
+			&s.CreationIP,
+			&s.CreationUserAgent,
+			&s.DeviceFingerprint,
 			&s.CreatedAt,
 			&s.UpdatedAt,
 			&distKm,
@@ -543,7 +599,9 @@ func (r *ShopRepo) Update(ctx context.Context, s *model.Shop) (*model.Shop, erro
 		          latitude, longitude, COALESCE(city, ''), COALESCE(pincode, ''), COALESCE(whatsapp_number, ''),
 		          COALESCE(logo_url, ''), banners, COALESCE(timing, ''),
 		          COALESCE(opening_time, '09:00'), COALESCE(closing_time, '21:00'), COALESCE(weekly_off, ''),
-		          is_open, is_active, created_at, updated_at
+		          is_open, is_active, status, flagged_count, COALESCE(suspension_reason, ''),
+		          COALESCE(creation_ip, ''), COALESCE(creation_user_agent, ''), COALESCE(device_fingerprint, ''),
+		          created_at, updated_at
 	`
 	updated := &model.Shop{}
 	var bannersBytes []byte
@@ -593,6 +651,12 @@ func (r *ShopRepo) Update(ctx context.Context, s *model.Shop) (*model.Shop, erro
 		&updated.WeeklyOff,
 		&updated.IsOpen,
 		&updated.IsActive,
+		&updated.Status,
+		&updated.FlaggedCount,
+		&updated.SuspensionReason,
+		&updated.CreationIP,
+		&updated.CreationUserAgent,
+		&updated.DeviceFingerprint,
 		&updated.CreatedAt,
 		&updated.UpdatedAt,
 	)
@@ -626,7 +690,9 @@ func (r *ShopRepo) ToggleStatus(ctx context.Context, userID string, isOpen bool)
 		          latitude, longitude, COALESCE(city, ''), COALESCE(pincode, ''), COALESCE(whatsapp_number, ''),
 		          COALESCE(logo_url, ''), banners, COALESCE(timing, ''),
 		          COALESCE(opening_time, '09:00'), COALESCE(closing_time, '21:00'), COALESCE(weekly_off, ''),
-		          is_open, is_active, created_at, updated_at
+		          is_open, is_active, status, flagged_count, COALESCE(suspension_reason, ''),
+		          COALESCE(creation_ip, ''), COALESCE(creation_user_agent, ''), COALESCE(device_fingerprint, ''),
+		          created_at, updated_at
 	`
 	updated := &model.Shop{}
 	var bannersBytes []byte
@@ -653,6 +719,12 @@ func (r *ShopRepo) ToggleStatus(ctx context.Context, userID string, isOpen bool)
 		&updated.WeeklyOff,
 		&updated.IsOpen,
 		&updated.IsActive,
+		&updated.Status,
+		&updated.FlaggedCount,
+		&updated.SuspensionReason,
+		&updated.CreationIP,
+		&updated.CreationUserAgent,
+		&updated.DeviceFingerprint,
 		&updated.CreatedAt,
 		&updated.UpdatedAt,
 	)
@@ -688,3 +760,34 @@ func (r *ShopRepo) DeleteWithTx(ctx context.Context, tx pgx.Tx, userID string) e
 	}
 	return nil
 }
+
+// GetShopDailyDigest computes today's key retail metrics in a single optimized query.
+func (r *ShopRepo) GetShopDailyDigest(ctx context.Context, shopID string) (*model.ShopDailyDigest, error) {
+	query := `
+		SELECT
+			COALESCE((SELECT SUM(total_amount) FROM pos_bills WHERE shop_id = $1 AND created_at >= CURRENT_DATE), 0) AS today_sales_amount,
+			COALESCE((SELECT COUNT(*) FROM pos_bills WHERE shop_id = $1 AND created_at >= CURRENT_DATE), 0) AS today_sales_count,
+			COALESCE((SELECT COUNT(*) FROM reservations WHERE shop_id = $1 AND status = 'active' AND expires_at >= NOW()), 0) AS active_reservations,
+			COALESCE((SELECT COUNT(*) FROM products p JOIN inventory i ON p.id = i.product_id WHERE p.shop_id = $1 AND p.is_active = true AND i.quantity <= i.low_stock_threshold), 0) AS low_stock_count,
+			COALESCE((SELECT SUM(current_balance) FROM customer_khatas WHERE shop_id = $1 AND current_balance > 0), 0) AS total_khata_udhar,
+			COALESCE((SELECT COUNT(*) FROM customer_khatas WHERE shop_id = $1 AND current_balance > 0), 0) AS total_khata_customers;
+	`
+	digest := &model.ShopDailyDigest{
+		Date: time.Now().Format("2006-01-02"),
+	}
+	err := r.db.QueryRow(ctx, query, shopID).Scan(
+		&digest.TodaySalesAmount,
+		&digest.TodaySalesCount,
+		&digest.ActiveReservations,
+		&digest.LowStockCount,
+		&digest.TotalKhataUdhar,
+		&digest.TotalKhataCustomers,
+	)
+	if err != nil {
+		r.logger.Error("failed to get shop daily digest", zap.Error(err), zap.String("shop_id", shopID))
+		return nil, err
+	}
+
+	return digest, nil
+}
+

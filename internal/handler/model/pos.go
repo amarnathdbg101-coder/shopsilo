@@ -14,7 +14,10 @@ type POSBill struct {
 	TotalAmount    float64        `json:"total_amount"`
 	TotalCost      float64        `json:"total_cost"`
 	NetProfit      float64        `json:"net_profit"`
-	PaymentMethod  string         `json:"payment_method"` // 'cash', 'upi', 'card'
+	PaymentMethod  string         `json:"payment_method"` // 'cash', 'upi', 'card', 'split', 'credit'
+	CashAmount     float64        `json:"cash_amount"`
+	OnlineAmount   float64        `json:"online_amount"`
+	KhataAmount    float64        `json:"khata_amount"`
 	CreatedAt      time.Time      `json:"created_at"`
 	Items          []*POSBillItem `json:"items,omitempty"`
 	Shop           *Shop          `json:"shop,omitempty"`

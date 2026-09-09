@@ -183,7 +183,8 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*model.Product, 
 	query := `
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
 		       p.category_id, p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
-		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1)
+		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1),
+		       COALESCE(p.floor_price, 0), COALESCE(p.allow_bargain, true)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
 		WHERE p.id = $1 AND p.is_active = true
@@ -215,6 +216,8 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*model.Product, 
 		&inv.Quantity,
 		&inv.ReservedQuantity,
 		&inv.LowStockThreshold,
+		&p.FloorPrice,
+		&p.AllowBargain,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -283,6 +286,69 @@ func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*model.Produ
 			return nil, ErrProductNotFound
 		}
 		r.logger.Error("failed to find product by slug", zap.Error(err), zap.String("slug", slug))
+		return nil, err
+	}
+
+	p.Images = []string{}
+	if len(imagesBytes) > 0 {
+		_ = json.Unmarshal(imagesBytes, &p.Images)
+	}
+
+	p.Attributes = make(map[string]interface{})
+	if len(attributesBytes) > 0 {
+		_ = json.Unmarshal(attributesBytes, &p.Attributes)
+	}
+
+	inv.AvailableQuantity = inv.Quantity - inv.ReservedQuantity
+	p.Inventory = inv
+
+	computeProfit(p)
+	return p, nil
+}
+
+// FindBySKU looks up an active product in a shop by its SKU or barcode.
+func (r *ProductRepo) FindBySKU(ctx context.Context, shopID, sku string) (*model.Product, error) {
+	query := `
+		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
+		       p.category_id, p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
+		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1)
+		FROM products p
+		LEFT JOIN inventory i ON i.product_id = p.id
+		WHERE p.shop_id = $1 AND UPPER(TRIM(p.sku)) = UPPER(TRIM($2))
+		LIMIT 1
+	`
+	p := &model.Product{}
+	var imagesBytes, attributesBytes []byte
+	inv := &model.Inventory{}
+
+	err := r.db.QueryRow(ctx, query, shopID, sku).Scan(
+		&p.ID,
+		&p.ShopID,
+		&p.Name,
+		&p.Slug,
+		&p.Description,
+		&p.SKU,
+		&p.Price,
+		&p.CostPrice,
+		&p.ComparePrice,
+		&p.CategoryID,
+		&imagesBytes,
+		&p.Weight,
+		&p.IsActive,
+		&p.IsFeatured,
+		&p.Tags,
+		&attributesBytes,
+		&p.CreatedAt,
+		&p.UpdatedAt,
+		&inv.Quantity,
+		&inv.ReservedQuantity,
+		&inv.LowStockThreshold,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrProductNotFound
+		}
+		r.logger.Error("failed to find product by sku", zap.Error(err), zap.String("shop_id", shopID), zap.String("sku", sku))
 		return nil, err
 	}
 
@@ -836,3 +902,287 @@ func (r *ProductRepo) GetProductPerformanceMatrix(ctx context.Context, shopID st
 
 	return matrix, nil
 }
+
+// FindNearbyProducts searches for in-stock products in shops within radiusKm from (lat, lng), sorted by distance.
+func (r *ProductRepo) FindNearbyProducts(
+	ctx context.Context,
+	lat, lng, radiusKm float64,
+	query, category string,
+	openNowOnly bool,
+	page, limit int,
+) ([]*dto.NearbyProductItem, int, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 50 {
+		limit = 10
+	}
+	offset := (page - 1) * limit
+
+	var whereClauses []string
+	args := []interface{}{lat, lng, radiusKm}
+	argIdx := 4
+
+	whereClauses = append(whereClauses, "p.is_active = true")
+	whereClauses = append(whereClauses, "s.is_active = true")
+	whereClauses = append(whereClauses, "s.status = 'active'")
+	whereClauses = append(whereClauses, "s.latitude IS NOT NULL AND s.longitude IS NOT NULL")
+	whereClauses = append(whereClauses, "(i.quantity - i.reserved_quantity) > 0")
+
+	// Haversine distance condition in km
+	distanceFormula := `(6371 * acos(LEAST(1.0, GREATEST(-1.0,
+		cos(radians($1)) * cos(radians(s.latitude)) * cos(radians(s.longitude) - radians($2)) +
+		sin(radians($1)) * sin(radians(s.latitude))
+	))))`
+
+	whereClauses = append(whereClauses, fmt.Sprintf("%s <= $3", distanceFormula))
+
+	if openNowOnly {
+		whereClauses = append(whereClauses, "s.is_open = true")
+	}
+
+	trimmedQ := strings.TrimSpace(query)
+	if trimmedQ != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR p.description ILIKE $%d OR p.sku ILIKE $%d)", argIdx, argIdx, argIdx))
+		args = append(args, "%"+trimmedQ+"%")
+		argIdx++
+	}
+
+	trimmedCat := strings.TrimSpace(category)
+	if trimmedCat != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("s.category ILIKE $%d", argIdx))
+		args = append(args, "%"+trimmedCat+"%")
+		argIdx++
+	}
+
+	whereSQL := strings.Join(whereClauses, " AND ")
+
+	sqlQuery := fmt.Sprintf(`
+		SELECT
+			p.id, p.name, p.slug, p.price, p.images, (i.quantity - i.reserved_quantity) AS avail_qty,
+			s.id AS shop_id, s.name AS shop_name, s.slug AS shop_slug, s.address AS shop_address, s.phone AS shop_phone,
+			s.is_open, s.opening_time, s.closing_time, s.weekly_off,
+			%s AS distance_km,
+			COUNT(*) OVER() AS total_count
+		FROM products p
+		JOIN shops s ON p.shop_id = s.id
+		JOIN inventory i ON p.id = i.product_id
+		WHERE %s
+		ORDER BY distance_km ASC, p.price ASC
+		LIMIT $%d OFFSET $%d
+	`, distanceFormula, whereSQL, argIdx, argIdx+1)
+
+	args = append(args, limit, offset)
+
+	rows, err := r.db.Query(ctx, sqlQuery, args...)
+	if err != nil {
+		r.logger.Error("failed to find nearby products", zap.Error(err))
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var items []*dto.NearbyProductItem
+	totalCount := 0
+
+	for rows.Next() {
+		item := &dto.NearbyProductItem{}
+		var imagesBytes []byte
+		var openTime, closeTime, weeklyOff string
+
+		err := rows.Scan(
+			&item.ProductID,
+			&item.Name,
+			&item.Slug,
+			&item.Price,
+			&imagesBytes,
+			&item.AvailableQuantity,
+			&item.ShopID,
+			&item.ShopName,
+			&item.ShopSlug,
+			&item.ShopAddress,
+			&item.ShopPhone,
+			&item.IsOpen,
+			&openTime,
+			&closeTime,
+			&weeklyOff,
+			&item.DistanceKm,
+			&totalCount,
+		)
+		if err != nil {
+			r.logger.Error("failed to scan nearby product row", zap.Error(err))
+			return nil, 0, err
+		}
+
+		item.Images = []string{}
+		if len(imagesBytes) > 0 {
+			_ = json.Unmarshal(imagesBytes, &item.Images)
+		}
+
+		dummyShop := &model.Shop{
+			IsOpen:      item.IsOpen,
+			IsActive:    true,
+			OpeningTime: openTime,
+			ClosingTime: closeTime,
+			WeeklyOff:   weeklyOff,
+		}
+		computeShopOpenStatus(dummyShop)
+		item.IsCurrentlyOpen = dummyShop.IsCurrentlyOpen
+
+		item.DistanceKm = math.Round(item.DistanceKm*100) / 100
+		items = append(items, item)
+	}
+
+	return items, totalCount, nil
+}
+
+// CreateStockAlert registers a customer's request to be alerted when an out-of-stock product is restocked.
+func (r *ProductRepo) CreateStockAlert(ctx context.Context, productID, shopID, phone, name string) error {
+	query := `
+		INSERT INTO product_stock_alerts (product_id, shop_id, customer_phone, customer_name, notified, created_at)
+		VALUES ($1, $2, $3, $4, false, NOW())
+		ON CONFLICT (product_id, customer_phone) DO UPDATE 
+		SET customer_name = EXCLUDED.customer_name, notified = false, created_at = NOW()
+	`
+	_, err := r.db.Exec(ctx, query, productID, shopID, strings.TrimSpace(phone), strings.TrimSpace(name))
+	if err != nil {
+		r.logger.Error("failed to create product stock alert", zap.Error(err), zap.String("product_id", productID))
+		return err
+	}
+	return nil
+}
+
+// GetDemandWatchlist aggregates unnotified customer interest for out-of-stock and low-stock items.
+func (r *ProductRepo) GetDemandWatchlist(ctx context.Context, shopID string) ([]*dto.DemandWatchlistItem, error) {
+	query := `
+		SELECT 
+			p.id, p.name, p.sku, 
+			(i.quantity - i.reserved_quantity) AS current_stock,
+			COUNT(a.id) AS waiting_customers_count
+		FROM product_stock_alerts a
+		JOIN products p ON a.product_id = p.id
+		JOIN inventory i ON p.id = i.product_id
+		WHERE a.shop_id = $1 AND a.notified = false
+		GROUP BY p.id, p.name, p.sku, i.quantity, i.reserved_quantity
+		ORDER BY waiting_customers_count DESC, p.name ASC
+	`
+	rows, err := r.db.Query(ctx, query, shopID)
+	if err != nil {
+		r.logger.Error("failed to query demand watchlist", zap.Error(err), zap.String("shop_id", shopID))
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []*dto.DemandWatchlistItem
+	for rows.Next() {
+		var item dto.DemandWatchlistItem
+		if err := rows.Scan(&item.ProductID, &item.ProductName, &item.SKU, &item.CurrentStock, &item.WaitingCustomersCount); err != nil {
+			return nil, err
+		}
+		list = append(list, &item)
+	}
+	if list == nil {
+		list = []*dto.DemandWatchlistItem{}
+	}
+	return list, nil
+}
+
+// CountWaitingCustomers returns the number of customers awaiting a restock of the product.
+func (r *ProductRepo) CountWaitingCustomers(ctx context.Context, productID string) (int, error) {
+	var count int
+	err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM product_stock_alerts WHERE product_id = $1 AND notified = false`, productID).Scan(&count)
+	return count, err
+}
+
+// CreateBargainDeal saves a locked customer offer or accepted counter-offer.
+func (r *ProductRepo) CreateBargainDeal(ctx context.Context, deal *model.ProductBargainDeal) error {
+	query := `
+		INSERT INTO product_bargain_deals (
+			product_id, shop_id, customer_phone, customer_name, deal_code,
+			offered_price, agreed_price, bundle_quantity, status, expires_at, created_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+		RETURNING id, created_at
+	`
+	return r.db.QueryRow(
+		ctx, query,
+		deal.ProductID, deal.ShopID, strings.TrimSpace(deal.CustomerPhone), strings.TrimSpace(deal.CustomerName),
+		deal.DealCode, deal.OfferedPrice, deal.AgreedPrice, deal.BundleQuantity, deal.Status, deal.ExpiresAt,
+	).Scan(&deal.ID, &deal.CreatedAt)
+}
+
+// GetValidBargainDeal fetches an active unexpired bargain deal for checkout redemption.
+func (r *ProductRepo) GetValidBargainDeal(ctx context.Context, productID, dealCode string) (*model.ProductBargainDeal, error) {
+	query := `
+		SELECT id, product_id, shop_id, customer_phone, COALESCE(customer_name, ''),
+		       deal_code, offered_price, agreed_price, bundle_quantity, status, expires_at, created_at
+		FROM product_bargain_deals
+		WHERE product_id = $1 AND UPPER(deal_code) = UPPER($2) AND status = 'accepted' AND expires_at > NOW()
+		LIMIT 1
+	`
+	var deal model.ProductBargainDeal
+	err := r.db.QueryRow(ctx, query, productID, strings.TrimSpace(dealCode)).Scan(
+		&deal.ID, &deal.ProductID, &deal.ShopID, &deal.CustomerPhone, &deal.CustomerName,
+		&deal.DealCode, &deal.OfferedPrice, &deal.AgreedPrice, &deal.BundleQuantity, &deal.Status,
+		&deal.ExpiresAt, &deal.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("bargain deal not found or expired")
+		}
+		return nil, err
+	}
+	return &deal, nil
+}
+
+// RedeemBargainDeal marks a deal code as redeemed upon POS sale completion.
+func (r *ProductRepo) RedeemBargainDeal(ctx context.Context, dealID string) error {
+	_, err := r.db.Exec(ctx, `UPDATE product_bargain_deals SET status = 'redeemed' WHERE id = $1`, dealID)
+	return err
+}
+
+// FindActiveProductsByTokens searches active store products by a set of keyword tokens for Parchi parsing.
+func (r *ProductRepo) FindActiveProductsByTokens(ctx context.Context, shopID string, tokens []string, limit int) ([]*model.Product, error) {
+	if len(tokens) == 0 {
+		return []*model.Product{}, nil
+	}
+	if limit <= 0 || limit > 10 {
+		limit = 5
+	}
+
+	conditions := make([]string, len(tokens))
+	args := []interface{}{shopID}
+	for i, t := range tokens {
+		args = append(args, "%"+strings.ToLower(strings.TrimSpace(t))+"%")
+		conditions[i] = fmt.Sprintf("(LOWER(p.name) LIKE $%d OR LOWER(COALESCE(p.sku, '')) LIKE $%d)", len(args), len(args))
+	}
+
+	query := fmt.Sprintf(`
+		SELECT p.id, p.shop_id, p.name, p.sku, p.price, COALESCE(p.cost_price, 0),
+		       COALESCE(i.quantity, 0) - COALESCE(i.reserved_quantity, 0) AS available_stock
+		FROM products p
+		LEFT JOIN inventory i ON i.product_id = p.id
+		WHERE p.shop_id = $1 AND p.is_active = true AND (%s)
+		ORDER BY available_stock DESC, p.name ASC
+		LIMIT %d
+	`, strings.Join(conditions, " OR "), limit)
+
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var products []*model.Product
+	for rows.Next() {
+		var p model.Product
+		var availStock int
+		if err := rows.Scan(&p.ID, &p.ShopID, &p.Name, &p.SKU, &p.Price, &p.CostPrice, &availStock); err != nil {
+			return nil, err
+		}
+		p.Inventory = &model.Inventory{AvailableQuantity: availStock, Quantity: availStock}
+		products = append(products, &p)
+	}
+	return products, nil
+}
+
+

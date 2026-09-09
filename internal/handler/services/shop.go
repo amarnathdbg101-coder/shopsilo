@@ -19,12 +19,14 @@ import (
 type ShopService struct {
 	shopRepo *repository.ShopRepo
 	userRepo *repository.UserRepo
+	modRepo  *repository.ModerationRepo
 }
 
-func NewShopService(shopRepo *repository.ShopRepo, userRepo *repository.UserRepo) *ShopService {
+func NewShopService(shopRepo *repository.ShopRepo, userRepo *repository.UserRepo, modRepo *repository.ModerationRepo) *ShopService {
 	return &ShopService{
 		shopRepo: shopRepo,
 		userRepo: userRepo,
+		modRepo:  modRepo,
 	}
 }
 
@@ -61,7 +63,24 @@ func enrichShop(s *model.Shop) {
 	}
 }
 
-func (s *ShopService) CreateShop(ctx context.Context, userID, userEmail string, input dto.CreateShopRequest) (*dto.ShopResponse, error) {
+func (s *ShopService) CreateShop(
+	ctx context.Context,
+	userID, userEmail string,
+	clientIP, userAgent, deviceFingerprint string,
+	input dto.CreateShopRequest,
+) (*dto.ShopResponse, error) {
+	// 0. Ban Evasion Check: Verify IP, device, and phone against blacklist
+	if s.modRepo != nil {
+		candidates := map[string]string{
+			model.EntityTypeIP:       clientIP,
+			model.EntityTypeDeviceID: deviceFingerprint,
+			model.EntityTypePhone:    input.Phone,
+		}
+		if banned, identifier, _ := s.modRepo.IsAnyEntityBanned(ctx, candidates); banned {
+			return nil, fmt.Errorf("%w (%s)", ErrRestrictedRegistration, identifier)
+		}
+	}
+
 	// 1. Verify user doesn't already own a shop
 	existingShop, err := s.shopRepo.FindByUserID(ctx, userID)
 	if err == nil && existingShop != nil {
@@ -92,7 +111,7 @@ func (s *ShopService) CreateShop(ctx context.Context, userID, userEmail string, 
 	// 4. Create shop record
 	shopLat := input.Latitude
 	shopLng := input.Longitude
-	if shopLat == nil || shopLng == nil || (*shopLat == 0 && *shopLng == 0) {
+	if shopLat == nil || shopLng == nil || !reuse.IsValidIndiaCoordinates(*shopLat, *shopLng) {
 		defaultLat := 26.1542
 		defaultLng := 85.8918
 		shopLat = &defaultLat
@@ -100,26 +119,30 @@ func (s *ShopService) CreateShop(ctx context.Context, userID, userEmail string, 
 	}
 
 	shopToCreate := &model.Shop{
-		UserID:         userID,
-		Name:           strings.TrimSpace(input.Name),
-		Slug:           slug,
-		Description:    strings.TrimSpace(input.Description),
-		Category:       strings.TrimSpace(input.Category),
-		Phone:          strings.TrimSpace(input.Phone),
-		WhatsAppNumber: strings.TrimSpace(input.WhatsAppNumber),
-		Address:        strings.TrimSpace(input.Address),
-		City:           strings.TrimSpace(input.City),
-		Pincode:        strings.TrimSpace(input.Pincode),
-		Latitude:       shopLat,
-		Longitude:      shopLng,
-		LogoURL:        strings.TrimSpace(input.LogoURL),
-		Banners:        input.Banners,
-		Timing:         strings.TrimSpace(input.Timing),
-		OpeningTime:    strings.TrimSpace(input.OpeningTime),
-		ClosingTime:    strings.TrimSpace(input.ClosingTime),
-		WeeklyOff:      strings.TrimSpace(input.WeeklyOff),
-		IsOpen:         true,
-		IsActive:       true,
+		UserID:            userID,
+		Name:              strings.TrimSpace(input.Name),
+		Slug:              slug,
+		Description:       strings.TrimSpace(input.Description),
+		Category:          strings.TrimSpace(input.Category),
+		Phone:             strings.TrimSpace(input.Phone),
+		WhatsAppNumber:    strings.TrimSpace(input.WhatsAppNumber),
+		Address:           strings.TrimSpace(input.Address),
+		City:              strings.TrimSpace(input.City),
+		Pincode:           strings.TrimSpace(input.Pincode),
+		Latitude:          shopLat,
+		Longitude:         shopLng,
+		LogoURL:           strings.TrimSpace(input.LogoURL),
+		Banners:           input.Banners,
+		Timing:            strings.TrimSpace(input.Timing),
+		OpeningTime:       strings.TrimSpace(input.OpeningTime),
+		ClosingTime:       strings.TrimSpace(input.ClosingTime),
+		WeeklyOff:         strings.TrimSpace(input.WeeklyOff),
+		IsOpen:            true,
+		IsActive:          true,
+		Status:            model.ShopStatusActive,
+		CreationIP:        clientIP,
+		CreationUserAgent: userAgent,
+		DeviceFingerprint: deviceFingerprint,
 	}
 
 	createdShop, err := s.shopRepo.CreateWithTx(ctx, tx, shopToCreate)
@@ -264,11 +287,19 @@ func (s *ShopService) UpdateMyShop(ctx context.Context, userID string, input dto
 	if input.Pincode != nil {
 		shop.Pincode = strings.TrimSpace(*input.Pincode)
 	}
-	if input.Latitude != nil {
-		shop.Latitude = input.Latitude
-	}
-	if input.Longitude != nil {
-		shop.Longitude = input.Longitude
+	if input.Latitude != nil && input.Longitude != nil {
+		if reuse.IsValidIndiaCoordinates(*input.Latitude, *input.Longitude) {
+			shop.Latitude = input.Latitude
+			shop.Longitude = input.Longitude
+		}
+	} else if input.Latitude != nil {
+		if shop.Longitude != nil && reuse.IsValidIndiaCoordinates(*input.Latitude, *shop.Longitude) {
+			shop.Latitude = input.Latitude
+		}
+	} else if input.Longitude != nil {
+		if shop.Latitude != nil && reuse.IsValidIndiaCoordinates(*shop.Latitude, *input.Longitude) {
+			shop.Longitude = input.Longitude
+		}
 	}
 	if input.LogoURL != nil {
 		shop.LogoURL = strings.TrimSpace(*input.LogoURL)
@@ -383,3 +414,17 @@ func (s *ShopService) GenerateMyShopQRCode(ctx context.Context, userID string) (
 	targetURL := fmt.Sprintf("https://shopme.app/shops/%s", shop.Slug)
 	return utils.GenerateQRCodePNG(targetURL, 300)
 }
+
+// GetDailyDigest retrieves today's key retail digest numbers for the shop dashboard.
+func (s *ShopService) GetDailyDigest(ctx context.Context, shopOwnerUserID string) (*model.ShopDailyDigest, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, ErrShopNotFound
+		}
+		return nil, err
+	}
+
+	return s.shopRepo.GetShopDailyDigest(ctx, shop.ID)
+}
+

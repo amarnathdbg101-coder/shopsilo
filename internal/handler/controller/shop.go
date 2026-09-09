@@ -44,8 +44,16 @@ func (c *ShopController) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := c.service.CreateShop(r.Context(), claims.UserID, claims.Email, input)
+	clientIP := middleware.ExtractClientIP(r)
+	userAgent := r.UserAgent()
+	deviceFP := r.Header.Get("X-Device-Fingerprint")
+
+	res, err := c.service.CreateShop(r.Context(), claims.UserID, claims.Email, clientIP, userAgent, deviceFP, input)
 	if err != nil {
+		if errors.Is(err, services.ErrRestrictedRegistration) {
+			reuse.Error(w, http.StatusForbidden, err.Error())
+			return
+		}
 		if errors.Is(err, services.ErrUserAlreadyHasShop) {
 			reuse.Error(w, http.StatusConflict, err.Error())
 			return
@@ -329,3 +337,25 @@ func (c *ShopController) GetMyShopQR(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(pngBytes)
 }
+
+// GetDailyDigest returns today's aggregated retail overview (Protected - Shop)
+func (c *ShopController) GetDailyDigest(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	digest, err := c.service.GetDailyDigest(r.Context(), claims.UserID)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Daily retail digest retrieved successfully", digest)
+}
+

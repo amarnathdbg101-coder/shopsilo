@@ -174,4 +174,16 @@ func TestShopControllerValidation(t *testing.T) {
 			t.Fatalf("expected 400 Bad Request for invalid latitude, got %d", w.Code)
 		}
 	})
+
+	t.Run("GetDailyDigest Unauthorized if no claims", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/shops/me/digest", nil)
+		w := httptest.NewRecorder()
+
+		sc.GetDailyDigest(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401 Unauthorized, got %d", w.Code)
+		}
+	})
 }
+
