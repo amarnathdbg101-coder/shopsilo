@@ -16,7 +16,7 @@ type RegisterResponse struct {
 }
 
 type UserLoginRequest struct {
-	Email    string `json:"email" validate:"required,email"`
+	Email    string `json:"email" validate:"required"` // supports email or mobile phone
 	Password string `json:"password" validate:"required"`
 }
 
@@ -32,8 +32,7 @@ type ForgotPasswordRequest struct {
 }
 
 type ForgotPasswordResponse struct {
-	Message    string `json:"message"`
-	ResetToken string `json:"reset_token,omitempty"`
+	Message string `json:"message"`
 }
 
 type ResetPasswordRequest struct {

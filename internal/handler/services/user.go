@@ -4,6 +4,9 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log"
+	"os"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
 	"shopMe/internal/handler/repository"
@@ -66,9 +69,9 @@ func (s *UserService) Register(ctx context.Context, input dto.UserRegisterReques
 }
 
 func (s *UserService) Login(ctx context.Context, input dto.UserLoginRequest) (*dto.TokenResponse, error) {
-	email := strings.ToLower(strings.TrimSpace(input.Email))
+	identifier := strings.TrimSpace(input.Email)
 
-	user, err := s.repo.FindByEmail(ctx, email)
+	user, err := s.repo.FindByEmailOrPhone(ctx, identifier)
 	if err != nil {
 		return nil, ErrInvalidCredentials
 	}
@@ -101,7 +104,7 @@ func (s *UserService) ForgotPassword(ctx context.Context, input dto.ForgotPasswo
 	if err != nil {
 		// Generic response for privacy/security
 		return &dto.ForgotPasswordResponse{
-			Message: "If your email is registered, password reset instructions have been generated.",
+			Message: "If your email is registered, password reset instructions have been sent.",
 		}, nil
 	}
 
@@ -111,9 +114,18 @@ func (s *UserService) ForgotPassword(ctx context.Context, input dto.ForgotPasswo
 		return nil, errors.New("failed to generate reset token")
 	}
 
+	// Safe dispatch: In dev/staging or until external mailer is hooked up,
+	// log securely to server log (so dev/admin can inspect/test reset link),
+	// but NEVER return reset_token to the client API response.
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:5173"
+	}
+	resetLink := fmt.Sprintf("%s/reset-password?token=%s", strings.TrimRight(frontendURL, "/"), resetToken)
+	log.Printf("[SECURITY/AUTH] Password reset requested for %s -> Reset Link: %s", user.Email, resetLink)
+
 	return &dto.ForgotPasswordResponse{
-		Message:    "Password reset instructions generated successfully. Please use the reset token to set a new password.",
-		ResetToken: resetToken,
+		Message: "If your email is registered, password reset instructions have been sent.",
 	}, nil
 }
 
