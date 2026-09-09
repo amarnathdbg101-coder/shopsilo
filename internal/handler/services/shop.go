@@ -69,17 +69,7 @@ func (s *ShopService) CreateShop(
 	clientIP, userAgent, deviceFingerprint string,
 	input dto.CreateShopRequest,
 ) (*dto.ShopResponse, error) {
-	// 0. Ban Evasion Check: Verify IP, device, and phone against blacklist
-	if s.modRepo != nil {
-		candidates := map[string]string{
-			model.EntityTypeIP:       clientIP,
-			model.EntityTypeDeviceID: deviceFingerprint,
-			model.EntityTypePhone:    input.Phone,
-		}
-		if banned, identifier, _ := s.modRepo.IsAnyEntityBanned(ctx, candidates); banned {
-			return nil, fmt.Errorf("%w (%s)", ErrRestrictedRegistration, identifier)
-		}
-	}
+	// 0. Unrestricted shop creation: Device, IP, or phone ban restriction removed per user request
 
 	// 1. Verify user doesn't already own a shop
 	existingShop, err := s.shopRepo.FindByUserID(ctx, userID)

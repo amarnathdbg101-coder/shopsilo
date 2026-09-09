@@ -142,3 +142,50 @@ func (s *UserService) ResetPassword(ctx context.Context, input dto.ResetPassword
 	return s.repo.UpdatePassword(ctx, user.ID, newHashedPassword)
 }
 
+func (s *UserService) GetProfile(ctx context.Context, userID string) (*dto.UserResponse, error) {
+	user, err := s.repo.FindByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return &dto.UserResponse{
+		ID:        user.ID,
+		Email:     user.Email,
+		FullName:  user.FullName,
+		Phone:     user.Phone,
+		AvatarURL: user.AvatarURL,
+		Role:      user.Role,
+	}, nil
+}
+
+func (s *UserService) UpdateProfile(ctx context.Context, userID string, input dto.UpdateUserProfileRequest) (*dto.UserResponse, error) {
+	user, err := s.repo.UpdateProfile(ctx, userID, input.FullName, input.Phone)
+	if err != nil {
+		return nil, err
+	}
+	return &dto.UserResponse{
+		ID:        user.ID,
+		Email:     user.Email,
+		FullName:  user.FullName,
+		Phone:     user.Phone,
+		AvatarURL: user.AvatarURL,
+		Role:      user.Role,
+	}, nil
+}
+
+func (s *UserService) ListUsersForAdmin(ctx context.Context, role, search string, page, limit int) ([]*model.User, int, error) {
+	if page <= 0 {
+		page = 1
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	offset := (page - 1) * limit
+	return s.repo.ListUsersForAdmin(ctx, role, search, limit, offset)
+}
+
+func (s *UserService) UpdateUserStatusForAdmin(ctx context.Context, userID string, isActive *bool, role *string) (*model.User, error) {
+	return s.repo.UpdateUserStatusForAdmin(ctx, userID, isActive, role)
+}
+
+
+

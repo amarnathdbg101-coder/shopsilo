@@ -146,6 +146,8 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Use(middleware.JWTAuth(utils.MustLoad().Jwt))
 
 		// User profile actions
+		r.Get("/user/me", uc.GetProfile)
+		r.Put("/user/profile", uc.UpdateProfile)
 		r.Post("/user/avatar", upc.UploadUserAvatar)
 		r.Get("/user/loyalty", loyc.GetUserLoyalty)
 
@@ -249,6 +251,16 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/banned-entities", modc.ListBannedEntities)
 		r.Post("/banned-entities", modc.AddBannedEntity)
 		r.Delete("/banned-entities/{id}", modc.UnbanEntity)
+
+		// Category management
+		r.Get("/categories", catc.AdminList)
+		r.Post("/categories", catc.AdminCreate)
+		r.Put("/categories/{id}", catc.AdminUpdate)
+		r.Delete("/categories/{id}", catc.AdminDelete)
+
+		// User & Merchant management
+		r.Get("/users", uc.AdminListUsers)
+		r.Patch("/users/{id}/status", uc.AdminUpdateUserStatus)
 	})
 
 	return r

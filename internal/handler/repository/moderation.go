@@ -305,7 +305,9 @@ func (r *ModerationRepo) GetAdminStats(ctx context.Context) (*dto.AdminStatsResp
 			(SELECT COUNT(*) FROM content_reports WHERE status = 'pending') AS pending_reports,
 			(SELECT COUNT(*) FROM content_reports) AS total_reports,
 			(SELECT COUNT(*) FROM banned_entities) AS banned_entities,
-			(SELECT COUNT(*) FROM users) AS total_users
+			(SELECT COUNT(*) FROM users) AS total_users,
+			(SELECT COUNT(*) FROM products) AS total_products,
+			(SELECT COUNT(*) FROM categories) AS total_categories
 		FROM shops;
 	`
 	stats := &dto.AdminStatsResponse{}
@@ -319,6 +321,8 @@ func (r *ModerationRepo) GetAdminStats(ctx context.Context) (*dto.AdminStatsResp
 		&stats.TotalReports,
 		&stats.BannedEntities,
 		&stats.TotalUsers,
+		&stats.TotalProducts,
+		&stats.TotalCategories,
 	)
 	if err != nil {
 		r.logger.Error("failed to fetch admin stats", zap.Error(err))

@@ -83,4 +83,35 @@ func TestControllerValidation(t *testing.T) {
 			t.Fatalf("expected status 400 Bad Request, got %d", w.Code)
 		}
 	})
+
+	t.Run("AdminUpdateUserStatus Validation Failure (Missing ID)", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPatch, "/admin/users//status", bytes.NewBufferString("{}"))
+		w := httptest.NewRecorder()
+
+		uc.AdminUpdateUserStatus(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status 400 Bad Request, got %d", w.Code)
+		}
+	})
+
+	t.Run("AdminUpdateUserStatus Validation Failure (Invalid Role)", func(t *testing.T) {
+		invalidRole := "superhero"
+		body, _ := json.Marshal(dto.AdminUpdateUserStatusRequest{
+			Role: &invalidRole,
+		})
+
+		req := httptest.NewRequest(http.MethodPatch, "/admin/users/123/status", bytes.NewBuffer(body))
+		// Attach url param
+		ctx := req.Context()
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		uc.AdminUpdateUserStatus(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status 400 Bad Request, got %d", w.Code)
+		}
+	})
 }
+
