@@ -93,6 +93,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	// Global middlewares
 	r.Use(chimw.RequestID)
 	r.Use(chimw.RealIP)
+	r.Use(middleware.GlobalRateLimiter.Middleware())
 	r.Use(middleware.BanGuard(modRepo))
 	r.Use(chimw.Recoverer)
 	r.Use(middleware.CORS)
@@ -111,8 +112,9 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	// Public Grievance & Content Safety Report endpoint (IT Rules 2021 compliance)
 	r.Post("/reports", modc.SubmitReport)
 
-	// Public Auth routes
+	// Public Auth routes (Rate limited to 10 attempts/min per IP to prevent brute force)
 	r.Route("/auth", func(r chi.Router) {
+		r.Use(middleware.AuthRateLimiter.Middleware())
 		r.Post("/register", uc.Register)
 		r.Post("/login", uc.Login)
 		r.Post("/forgot-password", uc.ForgotPassword)
@@ -148,7 +150,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		// User profile actions
 		r.Get("/user/me", uc.GetProfile)
 		r.Put("/user/profile", uc.UpdateProfile)
-		r.Post("/user/avatar", upc.UploadUserAvatar)
+		r.With(middleware.UploadRateLimiter.Middleware()).Post("/user/avatar", upc.UploadUserAvatar)
 		r.Get("/user/loyalty", loyc.GetUserLoyalty)
 
 		// Shop Owner management
@@ -159,13 +161,13 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Put("/shops/me", sc.UpdateMyShop)
 		r.Patch("/shops/me/status", sc.ToggleStatus)
 		r.Delete("/shops/me", sc.DeleteMyShop)
-		r.Post("/shops/me/images", upc.UploadShopImages)
+		r.With(middleware.UploadRateLimiter.Middleware()).Post("/shops/me/images", upc.UploadShopImages)
 
 		// Shop Product management
 		r.Post("/products", pc.Create)
 		r.Put("/products/{id}", pc.Update)
 		r.Delete("/products/{id}", pc.Delete)
-		r.Post("/products/images", upc.UploadProductImages)
+		r.With(middleware.UploadRateLimiter.Middleware()).Post("/products/images", upc.UploadProductImages)
 		r.Post("/shops/me/products/{id}/markdown", pc.ApplyClearanceMarkdown)
 
 		// Shop Inventory & Wholesale Restock
