@@ -45,11 +45,28 @@ type Product struct {
     Tags            []string  `json:"tags"`
     Attributes      map[string]interface{} `json:"attributes,omitempty"` // Brand, Model, Size, Color, Gender, Season, etc.
     Inventory       *Inventory `json:"inventory,omitempty"`
+    FloorPrice      float64   `json:"floor_price,omitempty"`
+    AllowBargain    bool      `json:"allow_bargain"`
     StockQuantity   int        `json:"stock_quantity"`
     MinStock        int        `json:"min_stock"`
     LowStockThreshold int      `json:"low_stock_threshold"`
     CreatedAt       time.Time `json:"created_at"`
     UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type ProductBargainDeal struct {
+    ID             string    `json:"id"`
+    ProductID      string    `json:"product_id"`
+    ShopID         string    `json:"shop_id"`
+    CustomerPhone  string    `json:"customer_phone"`
+    CustomerName   string    `json:"customer_name,omitempty"`
+    DealCode       string    `json:"deal_code"`
+    OfferedPrice   float64   `json:"offered_price"`
+    AgreedPrice    float64   `json:"agreed_price"`
+    BundleQuantity int       `json:"bundle_quantity"`
+    Status         string    `json:"status"` // 'accepted', 'counter_offered', 'redeemed', 'expired'
+    ExpiresAt      time.Time `json:"expires_at"`
+    CreatedAt      time.Time `json:"created_at"`
 }
 
 type Inventory struct {

@@ -17,9 +17,10 @@ import (
 )
 
 var (
-	ErrReservationNotFound = errors.New("reservation not found")
-	ErrReservationExpired  = errors.New("reservation has expired")
+	ErrReservationNotFound  = errors.New("reservation not found")
+	ErrReservationExpired   = errors.New("reservation has expired")
 	ErrReservationNotActive = errors.New("reservation is not active")
+	ErrInsufficientStock    = errors.New("insufficient stock to reserve product")
 )
 
 type ReservationRepo struct {
@@ -74,6 +75,21 @@ func (r *ReservationRepo) CountActiveByUserID(ctx context.Context, userID string
 }
 
 func (r *ReservationRepo) CreateWithTx(ctx context.Context, tx pgx.Tx, res *model.Reservation) (*model.Reservation, error) {
+	// 1. Atomically increment reserved inventory stock ONLY if available stock is sufficient
+	invQuery := `
+		UPDATE inventory
+		SET reserved_quantity = reserved_quantity + $1, updated_at = NOW()
+		WHERE product_id = $2 AND (quantity - reserved_quantity) >= $1
+	`
+	cmdTag, err := tx.Exec(ctx, invQuery, res.Quantity, res.ProductID)
+	if err != nil {
+		r.logger.Error("failed to atomically update reserved inventory", zap.Error(err), zap.String("product_id", res.ProductID))
+		return nil, err
+	}
+	if cmdTag.RowsAffected() == 0 {
+		return nil, ErrInsufficientStock
+	}
+
 	query := `
 		INSERT INTO reservations (
 			reservation_number, user_id, shop_id, product_id, quantity, pickup_code,
@@ -84,7 +100,7 @@ func (r *ReservationRepo) CreateWithTx(ctx context.Context, tx pgx.Tx, res *mode
 		          status, expires_at, completed_at, COALESCE(notes, ''), created_at, updated_at
 	`
 	created := &model.Reservation{}
-	err := tx.QueryRow(
+	err = tx.QueryRow(
 		ctx,
 		query,
 		res.ReservationNumber,
@@ -115,20 +131,10 @@ func (r *ReservationRepo) CreateWithTx(ctx context.Context, tx pgx.Tx, res *mode
 		return nil, err
 	}
 
-	// Increment reserved inventory stock
-	invQuery := `
-		UPDATE inventory
-		SET reserved_quantity = reserved_quantity + $1
-		WHERE product_id = $2
-	`
-	_, _ = tx.Exec(ctx, invQuery, res.Quantity, res.ProductID)
-
 	return created, nil
 }
 
 func (r *ReservationRepo) FindByID(ctx context.Context, id string) (*model.Reservation, error) {
-	_ = r.ExpireStaleReservations(ctx)
-
 	query := `
 		SELECT r.id, r.reservation_number, r.user_id, r.shop_id, r.product_id, r.quantity, r.pickup_code,
 		       r.status, r.expires_at, r.completed_at, COALESCE(r.notes, ''), r.created_at, r.updated_at,
@@ -193,8 +199,6 @@ func (r *ReservationRepo) FindByID(ctx context.Context, id string) (*model.Reser
 }
 
 func (r *ReservationRepo) FindByUserID(ctx context.Context, userID string, filter dto.ReservationFilter) ([]*model.Reservation, int, error) {
-	_ = r.ExpireStaleReservations(ctx)
-
 	page := filter.Page
 	if page < 1 {
 		page = 1
@@ -301,8 +305,6 @@ func (r *ReservationRepo) FindByUserID(ctx context.Context, userID string, filte
 }
 
 func (r *ReservationRepo) FindByShopID(ctx context.Context, shopID string, filter dto.ReservationFilter) ([]*model.Reservation, int, error) {
-	_ = r.ExpireStaleReservations(ctx)
-
 	page := filter.Page
 	if page < 1 {
 		page = 1
@@ -400,8 +402,6 @@ func (r *ReservationRepo) FindByShopID(ctx context.Context, shopID string, filte
 }
 
 func (r *ReservationRepo) VerifyAndCompleteWithTx(ctx context.Context, tx pgx.Tx, shopID, code, resNumber string) (*model.Reservation, error) {
-	_ = r.ExpireStaleReservations(ctx)
-
 	query := `
 		UPDATE reservations
 		SET status = 'completed', completed_at = NOW(), updated_at = NOW()
@@ -448,8 +448,6 @@ func (r *ReservationRepo) VerifyAndCompleteWithTx(ctx context.Context, tx pgx.Tx
 }
 
 func (r *ReservationRepo) CancelWithTx(ctx context.Context, tx pgx.Tx, id string, userID, shopID string) (*model.Reservation, error) {
-	_ = r.ExpireStaleReservations(ctx)
-
 	var whereClause string
 	args := []interface{}{id}
 

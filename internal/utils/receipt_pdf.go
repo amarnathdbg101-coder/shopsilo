@@ -111,8 +111,29 @@ func GeneratePOSReceiptPDF(bill *model.POSBill) ([]byte, error) {
 	pdf.CellFormat(93, 7, "Grand Total:", "T", 0, "R", false, 0, "")
 	pdf.CellFormat(35, 7, fmt.Sprintf("Rs. %.2f ", bill.TotalAmount), "T", 1, "R", false, 0, "")
 
-	// 5. Footer & Thank You
-	pdf.Ln(6)
+	// 5. Payment Tender Breakdown (Cash, Online, Khata Due)
+	if bill.PaymentMethod == "split" || (bill.CashAmount > 0 || bill.OnlineAmount > 0 || bill.KhataAmount > 0) {
+		pdf.Ln(1)
+		pdf.SetFont("Arial", "", 8)
+		pdf.SetTextColor(70, 70, 70)
+		if bill.CashAmount > 0 {
+			pdf.CellFormat(93, 4, "Paid in Cash:", "", 0, "R", false, 0, "")
+			pdf.CellFormat(35, 4, fmt.Sprintf("Rs. %.2f ", bill.CashAmount), "", 1, "R", false, 0, "")
+		}
+		if bill.OnlineAmount > 0 {
+			pdf.CellFormat(93, 4, "Paid via UPI / Online:", "", 0, "R", false, 0, "")
+			pdf.CellFormat(35, 4, fmt.Sprintf("Rs. %.2f ", bill.OnlineAmount), "", 1, "R", false, 0, "")
+		}
+		if bill.KhataAmount > 0 {
+			pdf.SetFont("Arial", "B", 8)
+			pdf.SetTextColor(220, 53, 69) // Warning red for credit due
+			pdf.CellFormat(93, 4, "Added to Khata (Due):", "", 0, "R", false, 0, "")
+			pdf.CellFormat(35, 4, fmt.Sprintf("Rs. %.2f ", bill.KhataAmount), "", 1, "R", false, 0, "")
+		}
+	}
+
+	// 6. Footer & Thank You
+	pdf.Ln(5)
 	pdf.SetFont("Arial", "I", 8)
 	pdf.SetTextColor(108, 117, 125)
 	pdf.CellFormat(0, 4, "Thank you for shopping with us! Visit again.", "", 1, "C", false, 0, "")

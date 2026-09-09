@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -16,6 +18,7 @@ var (
 	ErrKhataNotFound          = errors.New("khata account not found")
 	ErrInsufficientBalance    = errors.New("payment amount exceeds current balance")
 	ErrInvalidTransactionType = errors.New("invalid transaction type")
+	ErrCreditLimitExceeded    = errors.New("customer credit limit exceeded")
 )
 
 type KhataRepo struct {
@@ -34,13 +37,13 @@ func NewKhataRepo(db *pgxpool.Pool, logger *zap.Logger) *KhataRepo {
 func (r *KhataRepo) GetOrCreateCustomer(ctx context.Context, shopID, customerName, customerMobile string) (*model.CustomerKhata, error) {
 	var khata model.CustomerKhata
 	query := `
-		SELECT id, shop_id, customer_name, customer_mobile, current_balance, created_at, updated_at
+		SELECT id, shop_id, customer_name, customer_mobile, current_balance, COALESCE(credit_limit, 0), created_at, updated_at
 		FROM customer_khata
 		WHERE shop_id = $1 AND customer_mobile = $2
 	`
 	err := r.db.QueryRow(ctx, query, shopID, customerMobile).Scan(
 		&khata.ID, &khata.ShopID, &khata.CustomerName, &khata.CustomerMobile,
-		&khata.CurrentBalance, &khata.CreatedAt, &khata.UpdatedAt,
+		&khata.CurrentBalance, &khata.CreditLimit, &khata.CreatedAt, &khata.UpdatedAt,
 	)
 	if err == nil {
 		// If existing, optionally update name if it changed
@@ -56,13 +59,13 @@ func (r *KhataRepo) GetOrCreateCustomer(ctx context.Context, shopID, customerNam
 
 	// Insert new customer khata
 	insertQuery := `
-		INSERT INTO customer_khata (shop_id, customer_name, customer_mobile, current_balance, created_at, updated_at)
-		VALUES ($1, $2, $3, 0.00, NOW(), NOW())
-		RETURNING id, shop_id, customer_name, customer_mobile, current_balance, created_at, updated_at
+		INSERT INTO customer_khata (shop_id, customer_name, customer_mobile, current_balance, credit_limit, created_at, updated_at)
+		VALUES ($1, $2, $3, 0.00, 0.00, NOW(), NOW())
+		RETURNING id, shop_id, customer_name, customer_mobile, current_balance, credit_limit, created_at, updated_at
 	`
 	err = r.db.QueryRow(ctx, insertQuery, shopID, customerName, customerMobile).Scan(
 		&khata.ID, &khata.ShopID, &khata.CustomerName, &khata.CustomerMobile,
-		&khata.CurrentBalance, &khata.CreatedAt, &khata.UpdatedAt,
+		&khata.CurrentBalance, &khata.CreditLimit, &khata.CreatedAt, &khata.UpdatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create customer khata: %w", err)
@@ -80,22 +83,22 @@ func (r *KhataRepo) RecordTransaction(ctx context.Context, shopID, customerMobil
 
 	// 1. Lock and fetch current customer khata
 	var khataID string
-	var currentBalance float64
+	var currentBalance, creditLimit float64
 	lockQuery := `
-		SELECT id, current_balance
+		SELECT id, current_balance, COALESCE(credit_limit, 0)
 		FROM customer_khata
 		WHERE shop_id = $1 AND customer_mobile = $2
 		FOR UPDATE
 	`
-	err = tx.QueryRow(ctx, lockQuery, shopID, customerMobile).Scan(&khataID, &currentBalance)
+	err = tx.QueryRow(ctx, lockQuery, shopID, customerMobile).Scan(&khataID, &currentBalance, &creditLimit)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// If doesn't exist, create it inside this tx
 		insertQuery := `
-			INSERT INTO customer_khata (shop_id, customer_name, customer_mobile, current_balance, created_at, updated_at)
-			VALUES ($1, $2, $3, 0.00, NOW(), NOW())
-			RETURNING id, current_balance
+			INSERT INTO customer_khata (shop_id, customer_name, customer_mobile, current_balance, credit_limit, created_at, updated_at)
+			VALUES ($1, $2, $3, 0.00, 0.00, NOW(), NOW())
+			RETURNING id, current_balance, credit_limit
 		`
-		err = tx.QueryRow(ctx, insertQuery, shopID, customerName, customerMobile).Scan(&khataID, &currentBalance)
+		err = tx.QueryRow(ctx, insertQuery, shopID, customerName, customerMobile).Scan(&khataID, &currentBalance, &creditLimit)
 		if err != nil {
 			return nil, fmt.Errorf("failed to insert khata account: %w", err)
 		}
@@ -103,10 +106,13 @@ func (r *KhataRepo) RecordTransaction(ctx context.Context, shopID, customerMobil
 		return nil, fmt.Errorf("failed to query khata account: %w", err)
 	}
 
-	// 2. Compute new balance
+	// 2. Compute new balance and verify credit limit
 	var newBalance float64
 	if txType == model.KhataTxTypeGiveCredit {
 		newBalance = currentBalance + amount
+		if creditLimit > 0 && newBalance > creditLimit {
+			return nil, ErrCreditLimitExceeded
+		}
 	} else if txType == model.KhataTxTypeReceivePayment {
 		newBalance = currentBalance - amount
 		if newBalance < 0 {
@@ -148,10 +154,84 @@ func (r *KhataRepo) RecordTransaction(ctx context.Context, shopID, customerMobil
 	return &kTx, nil
 }
 
+// UpdateCreditLimit updates the credit cap for a customer in a shop.
+func (r *KhataRepo) UpdateCreditLimit(ctx context.Context, shopID, customerMobile string, limit float64) error {
+	query := `
+		UPDATE customer_khata
+		SET credit_limit = $1, updated_at = NOW()
+		WHERE shop_id = $2 AND customer_mobile = $3
+	`
+	res, err := r.db.Exec(ctx, query, limit, shopID, strings.TrimSpace(customerMobile))
+	if err != nil {
+		return fmt.Errorf("failed to update credit limit: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return ErrKhataNotFound
+	}
+	return nil
+}
+
+// GetAgingReport calculates bad-debt aging buckets and lists overdue credit balances.
+func (r *KhataRepo) GetAgingReport(ctx context.Context, shopID string) (*dto.KhataAgingReport, error) {
+	report := &dto.KhataAgingReport{
+		OverdueList: make([]dto.OverdueCustomerItem, 0),
+	}
+
+	summaryQuery := `
+		SELECT
+			COALESCE(SUM(current_balance), 0),
+			COUNT(*),
+			COALESCE(SUM(CASE WHEN (NOW() - updated_at) <= INTERVAL '30 days' THEN current_balance ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN (NOW() - updated_at) > INTERVAL '30 days' AND (NOW() - updated_at) <= INTERVAL '60 days' THEN current_balance ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN (NOW() - updated_at) > INTERVAL '60 days' THEN current_balance ELSE 0 END), 0)
+		FROM customer_khata
+		WHERE shop_id = $1 AND current_balance > 0
+	`
+	err := r.db.QueryRow(ctx, summaryQuery, shopID).Scan(
+		&report.TotalOutstanding,
+		&report.TotalCustomers,
+		&report.Bucket0To30,
+		&report.Bucket31To60,
+		&report.Bucket60Plus,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query khata aging summary: %w", err)
+	}
+
+	listQuery := `
+		SELECT 
+			id, customer_name, customer_mobile, current_balance, COALESCE(credit_limit, 0),
+			GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - updated_at)) / 86400))::int AS days_overdue,
+			to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_activity_at
+		FROM customer_khata
+		WHERE shop_id = $1 AND current_balance > 0
+		ORDER BY days_overdue DESC, current_balance DESC
+		LIMIT 100
+	`
+	rows, err := r.db.Query(ctx, listQuery, shopID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query overdue customers: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var item dto.OverdueCustomerItem
+		if err := rows.Scan(
+			&item.KhataID, &item.CustomerName, &item.CustomerMobile,
+			&item.CurrentBalance, &item.CreditLimit, &item.DaysOverdue, &item.LastActivityAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan overdue item: %w", err)
+		}
+		report.OverdueList = append(report.OverdueList, item)
+	}
+
+	return report, nil
+}
+
 // ListCustomers returns all customers with their balances, optionally filtering by search or only outstanding dues.
 func (r *KhataRepo) ListCustomers(ctx context.Context, shopID string, search string, onlyWithBalance bool) ([]model.CustomerKhata, error) {
 	query := `
-		SELECT id, shop_id, customer_name, customer_mobile, current_balance, created_at, updated_at
+		SELECT id, shop_id, customer_name, customer_mobile, current_balance, COALESCE(credit_limit, 0), created_at, updated_at
 		FROM customer_khata
 		WHERE shop_id = $1
 	`
@@ -179,7 +259,7 @@ func (r *KhataRepo) ListCustomers(ctx context.Context, shopID string, search str
 	var customers []model.CustomerKhata
 	for rows.Next() {
 		var c model.CustomerKhata
-		if err := rows.Scan(&c.ID, &c.ShopID, &c.CustomerName, &c.CustomerMobile, &c.CurrentBalance, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.ShopID, &c.CustomerName, &c.CustomerMobile, &c.CurrentBalance, &c.CreditLimit, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan customer khata: %w", err)
 		}
 		customers = append(customers, c)
@@ -191,13 +271,13 @@ func (r *KhataRepo) ListCustomers(ctx context.Context, shopID string, search str
 func (r *KhataRepo) GetCustomerHistory(ctx context.Context, shopID, customerMobile string) (*model.CustomerKhata, []model.KhataTransaction, error) {
 	var khata model.CustomerKhata
 	query := `
-		SELECT id, shop_id, customer_name, customer_mobile, current_balance, created_at, updated_at
+		SELECT id, shop_id, customer_name, customer_mobile, current_balance, COALESCE(credit_limit, 0), created_at, updated_at
 		FROM customer_khata
 		WHERE shop_id = $1 AND customer_mobile = $2
 	`
 	err := r.db.QueryRow(ctx, query, shopID, customerMobile).Scan(
 		&khata.ID, &khata.ShopID, &khata.CustomerName, &khata.CustomerMobile,
-		&khata.CurrentBalance, &khata.CreatedAt, &khata.UpdatedAt,
+		&khata.CurrentBalance, &khata.CreditLimit, &khata.CreatedAt, &khata.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

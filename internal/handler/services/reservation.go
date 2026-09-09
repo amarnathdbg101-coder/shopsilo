@@ -52,9 +52,9 @@ func generateReservationNumber() string {
 
 // CreateReservation lets a customer place an in-store hold on a product.
 func (s *ReservationService) CreateReservation(ctx context.Context, userID string, input dto.CreateReservationRequest) (*model.Reservation, error) {
-	// 1. Anti-abuse check: max 5 active reservations per customer
+	// 1. Anti-abuse check: max 3 active reservations per customer
 	activeCount, err := s.resRepo.CountActiveByUserID(ctx, userID)
-	if err == nil && activeCount >= 5 {
+	if err == nil && activeCount >= 3 {
 		return nil, ErrMaxActiveReservations
 	}
 
@@ -110,6 +110,9 @@ func (s *ReservationService) CreateReservation(ctx context.Context, userID strin
 
 	created, err := s.resRepo.CreateWithTx(ctx, tx, reservation)
 	if err != nil {
+		if errors.Is(err, repository.ErrInsufficientStock) {
+			return nil, ErrProductOutOfStock
+		}
 		return nil, err
 	}
 

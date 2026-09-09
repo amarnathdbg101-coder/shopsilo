@@ -31,6 +31,22 @@ type Shop struct {
 	WhatsAppURL    string    `json:"whatsapp_url,omitempty"`
 	AverageRating  float64   `json:"average_rating"`
 	TotalReviews   int       `json:"total_reviews"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	Status            string    `json:"status"` // active, pending_review, flagged, suspended, banned
+	FlaggedCount      int       `json:"flagged_count"`
+	SuspensionReason  string    `json:"suspension_reason,omitempty"`
+	CreationIP        string    `json:"creation_ip,omitempty"`
+	CreationUserAgent string    `json:"creation_user_agent,omitempty"`
+	DeviceFingerprint string    `json:"device_fingerprint,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+type ShopDailyDigest struct {
+	Date                string  `json:"date"`
+	TodaySalesAmount    float64 `json:"today_sales_amount"`
+	TodaySalesCount     int     `json:"today_sales_count"`
+	ActiveReservations  int     `json:"active_reservations"`
+	LowStockCount       int     `json:"low_stock_count"`
+	TotalKhataUdhar     float64 `json:"total_khata_udhar"`
+	TotalKhataCustomers int     `json:"total_khata_customers"`
 }

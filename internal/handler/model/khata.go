@@ -15,6 +15,7 @@ type CustomerKhata struct {
 	CustomerName   string    `json:"customer_name"`
 	CustomerMobile string    `json:"customer_mobile"`
 	CurrentBalance float64   `json:"current_balance"` // How much money customer owes the shopkeeper
+	CreditLimit    float64   `json:"credit_limit"`    // Max credit allowed before warning/blocking (0 = unlimited)
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }

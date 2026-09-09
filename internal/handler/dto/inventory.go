@@ -24,3 +24,34 @@ type LowStockResponse struct {
 	TotalLowStockItems int                `json:"total_low_stock_items"`
 	Items              []*LowStockProduct `json:"items"`
 }
+
+type SupplierReorderWhatsAppResponse struct {
+	SupplierPhone string `json:"supplier_phone"`
+	ItemsCount    int    `json:"items_count"`
+	OrderMessage  string `json:"order_message"`
+	WhatsAppURL   string `json:"whatsapp_url"`
+}
+
+// CreateStockAlertRequest is submitted by shoppers to get notified when an out-of-stock item is back.
+type CreateStockAlertRequest struct {
+	CustomerPhone string `json:"customer_phone" validate:"required,min=10,max=15"`
+	CustomerName  string `json:"customer_name,omitempty" validate:"omitempty,max=100"`
+}
+
+// DemandWatchlistItem represents an out-of-stock or low-stock product with customer pre-orders/interest.
+type DemandWatchlistItem struct {
+	ProductID             string `json:"product_id"`
+	ProductName           string `json:"product_name"`
+	SKU                   string `json:"sku"`
+	CurrentStock          int    `json:"current_stock"`
+	WaitingCustomersCount int    `json:"waiting_customers_count"`
+	WhatsAppBroadcastCopy string `json:"whatsapp_broadcast_copy"`
+	WhatsAppBroadcastURL  string `json:"whatsapp_broadcast_url"`
+}
+
+// DemandWatchlistResponse summarizes all unmet customer demand for wholesale purchase prioritization.
+type DemandWatchlistResponse struct {
+	TotalDemandItems      int                    `json:"total_demand_items"`
+	TotalWaitingCustomers int                    `json:"total_waiting_customers"`
+	Items                 []*DemandWatchlistItem `json:"items"`
+}

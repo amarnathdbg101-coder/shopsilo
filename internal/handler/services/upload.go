@@ -5,23 +5,50 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"shopMe/internal/handler/repository"
 	"shopMe/internal/reuse"
 	"sync"
 )
-
-
 type UploadService struct {
 	userRepo *repository.UserRepo
 	shopRepo *repository.ShopRepo
+	modRepo  *repository.ModerationRepo
 }
 
-func NewUploadService(userRepo *repository.UserRepo, shopRepo *repository.ShopRepo) *UploadService {
+func NewUploadService(userRepo *repository.UserRepo, shopRepo *repository.ShopRepo, modRepo *repository.ModerationRepo) *UploadService {
 	return &UploadService{
 		userRepo: userRepo,
 		shopRepo: shopRepo,
+		modRepo:  modRepo,
 	}
+}
+
+// validateImageSafety checks if the image matches any banned perceptual hashes
+func (s *UploadService) validateImageSafety(ctx context.Context, file multipart.File) error {
+	if s.modRepo == nil {
+		return nil
+	}
+
+	hash, err := reuse.ComputeDHash(file)
+	_, _ = file.Seek(0, io.SeekStart)
+	if err != nil || hash == "" {
+		return nil
+	}
+
+	bannedHashes, err := s.modRepo.GetBannedImageHashes(ctx)
+	if err != nil || len(bannedHashes) == 0 {
+		return nil
+	}
+
+	for _, bh := range bannedHashes {
+		if reuse.IsImageHashSimilar(hash, bh, reuse.MaxAllowedHammingDistance) {
+			return ErrImageFlaggedBanned
+		}
+	}
+
+	return nil
 }
 
 // UploadUserAvatar handles uploading a single user profile picture and deletes previous avatar from R2
@@ -31,6 +58,10 @@ func (s *UploadService) UploadUserAvatar(
 	file multipart.File,
 	header *multipart.FileHeader,
 ) (string, error) {
+	if err := s.validateImageSafety(ctx, file); err != nil {
+		return "", err
+	}
+
 	user, err := s.userRepo.FindByID(ctx, userID)
 	if err != nil {
 		return "", errors.New("user not found")
@@ -81,6 +112,10 @@ func (s *UploadService) UploadShopImages(
 
 	// 1. Upload logo if provided
 	if logoFile != nil && logoHeader != nil {
+		if err := s.validateImageSafety(ctx, logoFile); err != nil {
+			return "", nil, err
+		}
+
 		uploadedLogo, err := reuse.UploadImage(logoFile, logoHeader, folder+"/logo")
 		if err != nil {
 			return "", nil, err
@@ -99,6 +134,10 @@ func (s *UploadService) UploadShopImages(
 	// 2. Upload banners if provided
 	if len(bannerFiles) > 0 {
 		for i, bFile := range bannerFiles {
+			if err := s.validateImageSafety(ctx, bFile); err != nil {
+				return "", nil, err
+			}
+
 			bHeader := bannerHeaders[i]
 			bURL, err := reuse.UploadImage(bFile, bHeader, folder+"/promotions")
 			if err != nil {
@@ -142,6 +181,13 @@ func (s *UploadService) UploadProductImages(
 
 	if len(files) > 4 {
 		return nil, ErrTooManyProductImages
+	}
+
+	// Validate safety of all product images before uploading
+	for _, f := range files {
+		if err := s.validateImageSafety(ctx, f); err != nil {
+			return nil, err
+		}
 	}
 
 	type uploadResult struct {

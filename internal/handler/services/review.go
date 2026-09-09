@@ -8,6 +8,7 @@ import (
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
 	"shopMe/internal/handler/repository"
+	"shopMe/internal/reuse"
 )
 
 var (
@@ -44,7 +45,8 @@ func (s *ReviewService) AddOrUpdateReview(ctx context.Context, slug string, user
 		return nil, errors.New("rating must be between 1 and 5")
 	}
 
-	return s.reviewRepo.UpsertReview(ctx, shop.ID, userID, input.Rating, input.Comment)
+	cleanComment := reuse.SanitizeReviewText(input.Comment)
+	return s.reviewRepo.UpsertReview(ctx, shop.ID, userID, input.Rating, cleanComment)
 }
 
 func (s *ReviewService) ListShopReviews(ctx context.Context, slug string, page, limit int) (*dto.ReviewPaginationResponse, error) {

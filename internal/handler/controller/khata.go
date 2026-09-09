@@ -4,6 +4,7 @@ package controller
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/services"
@@ -169,3 +170,174 @@ func (c *KhataController) GetSummary(w http.ResponseWriter, r *http.Request) {
 
 	reuse.Success(w, "Khata summary retrieved successfully", summary)
 }
+
+// GetPaymentReminder generates a WhatsApp Click-to-Chat reminder link for an udhar customer (Protected - Shop)
+func (c *KhataController) GetPaymentReminder(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	customerMobile := strings.TrimSpace(chi.URLParam(r, "mobile"))
+	if customerMobile == "" {
+		reuse.Error(w, http.StatusBadRequest, "customer mobile is required")
+		return
+	}
+
+	reminder, err := c.service.GeneratePaymentReminder(r.Context(), claims.UserID, customerMobile)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
+			return
+		}
+		if errors.Is(err, services.ErrKhataCustomerNotFound) {
+			reuse.Error(w, http.StatusNotFound, "khata customer account not found")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "WhatsApp payment reminder generated successfully", reminder)
+}
+
+// UpdateCreditLimit updates the maximum allowed credit cap for a customer (Protected - Shop)
+func (c *KhataController) UpdateCreditLimit(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	customerMobile := strings.TrimSpace(chi.URLParam(r, "mobile"))
+	if customerMobile == "" {
+		reuse.Error(w, http.StatusBadRequest, "customer mobile is required")
+		return
+	}
+
+	var input dto.SetCreditLimitRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := reuse.ValidateStruct(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	err := c.service.UpdateCreditLimit(r.Context(), claims.UserID, customerMobile, input.CreditLimit)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
+			return
+		}
+		if errors.Is(err, services.ErrKhataCustomerNotFound) {
+			reuse.Error(w, http.StatusNotFound, "khata customer account not found")
+			return
+		}
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Customer credit limit updated successfully", map[string]interface{}{
+		"customer_mobile": customerMobile,
+		"credit_limit":    input.CreditLimit,
+	})
+}
+
+// GetAgingReport calculates bad-debt aging brackets and overdue accounts (Protected - Shop)
+func (c *KhataController) GetAgingReport(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	report, err := c.service.GetAgingReport(r.Context(), claims.UserID)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Khata bad debt aging report generated successfully", report)
+}
+
+// DownloadStatementPDF downloads an itemized account statement PDF for a customer (Protected - Shop)
+func (c *KhataController) DownloadStatementPDF(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	customerMobile := strings.TrimSpace(chi.URLParam(r, "mobile"))
+	customerMobile = strings.TrimSuffix(customerMobile, ".pdf")
+	if customerMobile == "" {
+		reuse.Error(w, http.StatusBadRequest, "customer mobile is required")
+		return
+	}
+
+	pdfBytes, err := c.service.GenerateStatementPDF(r.Context(), claims.UserID, customerMobile)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
+			return
+		}
+		if errors.Is(err, services.ErrKhataCustomerNotFound) {
+			reuse.Error(w, http.StatusNotFound, "khata customer account not found")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=\"khata_statement_%s.pdf\"", customerMobile))
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(pdfBytes)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(pdfBytes)
+}
+
+// GetStatementShare generates a WhatsApp passbook link with summary text (Protected - Shop)
+func (c *KhataController) GetStatementShare(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	customerMobile := strings.TrimSpace(chi.URLParam(r, "mobile"))
+	if customerMobile == "" {
+		reuse.Error(w, http.StatusBadRequest, "customer mobile is required")
+		return
+	}
+
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	baseURL := fmt.Sprintf("%s://%s", scheme, r.Host)
+
+	res, err := c.service.GetStatementShareLink(r.Context(), claims.UserID, customerMobile, baseURL)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
+			return
+		}
+		if errors.Is(err, services.ErrKhataCustomerNotFound) {
+			reuse.Error(w, http.StatusNotFound, "khata customer account not found")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "WhatsApp statement link generated successfully", res)
+}
+
