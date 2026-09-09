@@ -32,13 +32,16 @@ type UpdateShopStatusRequest struct {
 }
 
 type AdminStatsResponse struct {
-	TotalShops     int `json:"total_shops"`
-	ActiveShops    int `json:"active_shops"`
-	PendingShops   int `json:"pending_shops"`
-	FlaggedShops   int `json:"flagged_shops"`
-	BannedShops    int `json:"banned_shops"`
-	PendingReports int `json:"pending_reports"`
-	TotalReports   int `json:"total_reports"`
-	BannedEntities int `json:"banned_entities"`
-	TotalUsers     int `json:"total_users"`
+	TotalShops      int `json:"total_shops"`
+	ActiveShops     int `json:"active_shops"`
+	PendingShops    int `json:"pending_shops"`
+	FlaggedShops    int `json:"flagged_shops"`
+	BannedShops     int `json:"banned_shops"`
+	PendingReports  int `json:"pending_reports"`
+	TotalReports    int `json:"total_reports"`
+	BannedEntities  int `json:"banned_entities"`
+	TotalUsers      int `json:"total_users"`
+	TotalProducts   int `json:"total_products"`
+	TotalCategories int `json:"total_categories"`
 }
+

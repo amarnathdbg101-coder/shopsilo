@@ -4,6 +4,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"shopMe/internal/handler/model"
 	"strings"
 
@@ -212,3 +213,156 @@ func (r *UserRepo) DeactivateUser(ctx context.Context, userID string) error {
 	}
 	return nil
 }
+
+func (r *UserRepo) UpdateProfile(ctx context.Context, userID, fullName, phone string) (*model.User, error) {
+	query := `
+		UPDATE users
+		SET full_name = $1, phone = $2, updated_at = NOW()
+		WHERE id = $3
+		RETURNING id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, created_at, updated_at
+	`
+	u := &model.User{}
+	err := r.db.QueryRow(ctx, query, strings.TrimSpace(fullName), strings.TrimSpace(phone), userID).Scan(
+		&u.ID,
+		&u.Email,
+		&u.PasswordHash,
+		&u.FullName,
+		&u.Phone,
+		&u.AvatarURL,
+		&u.Role,
+		&u.IsActive,
+		&u.CreatedAt,
+		&u.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrUserNotFound
+		}
+		r.logger.Error("failed to update user profile", zap.Error(err), zap.String("user_id", userID))
+		return nil, err
+	}
+	return u, nil
+}
+
+func (r *UserRepo) ListUsersForAdmin(ctx context.Context, role, search string, limit, offset int) ([]*model.User, int, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+
+	var whereClauses []string
+	var args []interface{}
+	argIdx := 1
+
+	if role != "" && role != "all" {
+		whereClauses = append(whereClauses, fmt.Sprintf("role = $%d", argIdx))
+		args = append(args, strings.TrimSpace(role))
+		argIdx++
+	}
+
+	if search != "" {
+		searchTerm := "%" + strings.TrimSpace(search) + "%"
+		whereClauses = append(whereClauses, fmt.Sprintf("(full_name ILIKE $%d OR email ILIKE $%d OR phone ILIKE $%d)", argIdx, argIdx, argIdx))
+		args = append(args, searchTerm)
+		argIdx++
+	}
+
+	whereSQL := ""
+	if len(whereClauses) > 0 {
+		whereSQL = "WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, created_at, updated_at,
+		       COUNT(*) OVER() AS total_count
+		FROM users
+		%s
+		ORDER BY created_at DESC
+		LIMIT $%d OFFSET $%d
+	`, whereSQL, argIdx, argIdx+1)
+
+	args = append(args, limit, offset)
+
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		r.logger.Error("failed to query admin users", zap.Error(err))
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var users []*model.User
+	totalCount := 0
+
+	for rows.Next() {
+		u := &model.User{}
+		err := rows.Scan(
+			&u.ID,
+			&u.Email,
+			&u.PasswordHash,
+			&u.FullName,
+			&u.Phone,
+			&u.AvatarURL,
+			&u.Role,
+			&u.IsActive,
+			&u.CreatedAt,
+			&u.UpdatedAt,
+			&totalCount,
+		)
+		if err != nil {
+			r.logger.Error("failed to scan admin user row", zap.Error(err))
+			return nil, 0, err
+		}
+		users = append(users, u)
+	}
+
+	if users == nil {
+		users = []*model.User{}
+	}
+
+	return users, totalCount, nil
+}
+
+func (r *UserRepo) UpdateUserStatusForAdmin(ctx context.Context, userID string, isActive *bool, role *string) (*model.User, error) {
+	current, err := r.FindByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	newActive := current.IsActive
+	if isActive != nil {
+		newActive = *isActive
+	}
+
+	newRole := current.Role
+	if role != nil && strings.TrimSpace(*role) != "" {
+		newRole = strings.TrimSpace(*role)
+	}
+
+	query := `
+		UPDATE users
+		SET is_active = $1, role = $2, updated_at = NOW()
+		WHERE id = $3
+		RETURNING id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, created_at, updated_at
+	`
+	u := &model.User{}
+	err = r.db.QueryRow(ctx, query, newActive, newRole, userID).Scan(
+		&u.ID,
+		&u.Email,
+		&u.PasswordHash,
+		&u.FullName,
+		&u.Phone,
+		&u.AvatarURL,
+		&u.Role,
+		&u.IsActive,
+		&u.CreatedAt,
+		&u.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrUserNotFound
+		}
+		r.logger.Error("failed to update user status by admin", zap.Error(err), zap.String("user_id", userID))
+		return nil, err
+	}
+	return u, nil
+}
+
