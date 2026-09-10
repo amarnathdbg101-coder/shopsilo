@@ -50,7 +50,7 @@ func (r *ReviewRepo) UpsertReview(ctx context.Context, shopID, userID string, ra
 				updated_at = NOW()
 			RETURNING id, shop_id, user_id, rating, COALESCE(comment, '') AS comment, is_verified_visitor, created_at, updated_at
 		)
-		SELECT i.id, i.shop_id, i.user_id, i.rating, i.comment, i.is_verified_visitor, i.created_at, i.updated_at, COALESCE(u.name, '')
+		SELECT i.id, i.shop_id, i.user_id, i.rating, i.comment, i.is_verified_visitor, i.created_at, i.updated_at, COALESCE(u.full_name, '')
 		FROM inserted i
 		LEFT JOIN users u ON u.id = i.user_id;
 	`
@@ -85,10 +85,10 @@ func (r *ReviewRepo) FindByShopID(ctx context.Context, shopID string, page, limi
 
 	query := `
 		SELECT r.id, r.shop_id, r.user_id, r.rating, COALESCE(r.comment, ''), r.is_verified_visitor,
-		       r.created_at, r.updated_at, COALESCE(u.name, 'Customer') AS user_name,
+		       r.created_at, r.updated_at, COALESCE(u.full_name, 'Customer') AS user_name,
 		       COUNT(*) OVER() AS total_count
 		FROM shop_reviews r
-		JOIN users u ON r.user_id = u.id
+		LEFT JOIN users u ON r.user_id = u.id
 		WHERE r.shop_id = $1
 		ORDER BY r.created_at DESC
 		LIMIT $2 OFFSET $3
