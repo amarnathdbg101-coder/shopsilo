@@ -135,12 +135,29 @@ func (c *ShopController) ToggleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var input dto.ToggleShopStatusRequest
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		reuse.Error(w, http.StatusBadRequest, "invalid request body")
-		return
+	hasExplicitInput := false
+	if r.Body != nil && r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&input); err == nil {
+			hasExplicitInput = true
+		}
 	}
 
-	updatedShop, err := c.service.ToggleShopStatus(r.Context(), claims.UserID, input.IsOpen)
+	targetIsOpen := input.IsOpen
+	if !hasExplicitInput {
+		// Auto-toggle: retrieve current shop and invert is_open
+		currentShop, err := c.service.GetMyShop(r.Context(), claims.UserID)
+		if err != nil {
+			if errors.Is(err, services.ErrShopNotFound) {
+				reuse.Error(w, http.StatusNotFound, "shop not found")
+				return
+			}
+			reuse.Error(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		targetIsOpen = !currentShop.IsOpen
+	}
+
+	updatedShop, err := c.service.ToggleShopStatus(r.Context(), claims.UserID, targetIsOpen)
 	if err != nil {
 		if errors.Is(err, services.ErrShopNotFound) {
 			reuse.Error(w, http.StatusNotFound, "shop not found")

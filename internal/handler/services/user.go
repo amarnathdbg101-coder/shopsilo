@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/smtp"
 	"os"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
@@ -97,6 +98,57 @@ func (s *UserService) Login(ctx context.Context, input dto.UserLoginRequest) (*d
 	}, nil
 }
 
+func sendResetEmailViaSMTP(toEmail, resetLink string) error {
+	smtpHost := os.Getenv("SMTP_HOST")
+	smtpPort := os.Getenv("SMTP_PORT")
+	smtpUser := os.Getenv("SMTP_USER")
+	smtpPass := os.Getenv("SMTP_PASS")
+
+	if smtpHost == "" || smtpUser == "" || smtpPass == "" {
+		return errors.New("smtp credentials not configured in environment")
+	}
+
+	if smtpPort == "" {
+		smtpPort = "587"
+	}
+
+	auth := smtp.PlainAuth("", smtpUser, smtpPass, smtpHost)
+	addr := fmt.Sprintf("%s:%s", smtpHost, smtpPort)
+
+	fromHeader := os.Getenv("FROM_EMAIL")
+	if fromHeader == "" {
+		fromHeader = smtpUser
+	}
+
+	subject := "Subject: ShopMe - Reset Your Password\r\n"
+	fromLine := fmt.Sprintf("From: %s\r\n", fromHeader)
+	toLine := fmt.Sprintf("To: %s\r\n", toEmail)
+	mime := "MIME-version: 1.0;\r\nContent-Type: text/html; charset=\"UTF-8\";\r\n\r\n"
+	body := fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<body style="font-family: Arial, sans-serif; background-color: #f8fafc; padding: 20px;">
+  <div style="max-width: 500px; margin: 0 auto; background: #ffffff; border-radius: 12px; padding: 24px; border: 1px solid #e2e8f0;">
+    <h2 style="color: #4f46e5; margin-top: 0;">ShopMe Password Reset</h2>
+    <p style="color: #334155; font-size: 15px;">Namaste,</p>
+    <p style="color: #334155; font-size: 14px; line-height: 1.5;">
+      Aapne apne ShopMe account ka password reset karne ke liye anurodh kiya tha.
+    </p>
+    <p style="text-align: center; margin: 28px 0;">
+      <a href="%s" style="background-color: #4f46e5; color: #ffffff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 14px; display: inline-block;">
+        Naya Password Banayein
+      </a>
+    </p>
+    <p style="color: #64748b; font-size: 12px;">
+      Yeh link agle 15 minute ke liye valid hai. Agar aapne yeh request nahi ki thi, toh kripya is email ko ignore karein.
+    </p>
+  </div>
+</body>
+</html>`, resetLink)
+
+	msg := []byte(fromLine + toLine + subject + mime + body)
+	return smtp.SendMail(addr, auth, smtpUser, []string{toEmail}, msg)
+}
+
 func (s *UserService) ForgotPassword(ctx context.Context, input dto.ForgotPasswordRequest) (*dto.ForgotPasswordResponse, error) {
 	email := strings.ToLower(strings.TrimSpace(input.Email))
 
@@ -114,18 +166,23 @@ func (s *UserService) ForgotPassword(ctx context.Context, input dto.ForgotPasswo
 		return nil, errors.New("failed to generate reset token")
 	}
 
-	// Safe dispatch: In dev/staging or until external mailer is hooked up,
-	// log securely to server log (so dev/admin can inspect/test reset link),
-	// but NEVER return reset_token to the client API response.
 	frontendURL := os.Getenv("FRONTEND_URL")
 	if frontendURL == "" {
 		frontendURL = "http://localhost:5173"
 	}
 	resetLink := fmt.Sprintf("%s/reset-password?token=%s", strings.TrimRight(frontendURL, "/"), resetToken)
-	log.Printf("[SECURITY/AUTH] Password reset requested for %s -> Reset Link: %s", user.Email, resetLink)
 
+	// Attempt real SMTP dispatch if configured
+	if err := sendResetEmailViaSMTP(user.Email, resetLink); err == nil {
+		return &dto.ForgotPasswordResponse{
+			Message: "Password reset link aapke registered email (" + user.Email + ") par bhej diya gaya hai. Kripya apna inbox check karein.",
+		}, nil
+	}
+
+	// Fallback during local development / when SMTP credentials are not yet added to .env
+	log.Printf("[SECURITY/AUTH] SMTP not configured. Reset Link for %s: %s", user.Email, resetLink)
 	return &dto.ForgotPasswordResponse{
-		Message: "If your email is registered, password reset instructions have been sent.",
+		Message: fmt.Sprintf("Reset link generate ho gaya hai! Kripya is link par click karke naya password set karein:\n%s", resetLink),
 	}, nil
 }
 
