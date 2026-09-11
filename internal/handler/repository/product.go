@@ -244,6 +244,86 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*model.Product, 
 	return p, nil
 }
 
+// FindByIDs fetches multiple active products belonging to shopID in a single batch query with inventory JOIN.
+func (r *ProductRepo) FindByIDs(ctx context.Context, shopID string, ids []string) (map[string]*model.Product, error) {
+	if len(ids) == 0 {
+		return make(map[string]*model.Product), nil
+	}
+
+	query := `
+		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
+		       p.category_id, p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
+		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1),
+		       COALESCE(p.floor_price, 0), COALESCE(p.allow_bargain, true)
+		FROM products p
+		LEFT JOIN inventory i ON i.product_id = p.id
+		WHERE p.shop_id = $1 AND p.id = ANY($2) AND p.is_active = true
+	`
+
+	rows, err := r.db.Query(ctx, query, shopID, ids)
+	if err != nil {
+		r.logger.Error("failed to query products by ids", zap.Error(err), zap.String("shop_id", shopID))
+		return nil, err
+	}
+	defer rows.Close()
+
+	productsMap := make(map[string]*model.Product, len(ids))
+	for rows.Next() {
+		p := &model.Product{}
+		var imagesBytes, attributesBytes []byte
+		inv := &model.Inventory{}
+
+		err := rows.Scan(
+			&p.ID,
+			&p.ShopID,
+			&p.Name,
+			&p.Slug,
+			&p.Description,
+			&p.SKU,
+			&p.Price,
+			&p.CostPrice,
+			&p.ComparePrice,
+			&p.CategoryID,
+			&imagesBytes,
+			&p.Weight,
+			&p.IsActive,
+			&p.IsFeatured,
+			&p.Tags,
+			&attributesBytes,
+			&p.CreatedAt,
+			&p.UpdatedAt,
+			&inv.Quantity,
+			&inv.ReservedQuantity,
+			&inv.LowStockThreshold,
+			&p.FloorPrice,
+			&p.AllowBargain,
+		)
+		if err != nil {
+			r.logger.Error("failed to scan product batch row", zap.Error(err))
+			return nil, err
+		}
+
+		p.Images = []string{}
+		if len(imagesBytes) > 0 {
+			_ = json.Unmarshal(imagesBytes, &p.Images)
+		}
+
+		p.Attributes = make(map[string]interface{})
+		if len(attributesBytes) > 0 {
+			_ = json.Unmarshal(attributesBytes, &p.Attributes)
+		}
+
+		inv.ProductID = p.ID
+		inv.AvailableQuantity = inv.Quantity - inv.ReservedQuantity
+		p.Inventory = inv
+
+		computeProfit(p)
+		productsMap[p.ID] = p
+	}
+
+	return productsMap, nil
+}
+
 func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*model.Product, error) {
 	query := `
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
@@ -766,20 +846,45 @@ func (r *ProductRepo) GetLowStockProducts(ctx context.Context, shopID string) ([
 	return items, nil
 }
 
-// GetMonthlyProfitAnalytics aggregates sales, revenue, cost and net profit for a shop in a specific month.
+// GetMonthlyProfitAnalytics aggregates sales, revenue, cost and net profit for a shop in a specific month (combining POS bills and completed reservations).
 func (r *ProductRepo) GetMonthlyProfitAnalytics(ctx context.Context, shopID string, year, month int) (*dto.MonthlyProfitResponse, error) {
 	query := `
-		SELECT 
-			COUNT(r.id) AS total_sales,
-			COALESCE(SUM(r.quantity), 0) AS total_items,
-			COALESCE(SUM(r.quantity * p.price), 0.0) AS total_revenue,
-			COALESCE(SUM(r.quantity * COALESCE(p.cost_price, 0)), 0.0) AS total_cost
-		FROM reservations r
-		JOIN products p ON r.product_id = p.id
-		WHERE r.shop_id = $1
-		  AND r.status = 'completed'
-		  AND EXTRACT(YEAR FROM r.completed_at) = $2
-		  AND EXTRACT(MONTH FROM r.completed_at) = $3
+		WITH pos_sales AS (
+			SELECT
+				COUNT(b.id) AS sales_count,
+				COALESCE(SUM(b.total_amount), 0.0) AS revenue,
+				COALESCE(SUM(b.total_cost), 0.0) AS cost,
+				COALESCE(SUM(items.qty), 0) AS items_count
+			FROM pos_bills b
+			LEFT JOIN (
+				SELECT bill_id, SUM(quantity) AS qty
+				FROM pos_bill_items
+				GROUP BY bill_id
+			) items ON items.bill_id = b.id
+			WHERE b.shop_id = $1
+			  AND EXTRACT(YEAR FROM b.created_at) = $2
+			  AND EXTRACT(MONTH FROM b.created_at) = $3
+		),
+		res_sales AS (
+			SELECT 
+				COUNT(r.id) AS sales_count,
+				COALESCE(SUM(r.quantity), 0) AS items_count,
+				COALESCE(SUM(r.quantity * p.price), 0.0) AS revenue,
+				COALESCE(SUM(r.quantity * COALESCE(p.cost_price, 0)), 0.0) AS cost
+			FROM reservations r
+			JOIN products p ON r.product_id = p.id
+			WHERE r.shop_id = $1
+			  AND r.status = 'completed'
+			  AND EXTRACT(YEAR FROM r.completed_at) = $2
+			  AND EXTRACT(MONTH FROM r.completed_at) = $3
+		)
+		SELECT
+			COALESCE(p.sales_count, 0) + COALESCE(r.sales_count, 0),
+			COALESCE(p.items_count, 0) + COALESCE(r.items_count, 0),
+			COALESCE(p.revenue, 0.0) + COALESCE(r.revenue, 0.0),
+			COALESCE(p.cost, 0.0) + COALESCE(r.cost, 0.0)
+		FROM pos_sales p
+		CROSS JOIN res_sales r;
 	`
 	var totalSales, totalItems int
 	var totalRevenue, totalCost float64

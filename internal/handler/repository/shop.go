@@ -769,8 +769,8 @@ func (r *ShopRepo) GetShopDailyDigest(ctx context.Context, shopID string) (*mode
 			COALESCE((SELECT COUNT(*) FROM pos_bills WHERE shop_id = $1 AND created_at >= CURRENT_DATE), 0) AS today_sales_count,
 			COALESCE((SELECT COUNT(*) FROM reservations WHERE shop_id = $1 AND status = 'active' AND expires_at >= NOW()), 0) AS active_reservations,
 			COALESCE((SELECT COUNT(*) FROM products p JOIN inventory i ON p.id = i.product_id WHERE p.shop_id = $1 AND p.is_active = true AND i.quantity <= i.low_stock_threshold), 0) AS low_stock_count,
-			COALESCE((SELECT SUM(current_balance) FROM customer_khatas WHERE shop_id = $1 AND current_balance > 0), 0) AS total_khata_udhar,
-			COALESCE((SELECT COUNT(*) FROM customer_khatas WHERE shop_id = $1 AND current_balance > 0), 0) AS total_khata_customers;
+			COALESCE((SELECT SUM(current_balance) FROM customer_khata WHERE shop_id = $1 AND current_balance > 0), 0) AS total_khata_udhar,
+			COALESCE((SELECT COUNT(*) FROM customer_khata WHERE shop_id = $1 AND current_balance > 0), 0) AS total_khata_customers;
 	`
 	digest := &model.ShopDailyDigest{
 		Date: time.Now().Format("2006-01-02"),

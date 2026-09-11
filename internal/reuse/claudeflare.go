@@ -2,6 +2,7 @@
 package reuse
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"shopMe/internal/utils"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -31,23 +33,29 @@ var (
 		"image/png":  true,
 		"image/webp": true,
 	}
+
+	r2Once         sync.Once
+	cachedR2Client *s3.S3
 )
 
 func NewR2Client() *s3.S3 {
-	cfg := utils.MustLoad()
-	sess := session.Must(session.NewSession(&aws.Config{
-		Region:   aws.String("auto"),
-		Endpoint: aws.String(cfg.Endpoint),
-		Credentials: credentials.NewStaticCredentials(
-			cfg.AccessKey,
-			cfg.SecretKey,
-			"",
-		),
-	}))
-	return s3.New(sess)
+	r2Once.Do(func() {
+		cfg := utils.MustLoad()
+		sess := session.Must(session.NewSession(&aws.Config{
+			Region:   aws.String("auto"),
+			Endpoint: aws.String(cfg.Endpoint),
+			Credentials: credentials.NewStaticCredentials(
+				cfg.AccessKey,
+				cfg.SecretKey,
+				"",
+			),
+		}))
+		cachedR2Client = s3.New(sess)
+	})
+	return cachedR2Client
 }
 
-// UploadImage uploads an image to Cloudflare R2 under the specified folder with strict size & mime checks
+// UploadImage uploads an image to Cloudflare R2 under the specified folder with automatic compression & optimization
 func UploadImage(file multipart.File, header *multipart.FileHeader, folder string) (string, error) {
 	if header.Size > MaxImageSizeBytes {
 		return "", ErrImageTooLarge
@@ -58,10 +66,33 @@ func UploadImage(file multipart.File, header *multipart.FileHeader, folder strin
 		return "", ErrInvalidImageType
 	}
 
+	// 1. Compress & downscale image before uploading to R2 to reduce storage cost and bandwidth
+	compressedBytes, optimizedType, err := CompressImage(file, contentType)
+	if err != nil || len(compressedBytes) == 0 {
+		// Fallback to original stream if compression fails
+		_, _ = file.Seek(0, io.SeekStart)
+		compressedBytes = nil
+	}
+
+	var uploadBody io.ReadSeeker
+	uploadContentType := contentType
+
+	if len(compressedBytes) > 0 {
+		uploadBody = bytes.NewReader(compressedBytes)
+		uploadContentType = optimizedType
+	} else {
+		uploadBody = file
+	}
+
 	ext := filepath.Ext(header.Filename)
 	if ext == "" {
 		ext = ".jpg"
 	}
+	// Adjust extension if format was optimized to JPEG
+	if uploadContentType == "image/jpeg" && (ext == ".png" || ext == ".webp") {
+		ext = ".jpg"
+	}
+
 	// Deterministic, collision-free filename
 	filename := fmt.Sprintf("%d%s", time.Now().UnixNano(), ext)
 	key := fmt.Sprintf("%s/%s", strings.Trim(folder, "/"), filename)
@@ -69,11 +100,11 @@ func UploadImage(file multipart.File, header *multipart.FileHeader, folder strin
 	cfg := utils.MustLoad()
 	svc := NewR2Client()
 
-	_, err := svc.PutObject(&s3.PutObjectInput{
+	_, err = svc.PutObject(&s3.PutObjectInput{
 		Bucket:      aws.String(cfg.Bucket),
 		Key:         aws.String(key),
-		Body:        file,
-		ContentType: aws.String(contentType),
+		Body:        uploadBody,
+		ContentType: aws.String(uploadContentType),
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to upload image to storage: %w", err)

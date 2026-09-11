@@ -72,3 +72,16 @@ type ShopResponse struct {
 	Shop        *model.Shop `json:"shop"`
 	AccessToken string      `json:"access_token,omitempty"`
 }
+
+type MerchantDashboardResponse struct {
+	Shop              *model.Shop              `json:"shop"`
+	Digest            *model.ShopDailyDigest   `json:"digest"`
+	WeeklyScorecard   *WeeklyScorecardResponse `json:"weekly_scorecard,omitempty"`
+	ActiveOffersCount int                      `json:"active_offers_count"`
+}
+
+type HomeFeedResponse struct {
+	Categories []*model.Category `json:"categories"`
+	Shops      []*model.Shop     `json:"shops"`
+	Products   []*model.Product  `json:"products"`
+}

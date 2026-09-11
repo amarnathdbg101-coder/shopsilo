@@ -56,20 +56,36 @@ func (r *ModerationRepo) IsAnyEntityBanned(ctx context.Context, candidates map[s
 		return false, "", nil
 	}
 
+	var conditions []string
+	var args []interface{}
+	argIdx := 1
+
 	for entityType, entityVal := range candidates {
 		val := strings.TrimSpace(entityVal)
 		if val == "" {
 			continue
 		}
-		banned, err := r.IsEntityBanned(ctx, entityType, val)
-		if err != nil {
-			return false, "", err
-		}
-		if banned {
-			return true, entityType + ":" + val, nil
-		}
+		conditions = append(conditions, fmt.Sprintf("(entity_type = $%d AND entity_value = $%d)", argIdx, argIdx+1))
+		args = append(args, entityType, val)
+		argIdx += 2
 	}
-	return false, "", nil
+
+	if len(conditions) == 0 {
+		return false, "", nil
+	}
+
+	query := fmt.Sprintf(`SELECT entity_type, entity_value FROM banned_entities WHERE %s LIMIT 1`, strings.Join(conditions, " OR "))
+
+	var foundType, foundVal string
+	err := r.db.QueryRow(ctx, query, args...).Scan(&foundType, &foundVal)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, "", nil
+		}
+		return false, "", err
+	}
+
+	return true, foundType + ":" + foundVal, nil
 }
 
 // BanEntity inserts an entity into the banned_entities blacklist.

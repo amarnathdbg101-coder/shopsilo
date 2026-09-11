@@ -1,1 +1,22 @@
+# Environment
 .env
+.env.local
+*.env
+
+# Binaries & OS
+*.exe
+bin/
+api.exe
+
+# Node & Build artifacts
+node_modules/
+dist/
+build/
+*.log
+
+# IDE & OS specific
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+coverage.out

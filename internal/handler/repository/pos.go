@@ -10,6 +10,7 @@ import (
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -116,28 +117,24 @@ func (r *POSRepo) CreateSaleWithTx(ctx context.Context, tx pgx.Tx, bill *model.P
 		WHERE product_id = $2
 	`
 
+	// 3. Batch insert Bill items and deduct stock in a single network round-trip
+	batch := &pgx.Batch{}
 	for _, item := range bill.Items {
 		item.BillID = bill.ID
-		err := tx.QueryRow(
-			ctx,
-			itemInsertQuery,
-			item.BillID,
-			item.ProductID,
-			item.ProductName,
-			item.ProductSKU,
-			item.Quantity,
-			item.UnitPrice,
-			item.UnitCost,
-			item.TotalPrice,
-		).Scan(&item.ID)
-		if err != nil {
-			r.logger.Error("failed to insert pos bill item", zap.Error(err))
+		batch.Queue(itemInsertQuery, item.BillID, item.ProductID, item.ProductName, item.ProductSKU, item.Quantity, item.UnitPrice, item.UnitCost, item.TotalPrice)
+		batch.Queue(stockDeductQuery, item.Quantity, item.ProductID)
+	}
+
+	br := tx.SendBatch(ctx, batch)
+	defer br.Close()
+
+	for _, item := range bill.Items {
+		if err := br.QueryRow().Scan(&item.ID); err != nil {
+			r.logger.Error("failed to insert pos bill item in batch", zap.Error(err))
 			return nil, 0, 0, err
 		}
-
-		// Deduct inventory
-		if _, err := tx.Exec(ctx, stockDeductQuery, item.Quantity, item.ProductID); err != nil {
-			r.logger.Error("failed to deduct inventory on pos sale", zap.Error(err), zap.String("product_id", item.ProductID))
+		if _, err := br.Exec(); err != nil {
+			r.logger.Error("failed to deduct inventory on pos sale in batch", zap.Error(err), zap.String("product_id", item.ProductID))
 			return nil, 0, 0, err
 		}
 	}
@@ -147,6 +144,9 @@ func (r *POSRepo) CreateSaleWithTx(ctx context.Context, tx pgx.Tx, bill *model.P
 }
 
 func (r *POSRepo) GetDailySummary(ctx context.Context, shopID string, date time.Time) (*model.DailySalesSummary, error) {
+	startOfDay := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, date.Location())
+	endOfDay := startOfDay.Add(24 * time.Hour)
+
 	query := `
 		SELECT 
 			COUNT(id) AS total_bills,
@@ -156,13 +156,13 @@ func (r *POSRepo) GetDailySummary(ctx context.Context, shopID string, date time.
 			COALESCE(SUM(CASE WHEN payment_method = 'upi' THEN total_amount ELSE 0 END), 0.0) AS upi_total,
 			COALESCE(SUM(CASE WHEN payment_method = 'card' THEN total_amount ELSE 0 END), 0.0) AS card_total
 		FROM pos_bills
-		WHERE shop_id = $1 AND DATE(created_at) = DATE($2)
+		WHERE shop_id = $1 AND created_at >= $2 AND created_at < $3
 	`
 	summary := &model.DailySalesSummary{
 		Date: date.Format("02-Jan-2006"),
 	}
 
-	err := r.db.QueryRow(ctx, query, shopID, date).Scan(
+	err := r.db.QueryRow(ctx, query, shopID, startOfDay, endOfDay).Scan(
 		&summary.TotalBills,
 		&summary.TotalRevenue,
 		&summary.TotalCost,
@@ -260,38 +260,57 @@ func (r *POSRepo) GetBillByNumber(ctx context.Context, billNumber string) (*mode
 
 // GetDailyCloseReport computes counter sales, khata debt repayments, cash expenses, and exact expected drawer cash.
 func (r *POSRepo) GetDailyCloseReport(ctx context.Context, shopID string, targetDate time.Time) (*dto.DailyCloseReport, error) {
+	startOfDay := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, targetDate.Location())
+	endOfDay := startOfDay.Add(24 * time.Hour)
+	dateStr := targetDate.Format("2006-01-02")
+
 	query := `
+		WITH pos_summary AS (
+			SELECT
+				COALESCE(SUM(CASE WHEN cash_amount > 0 THEN cash_amount WHEN payment_method = 'cash' THEN total_amount ELSE 0 END), 0) AS cash_sales,
+				COALESCE(SUM(CASE WHEN online_amount > 0 THEN online_amount WHEN payment_method IN ('upi', 'online', 'card') THEN total_amount ELSE 0 END), 0) AS upi_sales,
+				COALESCE(SUM(CASE WHEN payment_method = 'card' THEN total_amount ELSE 0 END), 0) AS card_sales,
+				COALESCE(SUM(CASE WHEN khata_amount > 0 THEN khata_amount WHEN payment_method IN ('credit', 'khata') THEN total_amount ELSE 0 END), 0) AS credit_given,
+				COALESCE(SUM(total_amount), 0) AS total_gross_sales,
+				COUNT(*) AS total_bills_count
+			FROM pos_bills
+			WHERE shop_id = $1 AND created_at >= $2 AND created_at < $3
+		),
+		khata_summary AS (
+			SELECT
+				COALESCE(SUM(CASE WHEN payment_mode = 'cash' THEN amount ELSE 0 END), 0) AS khata_cash,
+				COALESCE(SUM(CASE WHEN payment_mode = 'upi' THEN amount ELSE 0 END), 0) AS khata_upi
+			FROM khata_transactions
+			WHERE shop_id = $1 AND type = 'RECEIVE_PAYMENT' AND created_at >= $2 AND created_at < $3
+		),
+		expense_summary AS (
+			SELECT
+				COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END), 0) AS cash_exp,
+				COALESCE(SUM(amount), 0) AS total_exp
+			FROM shop_expenses
+			WHERE shop_id = $1 AND expense_date = $4::DATE
+		)
 		SELECT
-			COALESCE(SUM(CASE WHEN cash_amount > 0 THEN cash_amount WHEN payment_method = 'cash' THEN total_amount ELSE 0 END), 0) AS cash_sales,
-			COALESCE(SUM(CASE WHEN online_amount > 0 THEN online_amount WHEN payment_method IN ('upi', 'online', 'card') THEN total_amount ELSE 0 END), 0) AS upi_sales,
-			COALESCE(SUM(CASE WHEN payment_method = 'card' THEN total_amount ELSE 0 END), 0) AS card_sales,
-			COALESCE(SUM(CASE WHEN khata_amount > 0 THEN khata_amount WHEN payment_method IN ('credit', 'khata') THEN total_amount ELSE 0 END), 0) AS credit_given,
-			COALESCE(SUM(total_amount), 0) AS total_gross_sales,
-			COUNT(*) AS total_bills_count,
-			COALESCE((
-				SELECT SUM(amount) FROM khata_transactions 
-				WHERE shop_id = $1 AND tx_type = 'receive_payment' AND payment_mode = 'cash' AND created_at::DATE = $2::DATE
-			), 0) AS khata_cash_collected,
-			COALESCE((
-				SELECT SUM(amount) FROM khata_transactions 
-				WHERE shop_id = $1 AND tx_type = 'receive_payment' AND payment_mode = 'upi' AND created_at::DATE = $2::DATE
-			), 0) AS khata_upi_collected,
-			COALESCE((
-				SELECT SUM(amount) FROM shop_expenses 
-				WHERE shop_id = $1 AND payment_method = 'cash' AND expense_date = $2::DATE
-			), 0) AS cash_expenses_paid,
-			COALESCE((
-				SELECT SUM(amount) FROM shop_expenses 
-				WHERE shop_id = $1 AND expense_date = $2::DATE
-			), 0) AS total_expenses_paid
-		FROM pos_bills
-		WHERE shop_id = $1 AND created_at::DATE = $2::DATE;
+			COALESCE(p.cash_sales, 0),
+			COALESCE(p.upi_sales, 0),
+			COALESCE(p.card_sales, 0),
+			COALESCE(p.credit_given, 0),
+			COALESCE(p.total_gross_sales, 0),
+			COALESCE(p.total_bills_count, 0),
+			COALESCE(k.khata_cash, 0),
+			COALESCE(k.khata_upi, 0),
+			COALESCE(e.cash_exp, 0),
+			COALESCE(e.total_exp, 0)
+		FROM (SELECT 1) dummy
+		LEFT JOIN pos_summary p ON true
+		LEFT JOIN khata_summary k ON true
+		LEFT JOIN expense_summary e ON true;
 	`
 	report := &dto.DailyCloseReport{
-		Date: targetDate.Format("2006-01-02"),
+		Date: dateStr,
 	}
 
-	err := r.db.QueryRow(ctx, query, shopID, targetDate).Scan(
+	err := r.db.QueryRow(ctx, query, shopID, startOfDay, endOfDay, dateStr).Scan(
 		&report.CashSales,
 		&report.UPISales,
 		&report.CardSales,
@@ -485,55 +504,113 @@ func (r *POSRepo) GetWeeklyScorecardData(ctx context.Context, shopID string) (*d
 		GeneratedAt:       now.Format("02-Jan-2006 15:04"),
 	}
 
-	// 1. Current 7 days sales & tender breakdown
-	currQuery := `
-		SELECT 
-			COUNT(*),
-			COALESCE(SUM(total_amount), 0),
-			COALESCE(SUM(CASE WHEN cash_amount > 0 THEN cash_amount WHEN payment_method = 'cash' THEN total_amount ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN online_amount > 0 THEN online_amount WHEN payment_method IN ('upi', 'online', 'card') THEN total_amount ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN khata_amount > 0 THEN khata_amount WHEN payment_method IN ('credit', 'khata') THEN total_amount ELSE 0 END), 0)
-		FROM pos_bills
-		WHERE shop_id = $1 AND created_at >= $2
-	`
-	err := r.db.QueryRow(ctx, currQuery, shopID, currStart).Scan(
-		&res.TotalBillsCount,
-		&res.CurrentWeekRevenue,
-		&res.CashCollected,
-		&res.OnlineCollected,
-		&res.KhataNewCreditIssued,
-	)
-	if err != nil {
-		r.logger.Error("failed to get current week sales", zap.Error(err), zap.String("shop_id", shopID))
-		return nil, err
-	}
+	var wg sync.WaitGroup
+	var currErr, prevErr, khataErr, topErr, stockErr error
 
-	if res.TotalBillsCount > 0 {
-		res.AverageOrderValue = math.Round((res.CurrentWeekRevenue/float64(res.TotalBillsCount))*100) / 100
-	}
+	wg.Add(5)
+
+	// 1. Current 7 days sales & tender breakdown
+	go func() {
+		defer wg.Done()
+		currQuery := `
+			SELECT 
+				COUNT(*),
+				COALESCE(SUM(total_amount), 0),
+				COALESCE(SUM(CASE WHEN cash_amount > 0 THEN cash_amount WHEN payment_method = 'cash' THEN total_amount ELSE 0 END), 0),
+				COALESCE(SUM(CASE WHEN online_amount > 0 THEN online_amount WHEN payment_method IN ('upi', 'online', 'card') THEN total_amount ELSE 0 END), 0),
+				COALESCE(SUM(CASE WHEN khata_amount > 0 THEN khata_amount WHEN payment_method IN ('credit', 'khata') THEN total_amount ELSE 0 END), 0)
+			FROM pos_bills
+			WHERE shop_id = $1 AND created_at >= $2
+		`
+		currErr = r.db.QueryRow(ctx, currQuery, shopID, currStart).Scan(
+			&res.TotalBillsCount,
+			&res.CurrentWeekRevenue,
+			&res.CashCollected,
+			&res.OnlineCollected,
+			&res.KhataNewCreditIssued,
+		)
+		if currErr != nil {
+			r.logger.Error("failed to get current week sales", zap.Error(currErr), zap.String("shop_id", shopID))
+		} else if res.TotalBillsCount > 0 {
+			res.AverageOrderValue = math.Round((res.CurrentWeekRevenue/float64(res.TotalBillsCount))*100) / 100
+		}
+	}()
 
 	// 2. Previous 7 days revenue for growth %
-	prevQuery := `
-		SELECT COALESCE(SUM(total_amount), 0)
-		FROM pos_bills
-		WHERE shop_id = $1 AND created_at >= $2 AND created_at < $3
-	`
-	_ = r.db.QueryRow(ctx, prevQuery, shopID, prevStart, currStart).Scan(&res.PreviousWeekRevenue)
+	go func() {
+		defer wg.Done()
+		prevQuery := `
+			SELECT COALESCE(SUM(total_amount), 0)
+			FROM pos_bills
+			WHERE shop_id = $1 AND created_at >= $2 AND created_at < $3
+		`
+		prevErr = r.db.QueryRow(ctx, prevQuery, shopID, prevStart, currStart).Scan(&res.PreviousWeekRevenue)
+	}()
 
-	if res.PreviousWeekRevenue > 0 {
+	// 3. Khata Cash Recovery for current 7 days
+	go func() {
+		defer wg.Done()
+		khataQuery := `
+			SELECT COALESCE(SUM(amount), 0)
+			FROM khata_transactions
+			WHERE shop_id = $1 AND type = 'RECEIVE_PAYMENT' AND created_at >= $2
+		`
+		khataErr = r.db.QueryRow(ctx, khataQuery, shopID, currStart).Scan(&res.KhataRecoveredCash)
+	}()
+
+	// 4. Top 5 selling products by volume in last 7 days
+	var topProducts []*dto.WeeklyTopProductItem
+	go func() {
+		defer wg.Done()
+		topQuery := `
+			SELECT i.product_id, i.product_name, SUM(i.quantity) AS units_sold, SUM(i.total_price) AS total_sales
+			FROM pos_bill_items i
+			JOIN pos_bills b ON i.bill_id = b.id
+			WHERE b.shop_id = $1 AND b.created_at >= $2
+			GROUP BY i.product_id, i.product_name
+			ORDER BY units_sold DESC
+			LIMIT 5
+		`
+		rows, err := r.db.Query(ctx, topQuery, shopID, currStart)
+		if err != nil {
+			topErr = err
+			return
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var it dto.WeeklyTopProductItem
+			if err := rows.Scan(&it.ProductID, &it.ProductName, &it.UnitsSold, &it.TotalSales); err == nil {
+				topProducts = append(topProducts, &it)
+			}
+		}
+	}()
+
+	// 5. Critical Out-of-Stock count for items that sold in the last 14 days
+	go func() {
+		defer wg.Done()
+		stockQuery := `
+			SELECT COUNT(DISTINCT i.product_id)
+			FROM pos_bill_items i
+			JOIN pos_bills b ON i.bill_id = b.id
+			JOIN inventory inv ON i.product_id = inv.product_id
+			WHERE b.shop_id = $1 AND b.created_at >= $2 AND (inv.quantity - inv.reserved_quantity) <= 0
+		`
+		stockErr = r.db.QueryRow(ctx, stockQuery, shopID, prevStart).Scan(&res.OutOfStockSellersCount)
+	}()
+
+	wg.Wait()
+
+	if currErr != nil {
+		return nil, currErr
+	}
+
+	if prevErr == nil && res.PreviousWeekRevenue > 0 {
 		diff := res.CurrentWeekRevenue - res.PreviousWeekRevenue
 		res.GrowthPercentage = math.Round((diff/res.PreviousWeekRevenue)*1000) / 10
 	} else if res.CurrentWeekRevenue > 0 {
 		res.GrowthPercentage = 100.0
 	}
-
-	// 3. Khata Cash Recovery for current 7 days
-	khataQuery := `
-		SELECT COALESCE(SUM(amount), 0)
-		FROM khata_transactions
-		WHERE shop_id = $1 AND tx_type = 'receive_payment' AND created_at >= $2
-	`
-	_ = r.db.QueryRow(ctx, khataQuery, shopID, currStart).Scan(&res.KhataRecoveredCash)
 
 	res.NetKhataCashFlow = res.KhataRecoveredCash - res.KhataNewCreditIssued
 	if res.NetKhataCashFlow >= 0 {
@@ -542,39 +619,14 @@ func (r *POSRepo) GetWeeklyScorecardData(ctx context.Context, shopID string) (*d
 		res.KhataHealthStatus = "Credit Overextension (Issued more udhar than collected - follow up needed)"
 	}
 
-	// 4. Top 5 selling products by volume in last 7 days
-	topQuery := `
-		SELECT i.product_id, i.product_name, SUM(i.quantity) AS units_sold, SUM(i.total_price) AS total_sales
-		FROM pos_bill_items i
-		JOIN pos_bills b ON i.bill_id = b.id
-		WHERE b.shop_id = $1 AND b.created_at >= $2
-		GROUP BY i.product_id, i.product_name
-		ORDER BY units_sold DESC
-		LIMIT 5
-	`
-	rows, err := r.db.Query(ctx, topQuery, shopID, currStart)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var it dto.WeeklyTopProductItem
-			if err := rows.Scan(&it.ProductID, &it.ProductName, &it.UnitsSold, &it.TotalSales); err == nil {
-				res.TopSellingProducts = append(res.TopSellingProducts, &it)
-			}
-		}
+	if topProducts == nil {
+		topProducts = []*dto.WeeklyTopProductItem{}
 	}
-	if res.TopSellingProducts == nil {
-		res.TopSellingProducts = []*dto.WeeklyTopProductItem{}
-	}
+	res.TopSellingProducts = topProducts
 
-	// 5. Critical Out-of-Stock count for items that sold in the last 14 days
-	stockQuery := `
-		SELECT COUNT(DISTINCT i.product_id)
-		FROM pos_bill_items i
-		JOIN pos_bills b ON i.bill_id = b.id
-		JOIN inventory inv ON i.product_id = inv.product_id
-		WHERE b.shop_id = $1 AND b.created_at >= $2 AND (inv.quantity - inv.reserved_quantity) <= 0
-	`
-	_ = r.db.QueryRow(ctx, stockQuery, shopID, prevStart).Scan(&res.OutOfStockSellersCount)
+	_ = khataErr
+	_ = topErr
+	_ = stockErr
 
 	return res, nil
 }
@@ -671,6 +723,7 @@ func (r *POSRepo) ProcessPOSReturnWithTx(ctx context.Context, tx pgx.Tx, shopID 
 	var totalRefund float64
 	restockedCount := 0
 
+	batch := &pgx.Batch{}
 	for _, retItem := range req.Items {
 		billedItem, exists := billItemMap[retItem.ProductID]
 		if !exists {
@@ -684,28 +737,34 @@ func (r *POSRepo) ProcessPOSReturnWithTx(ctx context.Context, tx pgx.Tx, shopID 
 		totalRefund += itemRefund
 		restockedCount += retItem.Quantity
 
-		// Restock inventory
+		cleanReason := strings.TrimSpace(req.Reason)
+		if cleanReason == "" {
+			cleanReason = fmt.Sprintf("Return on Bill %s", req.BillNumber)
+		}
+
 		restockQuery := `
 			UPDATE inventory
 			SET quantity = quantity + $1, updated_at = NOW()
 			WHERE product_id = $2
 		`
-		if _, err := tx.Exec(ctx, restockQuery, retItem.Quantity, retItem.ProductID); err != nil {
-			r.logger.Error("failed to restock inventory on return", zap.Error(err), zap.String("product_id", retItem.ProductID))
-			return nil, 0, 0, err
-		}
-
-		// Log into product_returns table
 		returnInsertQuery := `
 			INSERT INTO product_returns (shop_id, product_id, quantity, refund_amount, reason, created_at)
 			VALUES ($1, $2, $3, $4, $5, NOW())
 		`
-		cleanReason := strings.TrimSpace(req.Reason)
-		if cleanReason == "" {
-			cleanReason = fmt.Sprintf("Return on Bill %s", req.BillNumber)
+		batch.Queue(restockQuery, retItem.Quantity, retItem.ProductID)
+		batch.Queue(returnInsertQuery, shopID, retItem.ProductID, retItem.Quantity, itemRefund, cleanReason)
+	}
+
+	br := tx.SendBatch(ctx, batch)
+	defer br.Close()
+
+	for range req.Items {
+		if _, err := br.Exec(); err != nil {
+			r.logger.Error("failed to restock inventory in batch return", zap.Error(err))
+			return nil, 0, 0, err
 		}
-		if _, err := tx.Exec(ctx, returnInsertQuery, shopID, retItem.ProductID, retItem.Quantity, itemRefund, cleanReason); err != nil {
-			r.logger.Error("failed to record product return row", zap.Error(err))
+		if _, err := br.Exec(); err != nil {
+			r.logger.Error("failed to record product return in batch", zap.Error(err))
 			return nil, 0, 0, err
 		}
 	}

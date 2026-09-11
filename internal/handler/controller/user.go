@@ -79,6 +79,27 @@ func (c *UserController) Login(w http.ResponseWriter, r *http.Request) {
 	reuse.Success(w, "Login successful", res)
 }
 
+func (c *UserController) RefreshToken(w http.ResponseWriter, r *http.Request) {
+	var input dto.RefreshTokenRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := reuse.ValidateStruct(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	res, err := c.service.RefreshToken(r.Context(), input.RefreshToken)
+	if err != nil {
+		reuse.Error(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Token refreshed successfully", res)
+}
+
 func (c *UserController) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	var input dto.ForgotPasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {

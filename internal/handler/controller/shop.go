@@ -376,3 +376,61 @@ func (c *ShopController) GetDailyDigest(w http.ResponseWriter, r *http.Request) 
 	reuse.Success(w, "Daily retail digest retrieved successfully", digest)
 }
 
+// GetMerchantDashboard returns the consolidated dukandar overview in 1 single HTTP call (Protected - Shop)
+func (c *ShopController) GetMerchantDashboard(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	dashboard, err := c.service.GetMerchantDashboard(r.Context(), claims.UserID)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Merchant dashboard data retrieved successfully", dashboard)
+}
+
+// GetHomeFeed returns the consolidated customer storefront feed in 1 single HTTP call (Public)
+func (c *ShopController) GetHomeFeed(w http.ResponseWriter, r *http.Request) {
+	var lat, lng *float64
+	if latStr := r.URL.Query().Get("lat"); latStr != "" {
+		if val, err := strconv.ParseFloat(latStr, 64); err == nil {
+			lat = &val
+		}
+	}
+	if lngStr := r.URL.Query().Get("lng"); lngStr != "" {
+		if val, err := strconv.ParseFloat(lngStr, 64); err == nil {
+			lng = &val
+		}
+	}
+
+	city := r.URL.Query().Get("city")
+	limitShops := 6
+	if limitStr := r.URL.Query().Get("limit_shops"); limitStr != "" {
+		if val, err := strconv.Atoi(limitStr); err == nil && val > 0 {
+			limitShops = val
+		}
+	}
+	limitProducts := 20
+	if limitStr := r.URL.Query().Get("limit_products"); limitStr != "" {
+		if val, err := strconv.Atoi(limitStr); err == nil && val > 0 {
+			limitProducts = val
+		}
+	}
+
+	feed, err := c.service.GetHomeFeed(r.Context(), lat, lng, city, limitShops, limitProducts)
+	if err != nil {
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Customer home feed retrieved successfully", feed)
+}
+

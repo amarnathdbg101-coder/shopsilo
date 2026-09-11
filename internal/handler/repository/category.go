@@ -6,6 +6,7 @@ import (
 	"errors"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -15,7 +16,18 @@ import (
 
 var (
 	ErrCategoryNotFound = errors.New("category not found")
+
+	catCacheMu       sync.RWMutex
+	cachedCategories []*model.Category
+	catCacheExpires  time.Time
 )
+
+func invalidateCategoryCache() {
+	catCacheMu.Lock()
+	cachedCategories = nil
+	catCacheExpires = time.Time{}
+	catCacheMu.Unlock()
+}
 
 type CategoryRepo struct {
 	db     *pgxpool.Pool
@@ -30,6 +42,16 @@ func NewCategoryRepo(db *pgxpool.Pool, logger *zap.Logger) *CategoryRepo {
 }
 
 func (r *CategoryRepo) FindAll(ctx context.Context) ([]*model.Category, error) {
+	now := time.Now()
+	catCacheMu.RLock()
+	if cachedCategories != nil && now.Before(catCacheExpires) {
+		result := make([]*model.Category, len(cachedCategories))
+		copy(result, cachedCategories)
+		catCacheMu.RUnlock()
+		return result, nil
+	}
+	catCacheMu.RUnlock()
+
 	query := `
 		SELECT id, name, slug, COALESCE(description, ''), COALESCE(image_url, ''), parent_id, is_active, created_at
 		FROM categories
@@ -66,7 +88,15 @@ func (r *CategoryRepo) FindAll(ctx context.Context) ([]*model.Category, error) {
 	if categories == nil {
 		categories = []*model.Category{}
 	}
-	return categories, nil
+
+	catCacheMu.Lock()
+	cachedCategories = categories
+	catCacheExpires = now.Add(5 * time.Minute)
+	catCacheMu.Unlock()
+
+	result := make([]*model.Category, len(categories))
+	copy(result, categories)
+	return result, nil
 }
 
 func (r *CategoryRepo) FindByID(ctx context.Context, id string) (*model.Category, error) {
@@ -201,6 +231,7 @@ func (r *CategoryRepo) Create(ctx context.Context, c *model.Category) (*model.Ca
 		r.logger.Error("failed to create category", zap.Error(err), zap.String("name", c.Name))
 		return nil, err
 	}
+	invalidateCategoryCache()
 	return created, nil
 }
 
@@ -237,6 +268,7 @@ func (r *CategoryRepo) Update(ctx context.Context, c *model.Category) (*model.Ca
 		r.logger.Error("failed to update category", zap.Error(err), zap.String("category_id", c.ID))
 		return nil, err
 	}
+	invalidateCategoryCache()
 	return updated, nil
 }
 
@@ -250,6 +282,7 @@ func (r *CategoryRepo) Delete(ctx context.Context, id string) error {
 	if cmdTag.RowsAffected() == 0 {
 		return ErrCategoryNotFound
 	}
+	invalidateCategoryCache()
 	return nil
 }
 

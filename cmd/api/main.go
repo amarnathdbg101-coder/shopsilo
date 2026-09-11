@@ -45,6 +45,12 @@ func main() {
 
 	// Background Concurrency Worker: Periodically expires stale holds and releases reserved inventory
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("background reservation cleaner recovered from unexpected panic", zap.Any("panic", r))
+			}
+		}()
+
 		ticker := time.NewTicker(2 * time.Minute)
 		defer ticker.Stop()
 
@@ -66,12 +72,13 @@ func main() {
 	}()
 
 	server := &http.Server{
-		Addr:           fmt.Sprintf(":%s", cfg.Port),
-		Handler:        router,
-		ReadTimeout:    15 * time.Second,
-		WriteTimeout:   30 * time.Second,
-		IdleTimeout:    60 * time.Second,
-		MaxHeaderBytes: 1 << 20, // 1MB
+		Addr:              fmt.Sprintf(":%s", cfg.Port),
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1MB
 	}
 
 	// Channel to listen for interrupt signals for graceful shutdown
