@@ -83,7 +83,7 @@ func NewAIService(shopRepo *repository.ShopRepo) AIService {
 
 func getGeminiModels() []string {
 	custom := strings.TrimSpace(os.Getenv("GEMINI_MODEL"))
-	models := []string{"gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"}
+	models := []string{"gemini-3.6-flash", "gemini-flash-latest", "gemini-3.5-flash"}
 	if custom != "" {
 		return append([]string{custom}, models...)
 	}
