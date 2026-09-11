@@ -353,29 +353,22 @@ func (r *UserRepo) ListUsersForAdmin(ctx context.Context, role, search string, l
 }
 
 func (r *UserRepo) UpdateUserStatusForAdmin(ctx context.Context, userID string, isActive *bool, role *string) (*model.User, error) {
-	current, err := r.FindByID(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-
-	newActive := current.IsActive
-	if isActive != nil {
-		newActive = *isActive
-	}
-
-	newRole := current.Role
+	var cleanRole *string
 	if role != nil && strings.TrimSpace(*role) != "" {
-		newRole = strings.TrimSpace(*role)
+		trimmed := strings.TrimSpace(*role)
+		cleanRole = &trimmed
 	}
 
 	query := `
 		UPDATE users
-		SET is_active = $1, role = $2, updated_at = NOW()
+		SET is_active = COALESCE($1, is_active),
+		    role = COALESCE($2, role),
+		    updated_at = NOW()
 		WHERE id = $3
 		RETURNING id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, created_at, updated_at
 	`
 	u := &model.User{}
-	err = r.db.QueryRow(ctx, query, newActive, newRole, userID).Scan(
+	err := r.db.QueryRow(ctx, query, isActive, cleanRole, userID).Scan(
 		&u.ID,
 		&u.Email,
 		&u.PasswordHash,

@@ -14,12 +14,18 @@ import (
 	"shopMe/internal/utils"
 	"strings"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 type ShopService struct {
-	shopRepo *repository.ShopRepo
-	userRepo *repository.UserRepo
-	modRepo  *repository.ModerationRepo
+	shopRepo     *repository.ShopRepo
+	userRepo     *repository.UserRepo
+	modRepo      *repository.ModerationRepo
+	categoryRepo *repository.CategoryRepo
+	productRepo  *repository.ProductRepo
+	posRepo      *repository.POSRepo
+	loyaltyRepo  *repository.LoyaltyRepo
 }
 
 func NewShopService(shopRepo *repository.ShopRepo, userRepo *repository.UserRepo, modRepo *repository.ModerationRepo) *ShopService {
@@ -28,6 +34,19 @@ func NewShopService(shopRepo *repository.ShopRepo, userRepo *repository.UserRepo
 		userRepo: userRepo,
 		modRepo:  modRepo,
 	}
+}
+
+// SetAggregatedRepos injects catalog, POS, and loyalty repositories to power unified batch endpoints.
+func (s *ShopService) SetAggregatedRepos(
+	categoryRepo *repository.CategoryRepo,
+	productRepo *repository.ProductRepo,
+	posRepo *repository.POSRepo,
+	loyaltyRepo *repository.LoyaltyRepo,
+) {
+	s.categoryRepo = categoryRepo
+	s.productRepo = productRepo
+	s.posRepo = posRepo
+	s.loyaltyRepo = loyaltyRepo
 }
 
 // enrichShop adds convenient URLs for in-store physical visits (Google Maps navigation & WhatsApp inquiry).
@@ -416,5 +435,135 @@ func (s *ShopService) GetDailyDigest(ctx context.Context, shopOwnerUserID string
 	}
 
 	return s.shopRepo.GetShopDailyDigest(ctx, shop.ID)
+}
+
+// GetMerchantDashboard aggregates shop profile, today's retail digest, weekly scorecard, and active promotions
+// in a single concurrent query to minimize mobile network roundtrips.
+func (s *ShopService) GetMerchantDashboard(ctx context.Context, shopOwnerUserID string) (*dto.MerchantDashboardResponse, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, ErrShopNotFound
+		}
+		return nil, err
+	}
+	enrichShop(shop)
+
+	resp := &dto.MerchantDashboardResponse{
+		Shop: shop,
+	}
+
+	var g errgroup.Group
+
+	// 1. Fetch Daily Digest
+	g.Go(func() error {
+		digest, err := s.shopRepo.GetShopDailyDigest(ctx, shop.ID)
+		if err != nil {
+			return err
+		}
+		resp.Digest = digest
+		return nil
+	})
+
+	// 2. Fetch Weekly Scorecard (if posRepo is injected)
+	if s.posRepo != nil {
+		g.Go(func() error {
+			sc, err := s.posRepo.GetWeeklyScorecardData(ctx, shop.ID)
+			if err != nil {
+				return nil
+			}
+			sc.ShopName = shop.Name
+			resp.WeeklyScorecard = sc
+			return nil
+		})
+	}
+
+	// 3. Fetch Active Offers Count (if loyaltyRepo is injected)
+	if s.loyaltyRepo != nil {
+		g.Go(func() error {
+			offers, err := s.loyaltyRepo.ListOffers(ctx, shop.ID, 0)
+			if err == nil {
+				resp.ActiveOffersCount = len(offers)
+			}
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
+// GetHomeFeed returns in a single consolidated roundtrip the data needed for customer explore screen:
+// categories, nearby local shops, and trending catalog products.
+func (s *ShopService) GetHomeFeed(ctx context.Context, lat, lng *float64, city string, limitShops, limitProducts int) (*dto.HomeFeedResponse, error) {
+	if limitShops <= 0 || limitShops > 20 {
+		limitShops = 6
+	}
+	if limitProducts <= 0 || limitProducts > 50 {
+		limitProducts = 20
+	}
+
+	resp := &dto.HomeFeedResponse{
+		Categories: make([]*model.Category, 0),
+		Shops:      make([]*model.Shop, 0),
+		Products:   make([]*model.Product, 0),
+	}
+
+	var g errgroup.Group
+
+	// 1. Categories (Cached in memory)
+	if s.categoryRepo != nil {
+		g.Go(func() error {
+			cats, err := s.categoryRepo.FindAll(ctx)
+			if err != nil {
+				return nil
+			}
+			resp.Categories = cats
+			return nil
+		})
+	}
+
+	// 2. Nearby Shops
+	g.Go(func() error {
+		filter := dto.ShopFilter{
+			Lat:   lat,
+			Lng:   lng,
+			City:  city,
+			Limit: limitShops,
+			Page:  1,
+		}
+		shops, _, err := s.shopRepo.FindAll(ctx, filter)
+		if err != nil {
+			return nil
+		}
+		for _, sh := range shops {
+			enrichShop(sh)
+		}
+		resp.Shops = shops
+		return nil
+	})
+
+	// 3. Trending Products
+	if s.productRepo != nil {
+		g.Go(func() error {
+			pFilter := dto.ProductFilter{
+				Limit: limitProducts,
+				Page:  1,
+			}
+			products, _, err := s.productRepo.FindAll(ctx, pFilter)
+			if err != nil {
+				return nil
+			}
+			resp.Products = products
+			return nil
+		})
+	}
+
+	_ = g.Wait()
+
+	return resp, nil
 }
 

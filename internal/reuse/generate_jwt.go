@@ -73,3 +73,27 @@ func ExtractUserIDFromResetToken(tokenStr string) (string, error) {
 	return claims.UserID, nil
 }
 
+// ParseTokenForRefresh securely validates token signature (even if expired) and extracts user_id for refresh
+func ParseTokenForRefresh(tokenStr string) (string, error) {
+	secret := []byte(utils.MustLoad().Jwt)
+	claims := jwt.MapClaims{}
+
+	token, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
+		return secret, nil
+	}, jwt.WithoutClaimsValidation())
+
+	if err != nil || token == nil || !token.Valid {
+		return "", errors.New("invalid token signature")
+	}
+
+	userID, ok := claims["user_id"].(string)
+	if !ok || userID == "" {
+		return "", errors.New("missing user_id in token")
+	}
+
+	return userID, nil
+}
+

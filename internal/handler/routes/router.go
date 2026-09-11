@@ -83,16 +83,24 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	loyaltyService := services.NewLoyaltyService(loyaltyRepo, shopRepo, productRepo)
 	loyc := controller.NewLoyaltyController(loyaltyService)
 
+	// AI Layer (Gemini Flash - Customer Shopping Sathi & Merchant Copilot)
+	aiService := services.NewAIService(shopRepo)
+	aic := controller.NewAIController(aiService)
+
 	// POS layer (Counter billing POS, daily summary, digital receipts, credit integration)
 	posRepo := repository.NewPOSRepo(db, logger)
 	posService := services.NewPOSService(posRepo, shopRepo, productRepo, khataRepo)
 	posc := controller.NewPOSController(posService)
+
+	// Wire aggregated repos to shopService for unified batch endpoints
+	shopService.SetAggregatedRepos(categoryRepo, productRepo, posRepo, loyaltyRepo)
 
 	r := chi.NewRouter()
 
 	// Global middlewares
 	r.Use(chimw.RequestID)
 	r.Use(chimw.RealIP)
+	r.Use(chimw.Compress(5))
 	r.Use(middleware.GlobalRateLimiter.Middleware())
 	r.Use(middleware.BanGuard(modRepo))
 	r.Use(chimw.Recoverer)
@@ -120,9 +128,13 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Post("/forgot-password", uc.ForgotPassword)
 		r.Post("/forget-password", uc.ForgotPassword) // alias for convenience
 		r.Post("/reset-password", uc.ResetPassword)
+		r.Post("/refresh", uc.RefreshToken)
 	})
 
 	// Public Browsing routes (customers & visitors)
+	r.Get("/catalog/home-feed", sc.GetHomeFeed) // Consolidated customer explore feed
+	r.Post("/ai/customer-chat", aic.CustomerChat)
+	r.Post("/ai/merchant-copilot", aic.MerchantCopilot)
 	r.Get("/categories", catc.List)
 	r.Get("/shops", sc.List)
 	r.Get("/shops/{id}", sc.GetByID)
@@ -156,8 +168,10 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		// Shop Owner management
 		r.Post("/shops", sc.Create)
 		r.Get("/shops/me", sc.GetMyShop)
+		r.Get("/shops/me/dashboard", sc.GetMerchantDashboard) // Consolidated merchant dashboard
 		r.Get("/shops/me/qr", sc.GetMyShopQR)
 		r.Get("/shops/me/digest", sc.GetDailyDigest)
+		r.Post("/shops/me/copilot", aic.MerchantCopilot)
 		r.Put("/shops/me", sc.UpdateMyShop)
 		r.Patch("/shops/me/status", sc.ToggleStatus)
 		r.Delete("/shops/me", sc.DeleteMyShop)
@@ -184,6 +198,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		// Shop Counter POS & Digital Receipts
 		r.Post("/shops/me/pos/sale", posc.CreateSale)
 		r.Get("/shops/me/pos/daily-summary", posc.GetDailySummary)
+		r.Get("/shops/me/pos/summary", posc.GetDailySummary) // frontend alias
 		r.Get("/shops/me/pos/scan/{sku}", posc.ScanBarcode)
 		r.Get("/shops/me/pos/receipts/{bill_number}", posc.DownloadReceiptPDF)
 		r.Get("/shops/me/pos/receipts/{bill_number}/share", posc.ShareBill)
@@ -209,6 +224,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/shops/me/khata/aging", khatac.GetAgingReport)
 		r.Get("/shops/me/khata", khatac.ListCustomers)
 		r.Get("/shops/me/khata/{mobile}", khatac.GetCustomerHistory)
+		r.Get("/shops/me/khata/{mobile}/statement", khatac.GetCustomerHistory) // frontend JSON alias
 		r.Get("/shops/me/khata/{mobile}/reminder", khatac.GetPaymentReminder)
 		r.Get("/shops/me/khata/{mobile}/statement.pdf", khatac.DownloadStatementPDF)
 		r.Get("/shops/me/khata/{mobile}/statement/share", khatac.GetStatementShare)

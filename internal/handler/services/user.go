@@ -98,6 +98,38 @@ func (s *UserService) Login(ctx context.Context, input dto.UserLoginRequest) (*d
 	}, nil
 }
 
+func (s *UserService) RefreshToken(ctx context.Context, refreshToken string) (*dto.TokenResponse, error) {
+	if strings.TrimSpace(refreshToken) == "" {
+		return nil, errors.New("refresh token is required")
+	}
+
+	userID, err := reuse.ParseTokenForRefresh(refreshToken)
+	if err != nil {
+		return nil, errors.New("invalid or expired refresh token")
+	}
+
+	user, err := s.repo.FindByID(ctx, userID)
+	if err != nil || user == nil {
+		return nil, errors.New("user not found")
+	}
+
+	if !user.IsActive {
+		return nil, errors.New("account is deactivated")
+	}
+
+	token, err := reuse.GenerateJwt(user.ID, user.Email, user.Role)
+	if err != nil {
+		return nil, errors.New("failed to generate access token")
+	}
+
+	return &dto.TokenResponse{
+		AccessToken: token,
+		TokenType:   "Bearer",
+		ExpiresIn:   86400,
+		User:        user,
+	}, nil
+}
+
 func sendResetEmailViaSMTP(toEmail, resetLink string) error {
 	smtpHost := os.Getenv("SMTP_HOST")
 	smtpPort := os.Getenv("SMTP_PORT")

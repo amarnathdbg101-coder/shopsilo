@@ -69,41 +69,22 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 	var totalCost float64
 	var redeemDealID string
 
-	// Concurrently fetch all products in parallel using goroutines
-	type productFetchResult struct {
-		index int
-		prod  *model.Product
-		err   error
-	}
-
-	fetchChan := make(chan productFetchResult, len(input.Items))
-	var wg sync.WaitGroup
-
+	// Fetch all cart products in a single optimized batch query with inventory JOIN
+	productIDs := make([]string, len(input.Items))
 	for i, it := range input.Items {
-		wg.Add(1)
-		go func(idx int, productID string) {
-			defer wg.Done()
-			p, err := s.productRepo.FindByID(ctx, productID)
-			fetchChan <- productFetchResult{index: idx, prod: p, err: err}
-		}(i, it.ProductID)
+		productIDs[i] = it.ProductID
 	}
 
-	wg.Wait()
-	close(fetchChan)
-
-	prods := make([]*model.Product, len(input.Items))
-	for r := range fetchChan {
-		if r.err != nil {
-			return nil, fmt.Errorf("product %s not found", input.Items[r.index].ProductID)
-		}
-		prods[r.index] = r.prod
+	prodsMap, err := s.productRepo.FindByIDs(ctx, shop.ID, productIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch products: %w", err)
 	}
 
 	// Validate each product belongs to shop and has stock
-	for i, it := range input.Items {
-		prod := prods[i]
-		if prod.ShopID != shop.ID {
-			return nil, fmt.Errorf("product '%s' does not belong to your shop", prod.Name)
+	for _, it := range input.Items {
+		prod, exists := prodsMap[it.ProductID]
+		if !exists {
+			return nil, fmt.Errorf("product %s not found or inactive in your shop", it.ProductID)
 		}
 
 		if prod.Inventory != nil {
@@ -544,8 +525,21 @@ func (s *POSService) ParseParchi(ctx context.Context, shopOwnerUserID string, re
 	var unmatchedLines []*dto.UnmatchedParchiLine
 	var readyCartItems []dto.POSSaleItemRequest
 	var estimatedTotal float64
-	totalLines := 0
+	type parchiJob struct {
+		trimmed string
+		term    string
+		qty     int
+		unit    string
+		tokens  []string
+	}
 
+	type parchiResult struct {
+		bestMatch *model.Product
+		unmatched *dto.UnmatchedParchiLine
+	}
+
+	totalLines := 0
+	var jobs []parchiJob
 	for _, line := range rawLines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
@@ -594,41 +588,86 @@ func (s *POSService) ParseParchi(ctx context.Context, shopOwnerUserID string, re
 			tokens = []string{term}
 		}
 
-		// Search shop products
-		candidates, err := s.productRepo.FindActiveProductsByTokens(ctx, shop.ID, tokens, 3)
-		if err != nil || len(candidates) == 0 {
-			unmatchedLines = append(unmatchedLines, &dto.UnmatchedParchiLine{
-				OriginalLine: trimmed,
-				QueryTerm:    term,
-				Reason:       "No matching product found in shop catalog",
-			})
+		jobs = append(jobs, parchiJob{
+			trimmed: trimmed,
+			term:    term,
+			qty:     qty,
+			unit:    unit,
+			tokens:  tokens,
+		})
+	}
+
+	results := make([]parchiResult, len(jobs))
+	if len(jobs) > 0 {
+		workerCount := 6
+		if len(jobs) < workerCount {
+			workerCount = len(jobs)
+		}
+
+		jobChan := make(chan int, len(jobs))
+		for i := range jobs {
+			jobChan <- i
+		}
+		close(jobChan)
+
+		var wg sync.WaitGroup
+		for w := 0; w < workerCount; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for idx := range jobChan {
+					j := jobs[idx]
+					candidates, err := s.productRepo.FindActiveProductsByTokens(ctx, shop.ID, j.tokens, 3)
+					if err != nil || len(candidates) == 0 {
+						results[idx] = parchiResult{
+							unmatched: &dto.UnmatchedParchiLine{
+								OriginalLine: j.trimmed,
+								QueryTerm:    j.term,
+								Reason:       "No matching product found in shop catalog",
+							},
+						}
+					} else {
+						results[idx] = parchiResult{
+							bestMatch: candidates[0],
+						}
+					}
+				}
+			}()
+		}
+		wg.Wait()
+	}
+
+	for i, j := range jobs {
+		res := results[i]
+		if res.unmatched != nil {
+			unmatchedLines = append(unmatchedLines, res.unmatched)
 			continue
 		}
 
-		bestMatch := candidates[0]
+		bestMatch := res.bestMatch
 		availStock := 0
 		if bestMatch.Inventory != nil {
 			availStock = bestMatch.Inventory.AvailableQuantity
 		}
 
-		lineTotal := bestMatch.Price * float64(qty)
+		lineTotal := bestMatch.Price * float64(j.qty)
 		estimatedTotal += lineTotal
 
 		matchedItems = append(matchedItems, &dto.ParsedParchiItem{
 			ProductID:         bestMatch.ID,
 			ProductName:       bestMatch.Name,
 			SKU:               bestMatch.SKU,
-			RequestedQuantity: qty,
-			ParsedUnit:        unit,
+			RequestedQuantity: j.qty,
+			ParsedUnit:        j.unit,
 			UnitPrice:         bestMatch.Price,
 			TotalPrice:        lineTotal,
 			AvailableStock:    availStock,
-			InStock:           availStock >= qty,
+			InStock:           availStock >= j.qty,
 		})
 
 		readyCartItems = append(readyCartItems, dto.POSSaleItemRequest{
 			ProductID: bestMatch.ID,
-			Quantity:  qty,
+			Quantity:  j.qty,
 		})
 	}
 

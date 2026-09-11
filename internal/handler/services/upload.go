@@ -131,23 +131,52 @@ func (s *UploadService) UploadShopImages(
 		newLogoURL = shop.LogoURL
 	}
 
-	// 2. Upload banners if provided
+	// 2. Upload banners concurrently if provided
 	if len(bannerFiles) > 0 {
-		for i, bFile := range bannerFiles {
+		for _, bFile := range bannerFiles {
 			if err := s.validateImageSafety(ctx, bFile); err != nil {
 				return "", nil, err
 			}
+		}
 
-			bHeader := bannerHeaders[i]
-			bURL, err := reuse.UploadImage(bFile, bHeader, folder+"/promotions")
-			if err != nil {
-				// Clean any already uploaded in this batch
-				for _, uploaded := range newBanners {
+		type bannerResult struct {
+			index int
+			url   string
+			err   error
+		}
+		bannerChan := make(chan bannerResult, len(bannerFiles))
+		var bWg sync.WaitGroup
+
+		for i, bFile := range bannerFiles {
+			bWg.Add(1)
+			go func(idx int, file multipart.File, header *multipart.FileHeader) {
+				defer bWg.Done()
+				bURL, err := reuse.UploadImage(file, header, folder+"/promotions")
+				bannerChan <- bannerResult{index: idx, url: bURL, err: err}
+			}(i, bFile, bannerHeaders[i])
+		}
+
+		bWg.Wait()
+		close(bannerChan)
+
+		newBanners = make([]string, len(bannerFiles))
+		var bannerErr error
+		for res := range bannerChan {
+			if res.err != nil && bannerErr == nil {
+				bannerErr = res.err
+			}
+			if res.url != "" {
+				newBanners[res.index] = res.url
+			}
+		}
+
+		if bannerErr != nil {
+			for _, uploaded := range newBanners {
+				if uploaded != "" {
 					_ = reuse.DeleteImage(uploaded)
 				}
-				return "", nil, err
 			}
-			newBanners = append(newBanners, bURL)
+			return "", nil, bannerErr
 		}
 
 		// Clean old promotional banners from R2

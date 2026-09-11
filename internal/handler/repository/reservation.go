@@ -67,8 +67,7 @@ func (r *ReservationRepo) ExpireStaleReservations(ctx context.Context) error {
 }
 
 func (r *ReservationRepo) CountActiveByUserID(ctx context.Context, userID string) (int, error) {
-	_ = r.ExpireStaleReservations(ctx)
-	query := `SELECT COUNT(*) FROM reservations WHERE user_id = $1 AND status = 'active'`
+	query := `SELECT COUNT(*) FROM reservations WHERE user_id = $1 AND status = 'active' AND expires_at >= NOW()`
 	var count int
 	err := r.db.QueryRow(ctx, query, userID).Scan(&count)
 	return count, err

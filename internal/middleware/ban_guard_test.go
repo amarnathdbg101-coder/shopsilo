@@ -80,3 +80,8 @@ func TestRequireRole(t *testing.T) {
 		}
 	})
 }
+
+func TestInvalidateBanCache(t *testing.T) {
+	middleware.InvalidateBanCache()
+}
+
