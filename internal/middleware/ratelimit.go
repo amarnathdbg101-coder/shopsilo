@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"shopMe/internal/reuse"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -67,8 +68,8 @@ func (l *IPRateLimiter) Stop() {
 	close(l.stopCleanup)
 }
 
-// Allow checks if the given IP is within the rate limit
-func (l *IPRateLimiter) Allow(ip string) bool {
+// CheckAndAllow checks if the given IP is within the rate limit and returns headers metadata
+func (l *IPRateLimiter) CheckAndAllow(ip string) (allowed bool, remaining int, resetInSec int64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -76,19 +77,38 @@ func (l *IPRateLimiter) Allow(ip string) bool {
 	rec, exists := l.records[ip]
 
 	if !exists || now.After(rec.windowEnd) {
-		l.records[ip] = &clientRecord{
+		rec = &clientRecord{
 			count:     1,
 			windowEnd: now.Add(l.window),
 		}
-		return true
+		l.records[ip] = rec
+		remaining = l.limit - 1
+		resetInSec = int64(time.Until(rec.windowEnd).Seconds())
+		if resetInSec < 0 {
+			resetInSec = 0
+		}
+		return true, remaining, resetInSec
+	}
+
+	resetInSec = int64(time.Until(rec.windowEnd).Seconds())
+	if resetInSec < 0 {
+		resetInSec = 0
 	}
 
 	if rec.count < l.limit {
 		rec.count++
-		return true
+		remaining = l.limit - rec.count
+		return true, remaining, resetInSec
 	}
 
-	return false
+	remaining = 0
+	return false, remaining, resetInSec
+}
+
+// Allow checks if the given IP is within the rate limit
+func (l *IPRateLimiter) Allow(ip string) bool {
+	allowed, _, _ := l.CheckAndAllow(ip)
+	return allowed
 }
 
 // ExtractIP extracts the client IP address from request headers or remote addr
@@ -125,8 +145,14 @@ func (l *IPRateLimiter) Middleware() func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip := ExtractIP(r)
 
-			if !l.Allow(ip) {
-				w.Header().Set("Retry-After", "60")
+			allowed, remaining, resetInSec := l.CheckAndAllow(ip)
+
+			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(l.limit))
+			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
+			w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(resetInSec, 10))
+
+			if !allowed {
+				w.Header().Set("Retry-After", strconv.FormatInt(resetInSec, 10))
 				reuse.Error(w, http.StatusTooManyRequests, "Too many requests. Please slow down and try again in a moment.")
 				return
 			}

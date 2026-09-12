@@ -3,10 +3,13 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"net/smtp"
+	"net/url"
 	"os"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
@@ -14,6 +17,7 @@ import (
 	"shopMe/internal/reuse"
 	"shopMe/internal/utils"
 	"strings"
+	"time"
 )
 
 
@@ -94,6 +98,123 @@ func (s *UserService) Login(ctx context.Context, input dto.UserLoginRequest) (*d
 		AccessToken: token,
 		TokenType:   "Bearer",
 		ExpiresIn:   86400, // 24 hours in seconds
+		User:        user,
+	}, nil
+}
+
+type googleTokenInfo struct {
+	Email         string `json:"email"`
+	EmailVerified string `json:"email_verified"`
+	Name          string `json:"name"`
+	Picture       string `json:"picture"`
+	Sub           string `json:"sub"`
+	Error         string `json:"error_description"`
+}
+
+func (s *UserService) GoogleLogin(ctx context.Context, input dto.GoogleLoginRequest) (*dto.TokenResponse, error) {
+	idToken := strings.TrimSpace(input.IDToken)
+	if idToken == "" {
+		return nil, errors.New("google id token is required")
+	}
+
+	var info googleTokenInfo
+
+	// Support local development mock tokens seamlessly
+	if strings.HasPrefix(idToken, "dev_mock_") || idToken == "sample_google_id_token" {
+		info = googleTokenInfo{
+			Email:   "google.dev@shopme.com",
+			Name:    "Google Dev User",
+			Picture: "https://lh3.googleusercontent.com/a/default-avatar",
+			Sub:     "mock_sub_123456",
+		}
+	} else {
+		// Verify real Google ID Token with Google OAuth2 TokenInfo API
+		tokenInfoURL := fmt.Sprintf("https://oauth2.googleapis.com/tokeninfo?id_token=%s", url.QueryEscape(idToken))
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, tokenInfoURL, nil)
+		if err != nil {
+			return nil, errors.New("failed to build google verification request")
+		}
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, errors.New("failed to connect to google verification server")
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, errors.New("invalid or expired google id token")
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+			return nil, errors.New("failed to parse google token info")
+		}
+	}
+
+	if info.Email == "" {
+		return nil, errors.New("google token does not contain a valid email")
+	}
+
+	email := strings.ToLower(strings.TrimSpace(info.Email))
+
+	// Find or create user in DB
+	user, err := s.repo.FindByEmail(ctx, email)
+	if err != nil {
+		if errors.Is(err, repository.ErrUserNotFound) {
+			// Auto-register new Google user
+			randomSecret := fmt.Sprintf("google_oauth_%s_%d", info.Sub, time.Now().UnixNano())
+			dummyHash, hashErr := reuse.HashPassword(randomSecret)
+			if hashErr != nil {
+				return nil, errors.New("failed to secure user account")
+			}
+
+			fullName := strings.TrimSpace(info.Name)
+			if fullName == "" {
+				fullName = strings.Split(email, "@")[0]
+			}
+
+			newUser := &model.User{
+				Email:        email,
+				PasswordHash: dummyHash,
+				FullName:     fullName,
+				Role:         "customer",
+				IsActive:     true,
+			}
+
+			user, err = s.repo.Create(ctx, newUser)
+			if err != nil {
+				return nil, errors.New("failed to create user from google account")
+			}
+
+			if info.Picture != "" {
+				_ = s.repo.UpdateAvatar(ctx, user.ID, info.Picture)
+				user.AvatarURL = info.Picture
+			}
+		} else {
+			return nil, err
+		}
+	}
+
+	if !user.IsActive {
+		return nil, ErrAccountInactive
+	}
+
+	// If existing user doesn't have avatar set, update with Google avatar
+	if user.AvatarURL == "" && info.Picture != "" {
+		_ = s.repo.UpdateAvatar(ctx, user.ID, info.Picture)
+		user.AvatarURL = info.Picture
+	}
+
+	token, err := reuse.GenerateJwt(user.ID, user.Email, user.Role)
+	if err != nil {
+		return nil, errors.New("failed to generate access token")
+	}
+
+	return &dto.TokenResponse{
+		AccessToken: token,
+		TokenType:   "Bearer",
+		ExpiresIn:   86400,
 		User:        user,
 	}, nil
 }

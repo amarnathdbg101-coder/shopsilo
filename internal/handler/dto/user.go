@@ -20,6 +20,10 @@ type UserLoginRequest struct {
 	Password string `json:"password" validate:"required"`
 }
 
+type GoogleLoginRequest struct {
+	IDToken string `json:"id_token" validate:"required"`
+}
+
 type TokenResponse struct {
 	AccessToken string      `json:"access_token"`
 	TokenType   string      `json:"token_type"`
