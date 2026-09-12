@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -342,4 +344,142 @@ func (r *LoyaltyRepo) FindProductByBarcode(ctx context.Context, code string) (*m
 	p.Inventory = inv
 
 	return p, nil
+}
+
+func (r *LoyaltyRepo) GetOfferByID(ctx context.Context, offerID string) (*model.StoreOffer, error) {
+	query := `
+		SELECT id, shop_id, title, COALESCE(description, ''), discount_text, min_points_required, is_active, expires_at, created_at
+		FROM store_offers
+		WHERE id = $1
+	`
+	off := &model.StoreOffer{}
+	err := r.db.QueryRow(ctx, query, offerID).Scan(
+		&off.ID,
+		&off.ShopID,
+		&off.Title,
+		&off.Description,
+		&off.DiscountText,
+		&off.MinPointsRequired,
+		&off.IsActive,
+		&off.ExpiresAt,
+		&off.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return off, nil
+}
+
+func (r *LoyaltyRepo) UpdateOffer(ctx context.Context, offerID string, title, description, discountText string, minPoints int, isActive bool, expiresAt *time.Time) (*model.StoreOffer, error) {
+	query := `
+		UPDATE store_offers
+		SET title = $1, description = $2, discount_text = $3, min_points_required = $4, is_active = $5, expires_at = $6
+		WHERE id = $7
+		RETURNING id, shop_id, title, COALESCE(description, ''), discount_text, min_points_required, is_active, expires_at, created_at
+	`
+	updated := &model.StoreOffer{}
+	err := r.db.QueryRow(
+		ctx,
+		query,
+		strings.TrimSpace(title),
+		strings.TrimSpace(description),
+		strings.TrimSpace(discountText),
+		minPoints,
+		isActive,
+		expiresAt,
+		offerID,
+	).Scan(
+		&updated.ID,
+		&updated.ShopID,
+		&updated.Title,
+		&updated.Description,
+		&updated.DiscountText,
+		&updated.MinPointsRequired,
+		&updated.IsActive,
+		&updated.ExpiresAt,
+		&updated.CreatedAt,
+	)
+	if err != nil {
+		r.logger.Error("failed to update offer", zap.Error(err), zap.String("offer_id", offerID))
+		return nil, err
+	}
+	return updated, nil
+}
+
+func (r *LoyaltyRepo) DeleteOffer(ctx context.Context, offerID string) error {
+	query := `UPDATE store_offers SET is_active = false WHERE id = $1`
+	_, err := r.db.Exec(ctx, query, offerID)
+	return err
+}
+
+func (r *LoyaltyRepo) RecordOfferAudit(ctx context.Context, audit *dto.OfferAuditRecord) error {
+	query := `
+		INSERT INTO shop_offers_audit (
+			offer_id, shop_id, action, previous_title, previous_discount_text, previous_description,
+			new_title, new_discount_text, new_description, changed_by_user_id, created_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+	`
+	_, err := r.db.Exec(
+		ctx,
+		query,
+		audit.OfferID,
+		audit.ShopID,
+		audit.Action,
+		audit.PreviousTitle,
+		audit.PreviousDiscountText,
+		audit.PreviousDescription,
+		audit.NewTitle,
+		audit.NewDiscountText,
+		audit.NewDescription,
+		audit.ChangedByUserID,
+	)
+	if err != nil {
+		r.logger.Error("failed to record offer audit track", zap.Error(err), zap.String("offer_id", audit.OfferID))
+	}
+	return err
+}
+
+func (r *LoyaltyRepo) GetOfferAuditHistory(ctx context.Context, shopID string) ([]*dto.OfferAuditRecord, error) {
+	query := `
+		SELECT id, offer_id, shop_id, action, COALESCE(previous_title, ''), COALESCE(previous_discount_text, ''), COALESCE(previous_description, ''),
+		       COALESCE(new_title, ''), COALESCE(new_discount_text, ''), COALESCE(new_description, ''), COALESCE(changed_by_user_id::text, ''), created_at
+		FROM shop_offers_audit
+		WHERE shop_id = $1
+		ORDER BY created_at DESC
+		LIMIT 100
+	`
+	rows, err := r.db.Query(ctx, query, shopID)
+	if err != nil {
+		r.logger.Error("failed to query offer audit history", zap.Error(err), zap.String("shop_id", shopID))
+		return nil, err
+	}
+	defer rows.Close()
+
+	var records []*dto.OfferAuditRecord
+	for rows.Next() {
+		var rec dto.OfferAuditRecord
+		var t time.Time
+		err := rows.Scan(
+			&rec.ID,
+			&rec.OfferID,
+			&rec.ShopID,
+			&rec.Action,
+			&rec.PreviousTitle,
+			&rec.PreviousDiscountText,
+			&rec.PreviousDescription,
+			&rec.NewTitle,
+			&rec.NewDiscountText,
+			&rec.NewDescription,
+			&rec.ChangedByUserID,
+			&t,
+		)
+		if err != nil {
+			r.logger.Error("failed to scan offer audit record", zap.Error(err))
+			return nil, err
+		}
+		rec.CreatedAt = t.Format(time.RFC3339)
+		records = append(records, &rec)
+	}
+	return records, nil
 }

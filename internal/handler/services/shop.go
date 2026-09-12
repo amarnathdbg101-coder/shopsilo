@@ -399,6 +399,37 @@ func (s *ShopService) DeleteMyShop(ctx context.Context, userID, userEmail string
 	return token, nil
 }
 
+func (s *ShopService) RestoreMyShop(ctx context.Context, userID, userEmail string) (string, error) {
+	tx, err := s.shopRepo.BeginTx(ctx)
+	if err != nil {
+		return "", errors.New("failed to start database transaction")
+	}
+	defer tx.Rollback(ctx)
+
+	// 1. Restore soft-deleted shop
+	if err := s.shopRepo.RestoreWithTx(ctx, tx, userID); err != nil {
+		return "", err
+	}
+
+	// 2. Restore user role back to "shop"
+	if err := s.userRepo.UpdateRoleWithTx(ctx, tx, userID, "shop"); err != nil {
+		return "", errors.New("failed to restore user role to shop")
+	}
+
+	// 3. Commit transaction
+	if err := tx.Commit(ctx); err != nil {
+		return "", errors.New("failed to commit shop restoration")
+	}
+
+	// 4. Generate new token with restored role "shop"
+	token, err := reuse.GenerateJwt(userID, userEmail, "shop")
+	if err != nil {
+		return "", nil
+	}
+
+	return token, nil
+}
+
 // GenerateShopQRCode generates a scannable PNG QR code for the shop by slug.
 func (s *ShopService) GenerateShopQRCode(ctx context.Context, slug string) ([]byte, error) {
 	shop, err := s.shopRepo.FindBySlug(ctx, slug)

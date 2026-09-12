@@ -747,13 +747,15 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 }
 
 func (r *ProductRepo) Delete(ctx context.Context, id, shopID string) error {
+	// Soft delete product so past POS sales, receipts, and Khata bills remain intact!
 	query := `
-		DELETE FROM products
+		UPDATE products
+		SET is_active = false, updated_at = NOW()
 		WHERE id = $1 AND shop_id = $2
 	`
 	cmdTag, err := r.db.Exec(ctx, query, id, shopID)
 	if err != nil {
-		r.logger.Error("failed to delete product", zap.Error(err), zap.String("product_id", id))
+		r.logger.Error("failed to soft delete product", zap.Error(err), zap.String("product_id", id))
 		return err
 	}
 	if cmdTag.RowsAffected() == 0 {
@@ -844,6 +846,17 @@ func (r *ProductRepo) GetLowStockProducts(ctx context.Context, shopID string) ([
 	}
 
 	return items, nil
+}
+
+func (r *ProductRepo) DismissStockAlert(ctx context.Context, shopID, productID string) error {
+	query := `
+		UPDATE inventory i
+		SET low_stock_threshold = -1, updated_at = NOW()
+		FROM products p
+		WHERE i.product_id = p.id AND p.id = $1 AND p.shop_id = $2
+	`
+	_, err := r.db.Exec(ctx, query, productID, shopID)
+	return err
 }
 
 // GetMonthlyProfitAnalytics aggregates sales, revenue, cost and net profit for a shop in a specific month (combining POS bills and completed reservations).

@@ -273,7 +273,9 @@ func (s *KhataService) GenerateStatementPDF(ctx context.Context, shopOwnerUserID
 		return nil, err
 	}
 
-	return utils.GenerateKhataStatementPDF(customer, transactions, shop)
+	return utils.RenderPDFWithConcurrencyLimit(ctx, func() ([]byte, error) {
+		return utils.GenerateKhataStatementPDF(customer, transactions, shop)
+	})
 }
 
 // GetStatementShareLink generates a WhatsApp message with an itemized statement summary and PDF link.

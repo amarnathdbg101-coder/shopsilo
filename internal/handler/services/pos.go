@@ -240,6 +240,33 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 	}, nil
 }
 
+func (s *POSService) CancelPOSBill(ctx context.Context, shopOwnerUserID, billNumber, reason string) (*model.POSBill, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, ErrShopNotFound
+		}
+		return nil, err
+	}
+
+	tx, err := s.posRepo.BeginTx(ctx)
+	if err != nil {
+		return nil, errors.New("failed to start database transaction")
+	}
+	defer tx.Rollback(ctx)
+
+	bill, err := s.posRepo.CancelBillWithTx(ctx, tx, shop.ID, billNumber, reason)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, errors.New("failed to commit bill cancellation transaction")
+	}
+
+	return bill, nil
+}
+
 // buildWhatsAppBillURL creates a clickable WhatsApp Click-to-Chat URL for sending the bill receipt.
 func buildWhatsAppBillURL(customerPhone, shopName, billNumber string, totalAmount float64, receiptURL string) string {
 	var digits strings.Builder
@@ -348,7 +375,7 @@ func (s *POSService) GetDailySummary(ctx context.Context, shopOwnerUserID string
 	return s.posRepo.GetDailySummary(ctx, shop.ID, time.Now())
 }
 
-// GenerateReceiptPDF generates the PDF bytes for a digital bill receipt.
+// GenerateReceiptPDF generates the PDF bytes for a digital bill receipt with concurrency limiting.
 func (s *POSService) GenerateReceiptPDF(ctx context.Context, billNumber string) ([]byte, error) {
 	bill, err := s.posRepo.GetBillByNumber(ctx, billNumber)
 	if err != nil {
@@ -358,7 +385,9 @@ func (s *POSService) GenerateReceiptPDF(ctx context.Context, billNumber string) 
 		return nil, err
 	}
 
-	return utils.GeneratePOSReceiptPDF(bill)
+	return utils.RenderPDFWithConcurrencyLimit(ctx, func() ([]byte, error) {
+		return utils.GeneratePOSReceiptPDF(bill)
+	})
 }
 
 // GetDailyCloseReport aggregates end-of-day counter sales, khata debt repayments, and expenses to calculate physical drawer cash.

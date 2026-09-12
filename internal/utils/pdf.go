@@ -68,8 +68,8 @@ func GenerateWholesaleReorderPDF(shop *model.Shop, items []*dto.LowStockProduct)
 	pdf.SetLineWidth(0.3)
 	pdf.SetFont("Arial", "B", 9)
 
-	colWidths := []float64{10, 60, 30, 25, 25, 30}
-	headers := []string{"#", "Product Name", "SKU", "In-Stock", "Re-Order Qty", "Supplier / Notes"}
+	colWidths := []float64{10, 65, 30, 25, 25, 25}
+	headers := []string{"#", "Product Name", "SKU / Code", "In-Stock", "Re-Order Qty", "Check [ ]"}
 
 	for i, h := range headers {
 		pdf.CellFormat(colWidths[i], 8, h, "1", 0, "C", true, 0, "")
@@ -81,17 +81,22 @@ func GenerateWholesaleReorderPDF(shop *model.Shop, items []*dto.LowStockProduct)
 	pdf.SetTextColor(40, 40, 40)
 
 	if len(items) == 0 {
-		pdf.CellFormat(180, 10, "All items have sufficient stock. No re-order needed.", "1", 1, "C", false, 0, "")
+		pdf.CellFormat(180, 10, "Mandi Procurement List Ready. Add market items or stock alerts.", "1", 1, "C", false, 0, "")
 	} else {
 		for idx, item := range items {
 			name := item.Name
-			if len(name) > 30 {
-				name = name[:27] + "..."
+			if len(name) > 32 {
+				name = name[:29] + "..."
+			}
+
+			skuStr := item.SKU
+			if skuStr == "" {
+				skuStr = "N/A"
 			}
 
 			pdf.CellFormat(colWidths[0], 7, fmt.Sprintf("%d", idx+1), "1", 0, "C", false, 0, "")
 			pdf.CellFormat(colWidths[1], 7, fmt.Sprintf(" %s", name), "1", 0, "L", false, 0, "")
-			pdf.CellFormat(colWidths[2], 7, fmt.Sprintf(" %s", item.SKU), "1", 0, "L", false, 0, "")
+			pdf.CellFormat(colWidths[2], 7, fmt.Sprintf(" %s", skuStr), "1", 0, "L", false, 0, "")
 
 			// Red text for 0 stock, regular otherwise
 			if item.CurrentStock <= 0 {
@@ -105,7 +110,7 @@ func GenerateWholesaleReorderPDF(shop *model.Shop, items []*dto.LowStockProduct)
 			pdf.CellFormat(colWidths[4], 7, fmt.Sprintf("%d", item.SuggestedReorderQty), "1", 0, "C", false, 0, "")
 
 			pdf.SetTextColor(40, 40, 40)
-			pdf.CellFormat(colWidths[5], 7, "", "1", 1, "C", false, 0, "") // blank box for wholesale dealer note
+			pdf.CellFormat(colWidths[5], 7, "[   ]", "1", 1, "C", false, 0, "") // checkbox for dealer / market purchase
 		}
 	}
 

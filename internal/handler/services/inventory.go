@@ -70,7 +70,19 @@ func (s *InventoryService) GetLowStockAlerts(ctx context.Context, shopOwnerUserI
 	}, nil
 }
 
-// GenerateReorderSheetPDF creates a printable wholesale re-order sheet in PDF.
+func (s *InventoryService) DismissStockAlert(ctx context.Context, shopOwnerUserID, productID string) error {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return ErrShopNotFound
+		}
+		return err
+	}
+
+	return s.productRepo.DismissStockAlert(ctx, shop.ID, productID)
+}
+
+// GenerateReorderSheetPDF creates a printable wholesale re-order sheet in PDF combining low stock & customer demand.
 func (s *InventoryService) GenerateReorderSheetPDF(ctx context.Context, shopOwnerUserID string) ([]byte, error) {
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
@@ -81,11 +93,25 @@ func (s *InventoryService) GenerateReorderSheetPDF(ctx context.Context, shopOwne
 	}
 
 	items, err := s.productRepo.GetLowStockProducts(ctx, shop.ID)
-	if err != nil {
-		return nil, err
+	if err != nil || items == nil {
+		items = []*dto.LowStockProduct{}
 	}
 
-	return utils.GenerateWholesaleReorderPDF(shop, items)
+	// Include customer demand watchlist items into the Mandi Khareed PDF!
+	demandItems, _ := s.productRepo.GetDemandWatchlist(ctx, shop.ID)
+	for _, d := range demandItems {
+		items = append(items, &dto.LowStockProduct{
+			ProductID:           d.ProductID,
+			Name:                fmt.Sprintf("%s (%d Demand)", d.ProductName, d.WaitingCustomersCount),
+			SKU:                 d.SKU,
+			CurrentStock:        d.CurrentStock,
+			SuggestedReorderQty: 10,
+		})
+	}
+
+	return utils.RenderPDFWithConcurrencyLimit(ctx, func() ([]byte, error) {
+		return utils.GenerateWholesaleReorderPDF(shop, items)
+	})
 }
 
 // GenerateSupplierReorderWhatsApp creates a WhatsApp click-to-chat purchase order message with low stock items.

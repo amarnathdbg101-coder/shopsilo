@@ -79,6 +79,33 @@ func (c *InventoryController) GetLowStockAlerts(w http.ResponseWriter, r *http.R
 	reuse.Success(w, "Low stock alerts retrieved successfully", res)
 }
 
+// DismissStockAlert disables stock alert for a discontinued product (Protected - Shop Owner)
+func (c *InventoryController) DismissStockAlert(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	productID := chi.URLParam(r, "id")
+	if productID == "" {
+		reuse.Error(w, http.StatusBadRequest, "product id is required")
+		return
+	}
+
+	err := c.service.DismissStockAlert(r.Context(), claims.UserID, productID)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
+			return
+		}
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Stock alert dismissed successfully", nil)
+}
+
 // DownloadReorderSheetPDF generates and downloads the ready-to-print Wholesale Re-order PDF sheet (Protected - Shop Owner)
 func (c *InventoryController) DownloadReorderSheetPDF(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())

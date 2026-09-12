@@ -746,13 +746,33 @@ func (r *ShopRepo) ToggleStatus(ctx context.Context, userID string, isOpen bool)
 }
 
 func (r *ShopRepo) DeleteWithTx(ctx context.Context, tx pgx.Tx, userID string) error {
+	// Genius Safety: Soft-delete shop and place in 30-day quarantine vault instead of immediate hard delete!
 	query := `
-		DELETE FROM shops
+		UPDATE shops
+		SET is_active = false, is_open = false, status = 'quarantined'
 		WHERE user_id = $1
 	`
 	cmdTag, err := tx.Exec(ctx, query, userID)
 	if err != nil {
-		r.logger.Error("failed to delete shop in tx", zap.Error(err), zap.String("user_id", userID))
+		r.logger.Error("failed to soft delete shop in tx", zap.Error(err), zap.String("user_id", userID))
+		return err
+	}
+	if cmdTag.RowsAffected() == 0 {
+		return ErrShopNotFound
+	}
+	return nil
+}
+
+func (r *ShopRepo) RestoreWithTx(ctx context.Context, tx pgx.Tx, userID string) error {
+	// Genius Restoration: Instantly restore soft-deleted quarantined shop!
+	query := `
+		UPDATE shops
+		SET is_active = true, is_open = true, status = 'active'
+		WHERE user_id = $1
+	`
+	cmdTag, err := tx.Exec(ctx, query, userID)
+	if err != nil {
+		r.logger.Error("failed to restore shop in tx", zap.Error(err), zap.String("user_id", userID))
 		return err
 	}
 	if cmdTag.RowsAffected() == 0 {
