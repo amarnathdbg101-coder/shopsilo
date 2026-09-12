@@ -4,23 +4,26 @@ package model
 import "time"
 
 type POSBill struct {
-	ID             string         `json:"id"`
-	ShopID         string         `json:"shop_id"`
-	BillNumber     string         `json:"bill_number"`
-	CustomerPhone  string         `json:"customer_phone,omitempty"`
-	CustomerUserID *string        `json:"customer_user_id,omitempty"`
-	Subtotal       float64        `json:"subtotal"`
-	DiscountAmount float64        `json:"discount_amount"`
-	TotalAmount    float64        `json:"total_amount"`
-	TotalCost      float64        `json:"total_cost"`
-	NetProfit      float64        `json:"net_profit"`
-	PaymentMethod  string         `json:"payment_method"` // 'cash', 'upi', 'card', 'split', 'credit'
-	CashAmount     float64        `json:"cash_amount"`
-	OnlineAmount   float64        `json:"online_amount"`
-	KhataAmount    float64        `json:"khata_amount"`
-	CreatedAt      time.Time      `json:"created_at"`
-	Items          []*POSBillItem `json:"items,omitempty"`
-	Shop           *Shop          `json:"shop,omitempty"`
+	ID                 string         `json:"id"`
+	ShopID             string         `json:"shop_id"`
+	BillNumber         string         `json:"bill_number"`
+	CustomerPhone      string         `json:"customer_phone,omitempty"`
+	CustomerUserID     *string        `json:"customer_user_id,omitempty"`
+	Subtotal           float64        `json:"subtotal"`
+	DiscountAmount     float64        `json:"discount_amount"`
+	TotalAmount        float64        `json:"total_amount"`
+	TotalCost          float64        `json:"total_cost"`
+	NetProfit          float64        `json:"net_profit"`
+	PaymentMethod      string         `json:"payment_method"` // 'cash', 'upi', 'card', 'split', 'credit'
+	CashAmount         float64        `json:"cash_amount"`
+	OnlineAmount       float64        `json:"online_amount"`
+	KhataAmount        float64        `json:"khata_amount"`
+	Status             string         `json:"status"` // 'completed', 'cancelled'
+	CancellationReason string         `json:"cancellation_reason,omitempty"`
+	CancelledAt        *time.Time     `json:"cancelled_at,omitempty"`
+	CreatedAt          time.Time      `json:"created_at"`
+	Items              []*POSBillItem `json:"items,omitempty"`
+	Shop               *Shop          `json:"shop,omitempty"`
 }
 
 type POSBillItem struct {

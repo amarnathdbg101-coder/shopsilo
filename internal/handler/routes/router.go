@@ -83,6 +83,11 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	loyaltyService := services.NewLoyaltyService(loyaltyRepo, shopRepo, productRepo)
 	loyc := controller.NewLoyaltyController(loyaltyService)
 
+	// Telemetry & Error Audit layer
+	telemetryRepo := repository.NewTelemetryRepo(db, logger)
+	telemetryService := services.NewTelemetryService(telemetryRepo)
+	telc := controller.NewTelemetryController(telemetryService)
+
 	// AI Layer (Gemini Flash - Customer Shopping Sathi & Merchant Copilot)
 	aiService := services.NewAIService(shopRepo)
 	aic := controller.NewAIController(aiService)
@@ -135,7 +140,6 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	// Public Browsing routes (customers & visitors)
 	r.Get("/catalog/home-feed", sc.GetHomeFeed) // Consolidated customer explore feed
 	r.Post("/ai/customer-chat", aic.CustomerChat)
-	r.Post("/ai/merchant-copilot", aic.MerchantCopilot)
 	r.Post("/ai/scan-product", aic.ScanProduct)
 	r.Post("/ai/parse-parchi", aic.ParseParchi)
 	r.Post("/ai/semantic-search", aic.SemanticSearch)
@@ -160,6 +164,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	r.Post("/products/{id}/notify-me", invc.SubscribeStockAlert)
 	r.Post("/products/{id}/make-offer", pc.MakeOffer)
 	r.Get("/receipts/{bill_number}", posc.ViewPublicReceiptPDF)
+	r.Post("/reports/telemetry-error", telc.LogFrontendError)
 	r.Get("/images/*", upc.ServeImage) // Public Cloudflare R2 image streaming proxy
 
 	// Protected routes (JWT authentication required)
@@ -177,10 +182,10 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/shops/me/dashboard", sc.GetMerchantDashboard) // Consolidated merchant dashboard
 		r.Get("/shops/me/qr", sc.GetMyShopQR)
 		r.Get("/shops/me/digest", sc.GetDailyDigest)
-		r.Post("/shops/me/copilot", aic.MerchantCopilot)
 		r.Put("/shops/me", sc.UpdateMyShop)
 		r.Patch("/shops/me/status", sc.ToggleStatus)
 		r.Delete("/shops/me", sc.DeleteMyShop)
+		r.Post("/shops/me/restore", sc.RestoreMyShop)
 		r.With(middleware.UploadRateLimiter.Middleware()).Post("/shops/me/images", upc.UploadShopImages)
 
 		// Shop Product management
@@ -194,6 +199,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		// Shop Inventory & Wholesale Restock
 		r.Post("/shops/me/inventory/adjust", invc.AdjustStock)
 		r.Get("/shops/me/inventory/low-stock", invc.GetLowStockAlerts)
+		r.Post("/shops/me/inventory/alerts/{id}/dismiss", invc.DismissStockAlert)
 		r.Get("/shops/me/inventory/demand-watchlist", invc.GetDemandWatchlist)
 		r.Get("/shops/me/inventory/reorder-sheet.pdf", invc.DownloadReorderSheetPDF)
 		r.Get("/shops/me/inventory/reorder/whatsapp", invc.GetSupplierReorderWhatsApp)
@@ -204,6 +210,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 
 		// Shop Counter POS & Digital Receipts
 		r.Post("/shops/me/pos/sale", posc.CreateSale)
+		r.Post("/shops/me/pos/sales/{billNumber}/cancel", posc.CancelBill)
 		r.Get("/shops/me/pos/daily-summary", posc.GetDailySummary)
 		r.Get("/shops/me/pos/summary", posc.GetDailySummary) // frontend alias
 		r.Get("/shops/me/pos/scan/{sku}", posc.ScanBarcode)
@@ -243,6 +250,9 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Post("/shops/me/returns", loyc.ProcessReturn)
 		r.Get("/shops/me/returns", loyc.ListReturns)
 		r.Post("/shops/me/offers", loyc.CreateOffer)
+		r.Put("/shops/me/offers/{id}", loyc.UpdateOffer)
+		r.Delete("/shops/me/offers/{id}", loyc.DeleteOffer)
+		r.Get("/shops/me/offers/history", loyc.GetOfferHistory)
 
 		// In-Store Item Reservations (Customer)
 		r.Post("/reservations", resc.Create)
@@ -286,6 +296,10 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		// User & Merchant management
 		r.Get("/users", uc.AdminListUsers)
 		r.Patch("/users/{id}/status", uc.AdminUpdateUserStatus)
+
+		// 24-Hour Developer Error Telemetry Vault
+		r.Get("/errors", telc.GetAdminErrors)
+		r.Delete("/errors/clear", telc.ClearAdminErrors)
 	})
 
 	return r

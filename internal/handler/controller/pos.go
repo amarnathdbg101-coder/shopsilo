@@ -141,6 +141,38 @@ func (c *POSController) ViewPublicReceiptPDF(w http.ResponseWriter, r *http.Requ
 	_, _ = w.Write(pdfBytes)
 }
 
+// CancelBill cancels a POS bill, state transitions status = 'cancelled', and restocks inventory (Protected - Shop)
+func (c *POSController) CancelBill(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	billNumber := chi.URLParam(r, "billNumber")
+	if billNumber == "" {
+		reuse.Error(w, http.StatusBadRequest, "bill number is required")
+		return
+	}
+
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	bill, err := c.service.CancelPOSBill(r.Context(), claims.UserID, billNumber, body.Reason)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "shop not found")
+			return
+		}
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Success(w, "POS Bill cancelled and inventory restocked successfully", bill)
+}
+
 // ScanBarcode looks up a product by barcode/SKU during POS checkout (Protected - Shop)
 func (c *POSController) ScanBarcode(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())
