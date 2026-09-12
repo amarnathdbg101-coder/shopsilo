@@ -184,6 +184,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.With(middleware.UploadRateLimiter.Middleware()).Post("/shops/me/images", upc.UploadShopImages)
 
 		// Shop Product management
+		r.Get("/shops/me/products", pc.ListMyShopProducts)
 		r.Post("/products", pc.Create)
 		r.Put("/products/{id}", pc.Update)
 		r.Delete("/products/{id}", pc.Delete)

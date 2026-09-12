@@ -224,6 +224,52 @@ func (c *ProductController) List(w http.ResponseWriter, r *http.Request) {
 	reuse.Success(w, "Products retrieved successfully", result)
 }
 
+// ListMyShopProducts handles retrieving all products belonging strictly to the logged-in shop keeper (Protected - Owner)
+func (c *ProductController) ListMyShopProducts(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	shop, err := c.shopService.GetMyShop(r.Context(), claims.UserID)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you must register a shop first")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	query := r.URL.Query()
+	page, _ := strconv.Atoi(query.Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	limit, _ := strconv.Atoi(query.Get("limit"))
+	if limit < 1 || limit > 100 {
+		limit = 100
+	}
+
+	filter := dto.ProductFilter{
+		ShopID:     shop.ID,
+		Search:     query.Get("q"),
+		CategoryID: query.Get("category_id"),
+		SortBy:     query.Get("sort_by"),
+		Page:       page,
+		Limit:      limit,
+	}
+
+	result, err := c.productService.ListProducts(r.Context(), filter)
+	if err != nil {
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Shop products retrieved successfully", result)
+}
+
 // ListByShop handles retrieving all products for a specific shop by slug (Public)
 func (c *ProductController) ListByShop(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
