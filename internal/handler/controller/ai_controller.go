@@ -17,6 +17,8 @@ type AIController interface {
 	ParseParchi(w http.ResponseWriter, r *http.Request)
 	SemanticSearch(w http.ResponseWriter, r *http.Request)
 	VoiceBill(w http.ResponseWriter, r *http.Request)
+	GenerateMarketingCampaign(w http.ResponseWriter, r *http.Request)
+	BargainAssist(w http.ResponseWriter, r *http.Request)
 }
 
 type aiController struct {
@@ -157,4 +159,41 @@ func (c *aiController) VoiceBill(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reuse.Success(w, "Voice bill parsed successfully", resp)
+}
+
+func (c *aiController) GenerateMarketingCampaign(w http.ResponseWriter, r *http.Request) {
+	var req dto.AIMarketingCampaignRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	resp, err := c.aiService.GenerateMarketingCampaign(r.Context(), req)
+	if err != nil {
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Marketing campaign generated successfully", resp)
+}
+
+func (c *aiController) BargainAssist(w http.ResponseWriter, r *http.Request) {
+	var req dto.AIBargainAssistRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.ProductName == "" || req.MRP <= 0 || req.CostPrice <= 0 {
+		reuse.Error(w, http.StatusBadRequest, "product_name, mrp, and cost_price are required")
+		return
+	}
+
+	resp, err := c.aiService.BargainAssist(r.Context(), req)
+	if err != nil {
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Bargain assist advice generated successfully", resp)
 }

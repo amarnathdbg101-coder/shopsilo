@@ -79,6 +79,31 @@ func (c *UserController) Login(w http.ResponseWriter, r *http.Request) {
 	reuse.Success(w, "Login successful", res)
 }
 
+func (c *UserController) GoogleLogin(w http.ResponseWriter, r *http.Request) {
+	var input dto.GoogleLoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := reuse.ValidateStruct(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	res, err := c.service.GoogleLogin(r.Context(), input)
+	if err != nil {
+		if errors.Is(err, services.ErrAccountInactive) {
+			reuse.Error(w, http.StatusForbidden, err.Error())
+			return
+		}
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Google login successful", res)
+}
+
 func (c *UserController) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	var input dto.RefreshTokenRequest
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {

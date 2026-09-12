@@ -13,19 +13,23 @@ import (
 	"shopMe/internal/reuse"
 	"shopMe/internal/utils"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
 )
 
 type ShopService struct {
-	shopRepo     *repository.ShopRepo
-	userRepo     *repository.UserRepo
-	modRepo      *repository.ModerationRepo
-	categoryRepo *repository.CategoryRepo
-	productRepo  *repository.ProductRepo
-	posRepo      *repository.POSRepo
-	loyaltyRepo  *repository.LoyaltyRepo
+	shopRepo         *repository.ShopRepo
+	userRepo         *repository.UserRepo
+	modRepo          *repository.ModerationRepo
+	categoryRepo     *repository.CategoryRepo
+	productRepo      *repository.ProductRepo
+	posRepo          *repository.POSRepo
+	loyaltyRepo      *repository.LoyaltyRepo
+	catMu            sync.RWMutex
+	cachedCategories []*model.Category
+	categoriesExpiry time.Time
 }
 
 func NewShopService(shopRepo *repository.ShopRepo, userRepo *repository.UserRepo, modRepo *repository.ModerationRepo) *ShopService {
@@ -496,6 +500,32 @@ func (s *ShopService) GetMerchantDashboard(ctx context.Context, shopOwnerUserID 
 	return resp, nil
 }
 
+func (s *ShopService) getCachedCategories(ctx context.Context) []*model.Category {
+	s.catMu.RLock()
+	if len(s.cachedCategories) > 0 && time.Now().Before(s.categoriesExpiry) {
+		cats := s.cachedCategories
+		s.catMu.RUnlock()
+		return cats
+	}
+	s.catMu.RUnlock()
+
+	if s.categoryRepo == nil {
+		return []*model.Category{}
+	}
+
+	cats, err := s.categoryRepo.FindAll(ctx)
+	if err != nil || cats == nil {
+		return []*model.Category{}
+	}
+
+	s.catMu.Lock()
+	s.cachedCategories = cats
+	s.categoriesExpiry = time.Now().Add(5 * time.Minute)
+	s.catMu.Unlock()
+
+	return cats
+}
+
 // GetHomeFeed returns in a single consolidated roundtrip the data needed for customer explore screen:
 // categories, nearby local shops, and trending catalog products.
 func (s *ShopService) GetHomeFeed(ctx context.Context, lat, lng *float64, city string, limitShops, limitProducts int) (*dto.HomeFeedResponse, error) {
@@ -514,17 +544,11 @@ func (s *ShopService) GetHomeFeed(ctx context.Context, lat, lng *float64, city s
 
 	var g errgroup.Group
 
-	// 1. Categories (Cached in memory)
-	if s.categoryRepo != nil {
-		g.Go(func() error {
-			cats, err := s.categoryRepo.FindAll(ctx)
-			if err != nil {
-				return nil
-			}
-			resp.Categories = cats
-			return nil
-		})
-	}
+	// 1. Categories (Thread-safe 5-min TTL Memory Cache)
+	g.Go(func() error {
+		resp.Categories = s.getCachedCategories(ctx)
+		return nil
+	})
 
 	// 2. Nearby Shops
 	g.Go(func() error {

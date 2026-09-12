@@ -125,6 +125,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Use(middleware.AuthRateLimiter.Middleware())
 		r.Post("/register", uc.Register)
 		r.Post("/login", uc.Login)
+		r.Post("/google", uc.GoogleLogin)
 		r.Post("/forgot-password", uc.ForgotPassword)
 		r.Post("/forget-password", uc.ForgotPassword) // alias for convenience
 		r.Post("/reset-password", uc.ResetPassword)
@@ -139,6 +140,8 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	r.Post("/ai/parse-parchi", aic.ParseParchi)
 	r.Post("/ai/semantic-search", aic.SemanticSearch)
 	r.Post("/ai/voice-bill", aic.VoiceBill)
+	r.Post("/ai/marketing-campaign", aic.GenerateMarketingCampaign)
+	r.Post("/ai/bargain-assist", aic.BargainAssist)
 	r.Get("/categories", catc.List)
 	r.Get("/shops", sc.List)
 	r.Get("/shops/{id}", sc.GetByID)
@@ -167,7 +170,6 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/user/me", uc.GetProfile)
 		r.Put("/user/profile", uc.UpdateProfile)
 		r.With(middleware.UploadRateLimiter.Middleware()).Post("/user/avatar", upc.UploadUserAvatar)
-		r.Get("/user/loyalty", loyc.GetUserLoyalty)
 
 		// Shop Owner management
 		r.Post("/shops", sc.Create)

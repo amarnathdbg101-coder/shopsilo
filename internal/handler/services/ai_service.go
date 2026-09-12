@@ -26,6 +26,8 @@ type AIService interface {
 	ParseParchi(ctx context.Context, req dto.ParseParchiRequest) (*dto.ParseParchiResponse, error)
 	SemanticSearch(ctx context.Context, req dto.SemanticSearchRequest) (*dto.SemanticSearchResponse, error)
 	VoiceBill(ctx context.Context, req dto.VoiceBillRequest) (*dto.VoiceBillResponse, error)
+	GenerateMarketingCampaign(ctx context.Context, req dto.AIMarketingCampaignRequest) (*dto.AIMarketingCampaignResponse, error)
+	BargainAssist(ctx context.Context, req dto.AIBargainAssistRequest) (*dto.AIBargainAssistResponse, error)
 }
 
 type aiCacheEntry struct {
@@ -72,22 +74,22 @@ type aiService struct {
 
 func NewAIService(shopRepo *repository.ShopRepo) AIService {
 	transport := &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 20,
-		IdleConnTimeout:     90 * time.Second,
+		MaxIdleConns:        200,
+		MaxIdleConnsPerHost: 50,
+		IdleConnTimeout:     120 * time.Second,
 	}
 	return &aiService{
 		shopRepo: shopRepo,
 		client: &http.Client{
 			Transport: transport,
-			Timeout:   20 * time.Second,
+			Timeout:   25 * time.Second,
 		},
 	}
 }
 
 func getGeminiModels() []string {
 	custom := strings.TrimSpace(os.Getenv("GEMINI_MODEL"))
-	models := []string{"gemini-3.6-flash", "gemini-flash-latest", "gemini-3.5-flash"}
+	models := []string{"gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-flash-latest"}
 	if custom != "" {
 		return append([]string{custom}, models...)
 	}
@@ -380,30 +382,51 @@ func (s *aiService) ScanProduct(ctx context.Context, req dto.AIScanProductReques
 	cleanBase64 = strings.TrimPrefix(cleanBase64, "data:image/png;base64,")
 
 	scanPrompt := `
-You are an expert FMCG & Retail Packaging Analyzer for local Indian kirana and retail stores.
-Also an expert visual product recognition engine for garments, apparel, shoes, and accessories.
-Analyze the packaging/packet image carefully and extract all product details in valid pure JSON format.
+You are an ultra-comprehensive FMCG, Electronics, Apparel, and Retail Packaging Visual Analyzer for Indian retail stores.
+Analyze the packaging, packet, label, or product image carefully and extract MAXIMUM product details in pure JSON format.
 
-JSON schema to follow:
+JSON Schema to follow:
 {
   "name": "Tata Salt Vacuum Evaporated Iodized Salt 1kg",
-  "brand": "Tata",
+  "brand": "Tata Consumer Products",
   "category_hint": "Kirana & Grocery",
+  "subcategory": "Salt & Spices",
   "mrp": 28.0,
-  "estimated_cost": 24.0,
+  "selling_price": 26.0,
+  "estimated_cost": 22.0,
+  "profit_margin_percent": 18.18,
   "weight": 1000.0,
   "unit": "g",
-  "description": "Vacuum evaporated iodized cooking salt with essential trace minerals.",
-  "tags": ["salt", "namak", "tata", "cooking essentials"],
+  "description": "Vacuum evaporated iodized cooking salt enriched with essential trace minerals for daily health.",
+  "key_features": ["100% Vacuum Evaporated", "Iodine Enriched", "Purity Guaranteed", "Hygienically Packed"],
+  "ingredients": "Iodized Salt, Anti-caking agent (INS 551), Potassium Iodate",
+  "nutritional_info": {
+    "Sodium": "38.7g per 100g",
+    "Iodine": "> 15 ppm"
+  },
+  "expiry_date": "Best before 24 months from manufacture",
+  "batch_number": "B240812",
+  "barcode": "8901058852312",
+  "hsn_code": "2501",
+  "gst_rate": 0.0,
+  "tags": ["salt", "namak", "tata", "cooking essentials", "iodized", "kirana"],
   "attributes": {
-    "Dietary": "Vegetarian",
-    "Packaging": "Pouch"
+    "Dietary Type": "100% Vegetarian",
+    "Packaging": "Laminated Pouch",
+    "Country of Origin": "India"
   },
   "suggested_sku": "TAT-SLT-1KG",
+  "min_stock_alert": 10,
   "visual_code": "FMCG-TATA-SLT-1KG",
   "visual_keywords": ["salt", "namak", "tata", "iodized", "pouch", "kirana", "1kg"]
 }
-Return ONLY valid JSON matching this schema.
+
+Instructions:
+1. Extract ALL visible text, MRP, Net Weight, Barcode number, Ingredients, and Nutritional Info from the packaging.
+2. Estimate reasonable Indian market wholesale cost price and selling price if MRP is present.
+3. Suggest HSN tax code and GST rate (0%, 5%, 12%, 18%, 28%) applicable in India.
+4. Generate comprehensive tags, keywords, key features, and attributes.
+5. Return ONLY valid JSON matching this schema.
 `
 
 	payload := geminiPayload{
@@ -625,6 +648,122 @@ Return pure valid JSON schema:
 	}
 
 	resp.SpokenText = req.SpokenText
+	return &resp, nil
+}
+
+// ── 5. AI Marketing Campaign Generator ──
+func (s *aiService) GenerateMarketingCampaign(ctx context.Context, req dto.AIMarketingCampaignRequest) (*dto.AIMarketingCampaignResponse, error) {
+	festival := req.FestivalName
+	if festival == "" {
+		festival = "Special Dukan Sale"
+	}
+	details := req.OfferDetails
+	if details == "" {
+		details = "Best quality items at lowest local market rates!"
+	}
+
+	prompt := fmt.Sprintf(`
+You are a World-Class Indian Retail Marketing Copywriter.
+Create a high-converting, warm, engaging WhatsApp & Social Media Promotional Campaign for a local kirana/retail store in India.
+
+FESTIVAL/EVENT: "%s"
+OFFER DETAILS: "%s"
+TARGET AUDIENCE: "%s"
+
+Return pure valid JSON matching schema:
+{
+  "headline": "🎉 Diwali Mega Dukan Offer!",
+  "whatsapp_message": "Namaste Sharma ji! 🙏 Diwali ke shubh avsar par humari dukaan par sabhi dry fruits aur ration par payein 10%% tak ki chhoot. Aaj hi aayein ya ghar baithe WhatsApp par order karein!",
+  "social_post_text": "Is Tyohar, Apni Local Dukan Se Khareedein Aur Bachaayein Zyada! ✨ Visit us today or order on WhatsApp.",
+  "suggested_hashtags": ["#LocalDukan", "#DiwaliOffer", "#ShopLocal", "#KiranaOffers"]
+}
+`, festival, details, req.TargetAudience)
+
+	payload := geminiPayload{
+		Contents: []geminiContent{
+			{Role: "user", Parts: []geminiPart{{Text: prompt}}},
+		},
+		GenerationConfig: geminiGenerationConfig{
+			ResponseMimeType: "application/json",
+			Temperature:      0.7,
+			MaxOutputTokens:  1024,
+		},
+	}
+
+	apiKey := getGeminiAPIKey()
+	rawText, err := s.callGeminiWithFallback(ctx, apiKey, payload)
+	if err != nil {
+		return nil, fmt.Errorf("marketing campaign generation failed: %w", err)
+	}
+
+	var resp dto.AIMarketingCampaignResponse
+	if err := json.Unmarshal([]byte(rawText), &resp); err != nil {
+		cleaned := rawText
+		if idx := strings.Index(cleaned, "{"); idx != -1 {
+			cleaned = cleaned[idx:]
+		}
+		if idx := strings.LastIndex(cleaned, "}"); idx != -1 {
+			cleaned = cleaned[:idx+1]
+		}
+		if err2 := json.Unmarshal([]byte(cleaned), &resp); err2 != nil {
+			return nil, fmt.Errorf("failed to parse campaign JSON: %w", err)
+		}
+	}
+
+	return &resp, nil
+}
+
+// ── 6. AI Counter Bargain Assist ──
+func (s *aiService) BargainAssist(ctx context.Context, req dto.AIBargainAssistRequest) (*dto.AIBargainAssistResponse, error) {
+	prompt := fmt.Sprintf(`
+You are an AI Retail Pricing & Counter Bargaining Advisor for Indian shopkeepers.
+Calculate safe minimum deal price and recommend polite counter-offer scripts for shopkeepers.
+
+PRODUCT: "%s"
+MRP: ₹%.2f
+COST PRICE: ₹%.2f
+CUSTOMER ASKING PRICE: ₹%.2f
+
+Return pure valid JSON matching schema:
+{
+  "min_safe_price": 45.0,
+  "ideal_deal_price": 48.0,
+  "shopkeeper_advice": "Cost ₹40 hai. ₹48 par bechne par 20%% margin bachega. Customer ko ₹45 se kam mat do.",
+  "customer_script": "Bhaiya ji, yeh premium quality item hai. Aapke liye ₹48 final laga denge, bilkul fresh stock hai!"
+}
+`, req.ProductName, req.MRP, req.CostPrice, req.AskingPrice)
+
+	payload := geminiPayload{
+		Contents: []geminiContent{
+			{Role: "user", Parts: []geminiPart{{Text: prompt}}},
+		},
+		GenerationConfig: geminiGenerationConfig{
+			ResponseMimeType: "application/json",
+			Temperature:      0.2,
+			MaxOutputTokens:  512,
+		},
+	}
+
+	apiKey := getGeminiAPIKey()
+	rawText, err := s.callGeminiWithFallback(ctx, apiKey, payload)
+	if err != nil {
+		return nil, fmt.Errorf("bargain assist failed: %w", err)
+	}
+
+	var resp dto.AIBargainAssistResponse
+	if err := json.Unmarshal([]byte(rawText), &resp); err != nil {
+		cleaned := rawText
+		if idx := strings.Index(cleaned, "{"); idx != -1 {
+			cleaned = cleaned[idx:]
+		}
+		if idx := strings.LastIndex(cleaned, "}"); idx != -1 {
+			cleaned = cleaned[:idx+1]
+		}
+		if err2 := json.Unmarshal([]byte(cleaned), &resp); err2 != nil {
+			return nil, fmt.Errorf("failed to parse bargain assist JSON: %w", err)
+		}
+	}
+
 	return &resp, nil
 }
 

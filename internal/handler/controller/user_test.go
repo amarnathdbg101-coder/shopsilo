@@ -53,6 +53,21 @@ func TestControllerValidation(t *testing.T) {
 		}
 	})
 
+	t.Run("GoogleLogin Validation Failure", func(t *testing.T) {
+		invalidBody, _ := json.Marshal(dto.GoogleLoginRequest{
+			IDToken: "",
+		})
+
+		req := httptest.NewRequest(http.MethodPost, "/auth/google", bytes.NewBuffer(invalidBody))
+		w := httptest.NewRecorder()
+
+		uc.GoogleLogin(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status 400 Bad Request, got %d", w.Code)
+		}
+	})
+
 	t.Run("ForgotPassword Validation Failure", func(t *testing.T) {
 		invalidBody, _ := json.Marshal(dto.ForgotPasswordRequest{
 			Email: "invalid-email",
