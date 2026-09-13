@@ -184,7 +184,7 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 func (r *ProductRepo) FindByID(ctx context.Context, id string) (*model.Product, error) {
 	query := `
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
-		       COALESCE(p.category_id::text, ''), p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
+		       COALESCE(p.category_id::text, ''), COALESCE(p.images, '[]'::jsonb), COALESCE(p.weight, 0), p.is_active, p.is_featured, COALESCE(p.tags, '{}'), COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1),
 		       COALESCE(p.floor_price, 0), COALESCE(p.allow_bargain, true)
 		FROM products p
@@ -254,7 +254,7 @@ func (r *ProductRepo) FindByIDs(ctx context.Context, shopID string, ids []string
 
 	query := `
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
-		       COALESCE(p.category_id::text, ''), p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
+		       COALESCE(p.category_id::text, ''), COALESCE(p.images, '[]'::jsonb), COALESCE(p.weight, 0), p.is_active, p.is_featured, COALESCE(p.tags, '{}'), COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1),
 		       COALESCE(p.floor_price, 0), COALESCE(p.allow_bargain, true)
 		FROM products p
@@ -329,7 +329,7 @@ func (r *ProductRepo) FindByIDs(ctx context.Context, shopID string, ids []string
 func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*model.Product, error) {
 	query := `
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
-		       COALESCE(p.category_id::text, ''), p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
+		       COALESCE(p.category_id::text, ''), COALESCE(p.images, '[]'::jsonb), COALESCE(p.weight, 0), p.is_active, p.is_featured, COALESCE(p.tags, '{}'), COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
@@ -392,7 +392,7 @@ func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*model.Produ
 func (r *ProductRepo) FindBySKU(ctx context.Context, shopID, sku string) (*model.Product, error) {
 	query := `
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
-		       COALESCE(p.category_id::text, ''), p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
+		       COALESCE(p.category_id::text, ''), COALESCE(p.images, '[]'::jsonb), COALESCE(p.weight, 0), p.is_active, p.is_featured, COALESCE(p.tags, '{}'), COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
@@ -536,7 +536,7 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 
 	query := fmt.Sprintf(`
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
-		       COALESCE(p.category_id::text, ''), p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
+		       COALESCE(p.category_id::text, ''), COALESCE(p.images, '[]'::jsonb), COALESCE(p.weight, 0), p.is_active, p.is_featured, COALESCE(p.tags, '{}'), COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1),
 		       COALESCE(s.name, ''), COALESCE(s.slug, ''), COALESCE(s.phone, ''), COALESCE(s.address, ''), COALESCE(s.city, ''),
 		       s.latitude, s.longitude, COALESCE(c.name, '')
@@ -638,12 +638,19 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 		attributesJSON = []byte("{}")
 	}
 
+	var catID *string
+	if strings.TrimSpace(p.CategoryID) != "" {
+		c := strings.TrimSpace(p.CategoryID)
+		catID = &c
+	}
+
 	query := `
 		UPDATE products
 		SET name = $1, slug = $2, description = $3, sku = $4, price = $5, cost_price = $6, compare_price = $7,
-		    category_id = $8, images = $9, weight = $10, is_active = $11, is_featured = $12, tags = $13, attributes = $14, updated_at = NOW()
-		WHERE id = $15 AND shop_id = $16
-		RETURNING id, shop_id, name, slug, COALESCE(description, ''), sku, price, COALESCE(cost_price, 0), COALESCE(compare_price, 0), category_id, images, COALESCE(weight, 0), is_active, is_featured, tags, COALESCE(attributes, '{}'::jsonb), created_at, updated_at
+		    category_id = $8, images = $9, weight = $10, is_active = $11, is_featured = $12, tags = $13, attributes = $14,
+		    floor_price = $15, allow_bargain = $16, updated_at = NOW()
+		WHERE id = $17 AND shop_id = $18
+		RETURNING id, shop_id, name, slug, COALESCE(description, ''), sku, price, COALESCE(cost_price, 0), COALESCE(compare_price, 0), COALESCE(category_id::text, ''), images, COALESCE(weight, 0), is_active, is_featured, tags, COALESCE(attributes, '{}'::jsonb), created_at, updated_at, COALESCE(floor_price, 0), COALESCE(allow_bargain, true)
 	`
 	updated := &model.Product{}
 	var imagesBytes, attributesBytes []byte
@@ -658,13 +665,15 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 		p.Price,
 		p.CostPrice,
 		p.ComparePrice,
-		p.CategoryID,
+		catID,
 		imagesJSON,
 		p.Weight,
 		p.IsActive,
 		p.IsFeatured,
 		p.Tags,
 		attributesJSON,
+		p.FloorPrice,
+		p.AllowBargain,
 		p.ID,
 		p.ShopID,
 	).Scan(
@@ -686,6 +695,8 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 		&attributesBytes,
 		&updated.CreatedAt,
 		&updated.UpdatedAt,
+		&updated.FloorPrice,
+		&updated.AllowBargain,
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError

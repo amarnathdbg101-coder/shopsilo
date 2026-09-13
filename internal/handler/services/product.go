@@ -184,6 +184,12 @@ func (s *ProductService) UpdateProduct(ctx context.Context, userID, productID st
 	if input.CostPrice != nil {
 		existing.CostPrice = *input.CostPrice
 	}
+	if input.FloorPrice != nil {
+		existing.FloorPrice = *input.FloorPrice
+	}
+	if input.AllowBargain != nil {
+		existing.AllowBargain = *input.AllowBargain
+	}
 	if input.Attributes != nil {
 		existing.Attributes = *input.Attributes
 	}
