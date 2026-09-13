@@ -19,7 +19,6 @@ import (
 	"time"
 )
 
-
 type ProductService struct {
 	productRepo  *repository.ProductRepo
 	shopRepo     *repository.ShopRepo
@@ -38,6 +37,20 @@ func NewProductService(
 	}
 }
 
+// resolveCategoryID accepts both the persisted UUID and the frontend-owned slug.
+// This keeps the category catalog decoupled from the product form while preserving the DB relation.
+func (s *ProductService) resolveCategoryID(ctx context.Context, value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if category, err := s.categoryRepo.FindByID(ctx, trimmed); err == nil {
+		return category.ID, nil
+	}
+	category, err := s.categoryRepo.FindBySlug(ctx, strings.ToLower(trimmed))
+	if err != nil {
+		return "", ErrInvalidCategory
+	}
+	return category.ID, nil
+}
+
 func (s *ProductService) CreateProduct(ctx context.Context, userID string, input dto.CreateProductRequest) (*model.Product, error) {
 	// 1. Verify user owns a shop
 	shop, err := s.shopRepo.FindByUserID(ctx, userID)
@@ -46,8 +59,9 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 	}
 
 	// 2. Validate category
-	if _, err := s.categoryRepo.FindByID(ctx, input.CategoryID); err != nil {
-		return nil, ErrInvalidCategory
+	categoryID, err := s.resolveCategoryID(ctx, input.CategoryID)
+	if err != nil {
+		return nil, err
 	}
 
 	// 3. Enforce max 4 images (Cost & Storage efficiency rule)
@@ -78,7 +92,7 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 		Price:             input.Price,
 		CostPrice:         input.CostPrice,
 		ComparePrice:      input.ComparePrice,
-		CategoryID:        input.CategoryID,
+		CategoryID:        categoryID,
 		Images:            input.Images,
 		Weight:            input.Weight,
 		IsActive:          true,
@@ -164,10 +178,11 @@ func (s *ProductService) UpdateProduct(ctx context.Context, userID, productID st
 		existing.ComparePrice = *input.ComparePrice
 	}
 	if input.CategoryID != nil {
-		if _, err := s.categoryRepo.FindByID(ctx, *input.CategoryID); err != nil {
-			return nil, ErrInvalidCategory
+		categoryID, err := s.resolveCategoryID(ctx, *input.CategoryID)
+		if err != nil {
+			return nil, err
 		}
-		existing.CategoryID = *input.CategoryID
+		existing.CategoryID = categoryID
 	}
 	if input.Weight != nil {
 		existing.Weight = *input.Weight
@@ -467,18 +482,18 @@ func (s *ProductService) NegotiateBargainOffer(ctx context.Context, productID st
 		waURL := fmt.Sprintf("https://wa.me/%s?text=%s", shopWhatsApp, url.QueryEscape(waMsg))
 
 		return &dto.BargainNegotiationResponse{
-			Status:           "DEAL_ACCEPTED",
-			ProductID:        prod.ID,
-			ProductName:      prod.Name,
-			OriginalPrice:    prod.Price,
-			OfferedPrice:     req.OfferedPrice,
-			AgreedPrice:      prod.Price,
-			SavingsAmount:    0,
+			Status:            "DEAL_ACCEPTED",
+			ProductID:         prod.ID,
+			ProductName:       prod.Name,
+			OriginalPrice:     prod.Price,
+			OfferedPrice:      req.OfferedPrice,
+			AgreedPrice:       prod.Price,
+			SavingsAmount:     0,
 			SavingsPercentage: 0,
-			DealCode:         dealCode,
-			ExpiresAt:        &expiresAt,
-			Message:          fmt.Sprintf("Deal accepted! Order %s at standard price Rs.%.2f.", prod.Name, prod.Price),
-			WhatsAppOrderURL: waURL,
+			DealCode:          dealCode,
+			ExpiresAt:         &expiresAt,
+			Message:           fmt.Sprintf("Deal accepted! Order %s at standard price Rs.%.2f.", prod.Name, prod.Price),
+			WhatsAppOrderURL:  waURL,
 		}, nil
 	}
 
@@ -772,5 +787,3 @@ func (s *ProductService) GenerateCSVImportTemplate() []byte {
 
 	return []byte(template)
 }
-
-

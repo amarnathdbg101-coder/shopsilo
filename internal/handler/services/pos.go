@@ -46,6 +46,81 @@ func generateBillNumber() string {
 	return fmt.Sprintf("BIL-%s-%04d", time.Now().Format("060102"), randPart)
 }
 
+func validatePOSItems(items []dto.POSSaleItemRequest) error {
+	_, err := normalizePOSItems(items)
+	return err
+}
+
+func normalizePOSItems(items []dto.POSSaleItemRequest) ([]dto.POSSaleItemRequest, error) {
+	if len(items) == 0 {
+		return nil, errors.New("at least one item is required to create a bill")
+	}
+
+	normalized := make([]dto.POSSaleItemRequest, 0, len(items))
+	seen := make(map[string]int, len(items))
+
+	for _, it := range items {
+		if strings.TrimSpace(it.ProductID) == "" {
+			return nil, errors.New("product id is required for every bill item")
+		}
+		if it.Quantity <= 0 {
+			return nil, errors.New("item quantity must be greater than zero")
+		}
+		if it.CustomPrice != nil && *it.CustomPrice < 0 {
+			return nil, errors.New("custom price cannot be negative")
+		}
+
+		if idx, exists := seen[it.ProductID]; exists {
+			current := &normalized[idx]
+			if current.CustomPrice != nil && it.CustomPrice != nil && *current.CustomPrice != *it.CustomPrice {
+				return nil, fmt.Errorf("conflicting custom prices for product %s in the same cart", it.ProductID)
+			}
+			if it.CustomPrice != nil {
+				current.CustomPrice = it.CustomPrice
+			}
+			current.Quantity += it.Quantity
+			continue
+		}
+
+		normalized = append(normalized, it)
+		seen[it.ProductID] = len(normalized) - 1
+	}
+
+	return normalized, nil
+}
+
+func calculateParkedCartTotal(items []dto.POSSaleItemRequest, products map[string]*model.Product) (float64, error) {
+	if len(items) == 0 {
+		return 0, errors.New("cannot park an empty cart")
+	}
+
+	totalAmount := 0.0
+	for _, it := range items {
+		if strings.TrimSpace(it.ProductID) == "" {
+			return 0, errors.New("product id is required for every parked item")
+		}
+		if it.Quantity <= 0 {
+			return 0, errors.New("item quantity must be greater than zero")
+		}
+
+		if it.CustomPrice != nil {
+			if *it.CustomPrice < 0 {
+				return 0, errors.New("custom price cannot be negative")
+			}
+			totalAmount += *it.CustomPrice * float64(it.Quantity)
+			continue
+		}
+
+		prod, ok := products[it.ProductID]
+		if !ok || prod == nil {
+			return 0, fmt.Errorf("product %s not found or inactive in your shop", it.ProductID)
+		}
+		totalAmount += prod.Price * float64(it.Quantity)
+	}
+
+	return totalAmount, nil
+}
+
 // CreateSale creates a fast walk-in counter sale, deducts stock, credits loyalty points, and generates bill.
 func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, input dto.CreatePOSSaleRequest) (*dto.POSSaleResponse, error) {
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
@@ -60,9 +135,11 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 		return nil, errors.New("customer phone number is required when billing on credit (udhar)")
 	}
 
-	if len(input.Items) == 0 {
-		return nil, errors.New("at least one item is required to create a bill")
+	normalizedItems, err := normalizePOSItems(input.Items)
+	if err != nil {
+		return nil, err
 	}
+	input.Items = normalizedItems
 
 	var billItems []*model.POSBillItem
 	var subtotal float64
@@ -95,33 +172,11 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 		}
 
 		unitPrice := prod.Price
-		displayName := prod.Name
-		displaySKU := prod.SKU
 
-		variantSize := strings.TrimSpace(it.VariantSize)
-		if variantSize != "" {
-			displayName = fmt.Sprintf("%s (%s)", prod.Name, variantSize)
-
-			// Look up variant price in product attributes if available
-			if variants, ok := prod.Attributes["variants"].([]interface{}); ok {
-				for _, v := range variants {
-					if vMap, okMap := v.(map[string]interface{}); okMap {
-						vSize, _ := vMap["size"].(string)
-						if strings.EqualFold(strings.TrimSpace(vSize), variantSize) {
-							if vPrice, okPrice := vMap["price"].(float64); okPrice && vPrice > 0 {
-								unitPrice = vPrice
-							}
-							if vSKU, okSKU := vMap["sku"].(string); okSKU && vSKU != "" {
-								displaySKU = vSKU
-							}
-							break
-						}
-					}
-				}
+		if it.CustomPrice != nil {
+			if *it.CustomPrice < 0 {
+				return nil, errors.New("custom price cannot be negative")
 			}
-		}
-
-		if it.CustomPrice != nil && *it.CustomPrice >= 0 {
 			unitPrice = *it.CustomPrice
 		}
 
@@ -141,8 +196,8 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 
 		billItems = append(billItems, &model.POSBillItem{
 			ProductID:   prod.ID,
-			ProductName: displayName,
-			ProductSKU:  displaySKU,
+			ProductName: prod.Name,
+			ProductSKU:  prod.SKU,
 			Quantity:    it.Quantity,
 			UnitPrice:   unitPrice,
 			UnitCost:    prod.CostPrice,
@@ -175,7 +230,8 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 		custName = "Walk-in Customer"
 	}
 
-	if input.PaymentMethod == "split" {
+	switch input.PaymentMethod {
+case "split":
 		if input.SplitPayments == nil {
 			return nil, errors.New("split_payments details required when payment method is split")
 		}
@@ -190,14 +246,14 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 		if khataAmount > 0 && cleanPhone == "" {
 			return nil, errors.New("customer phone number is required when splitting with khata (udhar)")
 		}
-	} else if input.PaymentMethod == "cash" {
+	case "cash":
 		cashAmount = totalAmount
-	} else if input.PaymentMethod == "credit" || input.PaymentMethod == "khata" {
+	case "credit", "khata":
 		if cleanPhone == "" {
 			return nil, errors.New("customer phone number is required when billing on credit (udhar)")
 		}
 		khataAmount = totalAmount
-	} else {
+	default:
 		// upi, online, card
 		onlineAmount = totalAmount
 	}
@@ -485,24 +541,30 @@ func (s *POSService) ParkBill(ctx context.Context, shopOwnerUserID string, input
 		return nil, err
 	}
 
-	if len(input.Items) == 0 {
-		return nil, errors.New("cannot park an empty cart")
+	normalizedItems, err := normalizePOSItems(input.Items)
+	if err != nil {
+		return nil, err
+	}
+	input.Items = normalizedItems
+
+	productIDs := make([]string, 0, len(input.Items))
+	for _, it := range input.Items {
+		productIDs = append(productIDs, it.ProductID)
 	}
 
-	totalAmount := 0.0
-	for _, it := range input.Items {
-		if it.CustomPrice != nil && *it.CustomPrice > 0 {
-			totalAmount += *it.CustomPrice * float64(it.Quantity)
-		} else {
-			prod, err := s.productRepo.FindByID(ctx, it.ProductID)
-			if err == nil && prod != nil {
-				totalAmount += prod.Price * float64(it.Quantity)
-			}
-		}
+	productsMap, err := s.productRepo.FindByIDs(ctx, shop.ID, productIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch products for parked cart: %w", err)
 	}
-	totalAmount -= input.DiscountAmount
-	if totalAmount < 0 {
+
+	totalAmount, err := calculateParkedCartTotal(input.Items, productsMap)
+	if err != nil {
+		return nil, err
+	}
+	if totalAmount < input.DiscountAmount {
 		totalAmount = 0
+	} else {
+		totalAmount -= input.DiscountAmount
 	}
 
 	label := strings.TrimSpace(input.Label)
@@ -902,6 +964,3 @@ func generateCreditNoteCode() string {
 	}
 	return fmt.Sprintf("CN-%s-%04d", time.Now().Format("060102"), randPart)
 }
-
-
-

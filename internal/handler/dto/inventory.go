@@ -1,7 +1,10 @@
 // Package dto handle request and response struct.
 package dto
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 type AdjustStockRequest struct {
 	ProductID         string `json:"product_id" validate:"required,uuid"`
@@ -62,6 +65,10 @@ type ProcurementPDFItem struct {
 	Name  string `json:"name"`
 	Qty   string `json:"qty"`
 	Notes string `json:"notes,omitempty"`
+}
+
+func (p ProcurementPDFItem) IsValid() bool {
+	return strings.TrimSpace(p.Name) != "" && strings.TrimSpace(p.Qty) != ""
 }
 
 // UnmarshalJSON custom deserializer to accept name, product_name, item_name, title or item keys seamlessly
