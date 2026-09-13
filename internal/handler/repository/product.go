@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/rand"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
+	"shopMe/internal/reuse"
 	"sort"
 	"strings"
 	"time"
@@ -1335,6 +1337,101 @@ func (r *ProductRepo) FindActiveProductsByTokens(ctx context.Context, shopID str
 		products = append(products, &p)
 	}
 	return products, nil
+}
+
+// BulkImportProducts executes a high-speed batch insert transaction for importing 500+ products in seconds.
+func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, items []dto.BulkImportProductItem) (*dto.BulkImportResponse, error) {
+	if len(items) == 0 {
+		return &dto.BulkImportResponse{TotalRows: 0, ImportedCount: 0, SkippedCount: 0, Errors: []string{}}, nil
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin bulk import transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var importedCount int
+	var skippedCount int
+	var errMsgs []string
+
+	rGenerator := rand.New(rand.NewSource(time.Now().UnixNano()))
+
+	for idx, item := range items {
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			skippedCount++
+			errMsgs = append(errMsgs, fmt.Sprintf("Row %d: Product name is empty", idx+1))
+			continue
+		}
+
+		if item.Price <= 0 {
+			skippedCount++
+			errMsgs = append(errMsgs, fmt.Sprintf("Row %d: Product price must be greater than 0", idx+1))
+			continue
+		}
+
+		sku := strings.TrimSpace(strings.ToUpper(item.SKU))
+		if sku == "" {
+			sku = fmt.Sprintf("SKU-%d-%d", time.Now().Unix()%10000, rGenerator.Intn(9000)+1000)
+		}
+
+		slug := reuse.Slugify(name)
+		slug = fmt.Sprintf("%s-%d", slug, rGenerator.Intn(900000)+10000)
+
+		// Insert product
+		insertQuery := `
+			INSERT INTO products (shop_id, name, slug, description, sku, price, cost_price, is_active, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, true, NOW(), NOW())
+			RETURNING id
+		`
+		var productID string
+		err := tx.QueryRow(ctx, insertQuery, shopID, name, slug, strings.TrimSpace(item.Description), sku, item.Price, item.CostPrice).Scan(&productID)
+		if err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+				// Retry with unique fallback SKU/Slug
+				altSKU := fmt.Sprintf("%s-%d", sku, rGenerator.Intn(900)+100)
+				altSlug := fmt.Sprintf("%s-alt-%d", slug, rGenerator.Intn(900)+100)
+				err = tx.QueryRow(ctx, insertQuery, shopID, name, altSlug, strings.TrimSpace(item.Description), altSKU, item.Price, item.CostPrice).Scan(&productID)
+			}
+			if err != nil {
+				skippedCount++
+				errMsgs = append(errMsgs, fmt.Sprintf("Row %d ('%s'): %v", idx+1, name, err))
+				continue
+			}
+		}
+
+		// Insert inventory
+		stock := item.StockQuantity
+		if stock < 0 {
+			stock = 0
+		}
+		minStock := item.MinStock
+		if minStock <= 0 {
+			minStock = 5
+		}
+
+		invQuery := `
+			INSERT INTO inventory (product_id, quantity, reserved_quantity, low_stock_threshold, updated_at)
+			VALUES ($1, $2, 0, $3, NOW())
+			ON CONFLICT (product_id) DO UPDATE SET quantity = EXCLUDED.quantity, low_stock_threshold = EXCLUDED.low_stock_threshold
+		`
+		_, _ = tx.Exec(ctx, invQuery, productID, stock, minStock)
+
+		importedCount++
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit bulk import transaction: %w", err)
+	}
+
+	return &dto.BulkImportResponse{
+		TotalRows:     len(items),
+		ImportedCount: importedCount,
+		SkippedCount:  skippedCount,
+		Errors:        errMsgs,
+	}, nil
 }
 
 

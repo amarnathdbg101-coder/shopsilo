@@ -211,6 +211,8 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Delete("/products/{id}", pc.Delete)
 		r.With(middleware.UploadRateLimiter.Middleware()).Post("/products/images", upc.UploadProductImages)
 		r.Post("/shops/me/products/{id}/markdown", pc.ApplyClearanceMarkdown)
+		r.Post("/shops/me/products/bulk-import", pc.BulkImport)
+		r.Get("/shops/me/products/import-template.csv", pc.DownloadImportTemplate)
 
 		// Shop Inventory & Wholesale Restock
 		r.Post("/shops/me/inventory/adjust", invc.AdjustStock)

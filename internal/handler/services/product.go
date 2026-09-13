@@ -3,8 +3,10 @@ package services
 
 import (
 	"context"
+	"encoding/csv"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"math/rand"
 	"net/url"
@@ -12,6 +14,7 @@ import (
 	"shopMe/internal/handler/model"
 	"shopMe/internal/handler/repository"
 	"shopMe/internal/reuse"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -643,6 +646,125 @@ func generateDealCode() string {
 		b[i] = letters[rand.Intn(len(letters))]
 	}
 	return string(b)
+}
+
+// BulkImportProductsFromCSV parses CSV bytes and bulk imports products into shop catalog in batch.
+func (s *ProductService) BulkImportProductsFromCSV(ctx context.Context, userID string, csvReader io.Reader) (*dto.BulkImportResponse, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, userID)
+	if err != nil {
+		return nil, ErrShopNotFound
+	}
+
+	reader := csv.NewReader(csvReader)
+	reader.TrimLeadingSpace = true
+
+	records, err := reader.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("invalid CSV file format: %w", err)
+	}
+
+	if len(records) <= 1 {
+		return nil, errors.New("CSV file is empty or missing data rows")
+	}
+
+	// Identify header positions
+	header := records[0]
+	nameCol, skuCol, priceCol, costCol, stockCol, minStockCol, descCol := -1, -1, -1, -1, -1, -1, -1
+
+	for i, h := range header {
+		cleanH := strings.ToLower(strings.TrimSpace(h))
+		if strings.Contains(cleanH, "name") || strings.Contains(cleanH, "title") || strings.Contains(cleanH, "item") {
+			nameCol = i
+		} else if strings.Contains(cleanH, "sku") || strings.Contains(cleanH, "code") || strings.Contains(cleanH, "barcode") {
+			skuCol = i
+		} else if strings.Contains(cleanH, "price") || strings.Contains(cleanH, "mrp") || strings.Contains(cleanH, "rate") {
+			if strings.Contains(cleanH, "cost") || strings.Contains(cleanH, "buy") || strings.Contains(cleanH, "wholesale") {
+				costCol = i
+			} else if priceCol == -1 {
+				priceCol = i
+			}
+		} else if strings.Contains(cleanH, "cost") || strings.Contains(cleanH, "wholesale") {
+			costCol = i
+		} else if strings.Contains(cleanH, "stock") || strings.Contains(cleanH, "qty") || strings.Contains(cleanH, "quantity") {
+			stockCol = i
+		} else if strings.Contains(cleanH, "min") || strings.Contains(cleanH, "threshold") {
+			minStockCol = i
+		} else if strings.Contains(cleanH, "desc") || strings.Contains(cleanH, "details") {
+			descCol = i
+		}
+	}
+
+	if nameCol == -1 {
+		nameCol = 0
+	}
+	if priceCol == -1 {
+		priceCol = 1
+	}
+
+	var items []dto.BulkImportProductItem
+
+	for _, row := range records[1:] {
+		if len(row) == 0 {
+			continue
+		}
+
+		item := dto.BulkImportProductItem{}
+
+		if nameCol < len(row) {
+			item.Name = strings.TrimSpace(row[nameCol])
+		}
+		if skuCol != -1 && skuCol < len(row) {
+			item.SKU = strings.TrimSpace(row[skuCol])
+		}
+		if priceCol < len(row) {
+			pVal, _ := strconv.ParseFloat(strings.TrimSpace(row[priceCol]), 64)
+			item.Price = pVal
+		}
+		if costCol != -1 && costCol < len(row) {
+			cVal, _ := strconv.ParseFloat(strings.TrimSpace(row[costCol]), 64)
+			item.CostPrice = cVal
+		}
+		if stockCol != -1 && stockCol < len(row) {
+			sVal, _ := strconv.Atoi(strings.TrimSpace(row[stockCol]))
+			item.StockQuantity = sVal
+		} else {
+			item.StockQuantity = 10
+		}
+		if minStockCol != -1 && minStockCol < len(row) {
+			mVal, _ := strconv.Atoi(strings.TrimSpace(row[minStockCol]))
+			item.MinStock = mVal
+		}
+		if descCol != -1 && descCol < len(row) {
+			item.Description = strings.TrimSpace(row[descCol])
+		}
+
+		if item.Name != "" {
+			items = append(items, item)
+		}
+	}
+
+	return s.productRepo.BulkImportProducts(ctx, shop.ID, items)
+}
+
+// BulkImportProductsFromJSON bulk imports products provided via JSON array.
+func (s *ProductService) BulkImportProductsFromJSON(ctx context.Context, userID string, items []dto.BulkImportProductItem) (*dto.BulkImportResponse, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, userID)
+	if err != nil {
+		return nil, ErrShopNotFound
+	}
+	return s.productRepo.BulkImportProducts(ctx, shop.ID, items)
+}
+
+// GenerateCSVImportTemplate returns a ready-to-use sample CSV template for shopkeepers.
+func (s *ProductService) GenerateCSVImportTemplate() []byte {
+	template := "Name,SKU,Price,CostPrice,StockQuantity,MinStock,Description\n" +
+		"Aashirvaad Shuddh Chakki Atta 5kg,ATT-5KG,245.00,210.00,50,5,5kg Whole Wheat Flour Pack\n" +
+		"Fortune Sunlite Refined Oil 1L,OIL-1L,135.00,115.00,40,5,1 Liter Pouch\n" +
+		"Tata Salt Iodized 1kg,SALT-1KG,28.00,22.00,100,10,1kg Vacuum Evaporated Iodized Salt\n" +
+		"Dettol Original Soap 125g,DET-125G,55.00,45.00,60,8,Antiseptic Bathing Bar\n" +
+		"Maggi 2-Minute Masala Noodles 70g,MAG-70G,14.00,11.50,120,15,Instant Noodles Pack\n"
+
+	return []byte(template)
 }
 
 
