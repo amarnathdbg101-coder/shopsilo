@@ -100,6 +100,11 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	// Real-Time WebSocket Layer
 	wsc := controller.NewWebSocketController(shopService, logger)
 
+	// Shop Staff & Cashier sub-account layer
+	staffRepo := repository.NewStaffRepo(db, logger)
+	staffService := services.NewStaffService(staffRepo, shopRepo)
+	staffc := controller.NewStaffController(staffService)
+
 	// Wire aggregated repos to shopService for unified batch endpoints
 	shopService.SetAggregatedRepos(categoryRepo, productRepo, posRepo, loyaltyRepo)
 
@@ -133,6 +138,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Use(middleware.AuthRateLimiter.Middleware())
 		r.Post("/register", uc.Register)
 		r.Post("/login", uc.Login)
+		r.Post("/staff-login", staffc.StaffLogin)
 		r.Post("/google", uc.GoogleLogin)
 		r.Post("/forgot-password", uc.ForgotPassword)
 		r.Post("/forget-password", uc.ForgotPassword) // alias for convenience
@@ -191,6 +197,12 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Post("/shops/me/restore", sc.RestoreMyShop)
 		r.Get("/shops/me/ws", wsc.ServeShopWebSocket)
 		r.With(middleware.UploadRateLimiter.Middleware()).Post("/shops/me/images", upc.UploadShopImages)
+
+		// Shop Staff & Cashier sub-accounts
+		r.Get("/shops/me/staff", staffc.ListStaff)
+		r.Post("/shops/me/staff", staffc.CreateStaff)
+		r.Put("/shops/me/staff/{id}", staffc.UpdateStaff)
+		r.Delete("/shops/me/staff/{id}", staffc.DeleteStaff)
 
 		// Shop Product management
 		r.Get("/shops/me/products", pc.ListMyShopProducts)
