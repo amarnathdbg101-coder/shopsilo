@@ -3,6 +3,7 @@ package services
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"shopMe/internal/handler/repository"
 	"shopMe/internal/utils"
 	"strings"
+	"time"
 )
 
 type InventoryService struct {
@@ -112,6 +114,33 @@ func (s *InventoryService) GenerateReorderSheetPDF(ctx context.Context, shopOwne
 	return utils.RenderPDFWithConcurrencyLimit(ctx, func() ([]byte, error) {
 		return utils.GenerateWholesaleReorderPDF(shop, items)
 	})
+}
+
+// GenerateCustomProcurementPDF generates Base64 PDF payload for custom Mandi Khareed items
+func (s *InventoryService) GenerateCustomProcurementPDF(ctx context.Context, shopOwnerUserID string, req dto.CreateProcurementPDFRequest) (*dto.GeneratedPDFResponse, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, ErrShopNotFound
+		}
+		return nil, err
+	}
+
+	pdfBytes, err := utils.RenderPDFWithConcurrencyLimit(ctx, func() ([]byte, error) {
+		return utils.GenerateCustomProcurementPDF(shop, req.Title, req.Items)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	b64 := base64.StdEncoding.EncodeToString(pdfBytes)
+	filename := fmt.Sprintf("mandi-procurement-sheet-%s.pdf", time.Now().Format("2006-01-02"))
+
+	return &dto.GeneratedPDFResponse{
+		Filename:  filename,
+		PDFBase64: b64,
+		SizeBytes: len(pdfBytes),
+	}, nil
 }
 
 // GenerateSupplierReorderWhatsApp creates a WhatsApp click-to-chat purchase order message with low stock items.

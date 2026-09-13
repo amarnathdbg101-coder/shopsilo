@@ -71,6 +71,35 @@ func main() {
 		}
 	}()
 
+	// Background Concurrency Worker 2: Nightly Automated Database Backup to Cloudflare R2 (Runs every 24h)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("background database backup worker recovered from panic", zap.Any("panic", r))
+			}
+		}()
+
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-appCtx.Done():
+				logger.Info("background database backup worker stopped cleanly")
+				return
+			case <-ticker.C:
+				cleanCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				meta, err := utils.GenerateFullDatabaseBackupDump(cleanCtx, db)
+				if err != nil {
+					logger.Error("nightly automated database backup failed", zap.Error(err))
+				} else {
+					logger.Info("nightly automated database backup completed successfully", zap.String("filename", meta.Filename), zap.Int64("size_bytes", meta.SizeBytes))
+				}
+				cancel()
+			}
+		}
+	}()
+
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%s", cfg.Port),
 		Handler:           router,

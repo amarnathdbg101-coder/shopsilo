@@ -60,3 +60,20 @@ func (c *TelemetryController) ClearAdminErrors(w http.ResponseWriter, r *http.Re
 	_ = c.service.ClearErrors(r.Context())
 	reuse.Success(w, "Developer error logs cleared", nil)
 }
+
+// GetLivePerformanceMetrics retrieves real-time Go runtime, DB pool, AI token & PDF metrics (Protected - Admin)
+func (c *TelemetryController) GetLivePerformanceMetrics(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.Role != "admin" {
+		reuse.Error(w, http.StatusUnauthorized, "admin access required")
+		return
+	}
+
+	metrics, err := c.service.GetLivePerformanceMetrics(r.Context())
+	if err != nil {
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Live system performance metrics retrieved", metrics)
+}

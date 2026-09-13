@@ -55,3 +55,20 @@ type DemandWatchlistResponse struct {
 	TotalWaitingCustomers int                    `json:"total_waiting_customers"`
 	Items                 []*DemandWatchlistItem `json:"items"`
 }
+
+type ProcurementPDFItem struct {
+	Name  string `json:"name"`
+	Qty   string `json:"qty"`
+	Notes string `json:"notes,omitempty"`
+}
+
+type CreateProcurementPDFRequest struct {
+	Title string               `json:"title,omitempty"`
+	Items []ProcurementPDFItem `json:"items"`
+}
+
+type GeneratedPDFResponse struct {
+	Filename  string `json:"filename"`
+	PDFBase64 string `json:"pdf_base64"`
+	SizeBytes int    `json:"size_bytes"`
+}
