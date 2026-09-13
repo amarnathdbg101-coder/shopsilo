@@ -126,6 +126,27 @@ func (s *InventoryService) GenerateCustomProcurementPDF(ctx context.Context, sho
 		return nil, err
 	}
 
+	// 💡 SMART FALLBACK: If payload items are empty, auto-populate from DB (Low Stock + Customer Demand Watchlist)!
+	if len(req.Items) == 0 {
+		lowStockItems, _ := s.productRepo.GetLowStockProducts(ctx, shop.ID)
+		for _, l := range lowStockItems {
+			req.Items = append(req.Items, dto.ProcurementPDFItem{
+				Name:  l.Name,
+				Qty:   fmt.Sprintf("%d units (Reorder)", l.SuggestedReorderQty),
+				Notes: fmt.Sprintf("In Stock: %d", l.CurrentStock),
+			})
+		}
+
+		demandItems, _ := s.productRepo.GetDemandWatchlist(ctx, shop.ID)
+		for _, d := range demandItems {
+			req.Items = append(req.Items, dto.ProcurementPDFItem{
+				Name:  d.ProductName,
+				Qty:   fmt.Sprintf("%d Customer Demand", d.WaitingCustomersCount),
+				Notes: "Out of stock demand",
+			})
+		}
+	}
+
 	pdfBytes, err := utils.RenderPDFWithConcurrencyLimit(ctx, func() ([]byte, error) {
 		return utils.GenerateCustomProcurementPDF(shop, req.Title, req.Items)
 	})
