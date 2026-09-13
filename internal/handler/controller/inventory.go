@@ -106,6 +106,30 @@ func (c *InventoryController) DismissStockAlert(w http.ResponseWriter, r *http.R
 	reuse.Success(w, "Stock alert dismissed successfully", nil)
 }
 
+// GenerateCustomProcurementPDF handles generating Base64 PDF for screen procurement items (Protected - Shop Owner)
+func (c *InventoryController) GenerateCustomProcurementPDF(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var req dto.CreateProcurementPDFRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	res, err := c.service.GenerateCustomProcurementPDF(r.Context(), claims.UserID, req)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
+			return
+		}
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Mandi procurement PDF generated successfully", res)
+}
+
 // DownloadReorderSheetPDF generates and downloads the ready-to-print Wholesale Re-order PDF sheet (Protected - Shop Owner)
 func (c *InventoryController) DownloadReorderSheetPDF(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())

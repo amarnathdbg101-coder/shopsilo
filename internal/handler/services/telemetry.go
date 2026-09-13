@@ -25,3 +25,7 @@ func (s *TelemetryService) Get24HourErrors(ctx context.Context) ([]*dto.SystemEr
 func (s *TelemetryService) ClearErrors(ctx context.Context) error {
 	return s.repo.ClearAllErrors(ctx)
 }
+
+func (s *TelemetryService) GetLivePerformanceMetrics(ctx context.Context) (*dto.SystemPerformanceMetrics, error) {
+	return s.repo.GetLivePerformanceMetrics(ctx)
+}

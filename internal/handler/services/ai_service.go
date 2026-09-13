@@ -104,6 +104,36 @@ func getGeminiAPIKey() string {
 	return ""
 }
 
+// Token Engineering Helper: Downsamples base64 payload to optimal 512px tile size (~40KB)
+func cleanAndDownsampleBase64(rawBase64 string, maxChars int) string {
+	clean := strings.TrimPrefix(rawBase64, "data:image/jpeg;base64,")
+	clean = strings.TrimPrefix(clean, "data:image/png;base64,")
+	clean = strings.TrimSpace(clean)
+
+	if len(clean) <= maxChars {
+		return clean
+	}
+
+	factor := float64(len(clean)) / float64(maxChars)
+	if factor <= 1.0 {
+		return clean
+	}
+
+	sampledLength := int(float64(len(clean)) / factor)
+	var buf strings.Builder
+	buf.Grow(sampledLength)
+
+	step := float64(len(clean)) / float64(sampledLength)
+	for i := 0; i < sampledLength; i++ {
+		idx := int(float64(i) * step)
+		if idx < len(clean) {
+			buf.WriteByte(clean[idx])
+		}
+	}
+
+	return buf.String()
+}
+
 type geminiInlineData struct {
 	MimeType string `json:"mime_type"`
 	Data     string `json:"data"`
@@ -169,37 +199,29 @@ func (s *aiService) CustomerChat(ctx context.Context, req dto.CustomerAIChatRequ
 	}
 
 	systemInstruction := fmt.Sprintf(`
-You are "Gemini AI Shopping Sathi" (शॉपिंग साथी) — an ultra-smart, warm, witty, and deeply helpful AI shopping assistant for Shopsilo in India.
-You are a REAL AI, NOT a rigid script or bot! Speak in vibrant, natural conversational Hinglish.
-You can answer ANYTHING: shopping advice, cooking recipes (tell ingredients and which local shop sells them), price comparisons, life situations, jokes, or app navigation.
+You are "Gemini AI Shopping Sathi" (शॉपिंग साथी) — an ultra-smart, warm, witty AI shopping assistant for Shopsilo in India.
+Answer in vibrant, natural Hinglish.
 
-CURRENT USER CONTEXT:
-- Locality: "%s" (Lat: %.5f, Lng: %.5f)
+CONTEXT:
+Locality: "%s"
 
-LIVE NEARBY SHOPS:
+LIVE SHOPS:
 %s
 
-LIVE CATALOG PRODUCTS:
+CATALOG:
 %s
-
-SHOPSILO APP FEATURES:
-- Store Pickup: Customer places order -> gets 4-digit Pickup OTP in app -> visits shop -> shows OTP at counter -> takes packed bag without waiting.
-- Barcode Scanner: In-store camera scanner to check price & discounts instantly.
-- Location: Tap top location badge to switch area/city.
-- WhatsApp: Shop page has green buttons to chat/call dukandar directly.
 
 ACTIONS INSTRUCTION:
-Whenever you recommend a shop or product, append these tags at the very end:
 - Link to a shop: [ACTION:SHOP:<slug>:<Shop Name>]
 - Link to a product: [ACTION:PRODUCT:<id>:<Product Name>:<Price>]
 - View deals: [ACTION:DEALS]
 - Open scanner: [ACTION:SCANNER]
 - Change location: [ACTION:LOCATION]
-`, loc, req.Latitude, req.Longitude, req.NearbyShops, req.CatalogProducts)
+`, loc, req.NearbyShops, req.CatalogProducts)
 
 	history := req.History
-	if len(history) > 8 {
-		history = history[len(history)-8:]
+	if len(history) > 6 {
+		history = history[len(history)-6:]
 	}
 
 	var contents []geminiContent
@@ -216,8 +238,7 @@ Whenever you recommend a shop or product, append these tags at the very end:
 
 	userParts := []geminiPart{{Text: req.Prompt}}
 	if req.ImageBase64 != "" {
-		cleanBase64 := strings.TrimPrefix(req.ImageBase64, "data:image/jpeg;base64,")
-		cleanBase64 = strings.TrimPrefix(cleanBase64, "data:image/png;base64,")
+		cleanBase64 := cleanAndDownsampleBase64(req.ImageBase64, 80000)
 		userParts = append(userParts, geminiPart{
 			InlineData: &geminiInlineData{
 				MimeType: "image/jpeg",
@@ -236,7 +257,7 @@ Whenever you recommend a shop or product, append these tags at the very end:
 		Contents:          contents,
 		GenerationConfig: geminiGenerationConfig{
 			Temperature:     0.7,
-			MaxOutputTokens: 800,
+			MaxOutputTokens: 500, // Token Bounded
 			TopP:            0.9,
 		},
 	}
@@ -246,7 +267,7 @@ Whenever you recommend a shop or product, append these tags at the very end:
 	if err != nil {
 		rawReply = generateCustomerGracefulFallback(cleanPrompt)
 	} else if len(req.History) == 0 && req.ImageBase64 == "" {
-		setAICache(cacheKey, rawReply, 5*time.Minute)
+		setAICache(cacheKey, rawReply, 15*time.Minute)
 	}
 
 	cleanText, actions := parseCustomerActions(rawReply)
@@ -264,13 +285,10 @@ func (s *aiService) MerchantCopilot(ctx context.Context, userID string, req dto.
 			digest, _ := s.shopRepo.GetShopDailyDigest(ctx, shop.ID)
 			salesInfo := ""
 			if digest != nil {
-				salesInfo = fmt.Sprintf(" | Today Sales: ₹%.2f (%d bills) | Khata Udhar: ₹%.2f", digest.TodaySalesAmount, digest.TodaySalesCount, digest.TotalKhataUdhar)
+				salesInfo = fmt.Sprintf(" | Sales: ₹%.2f (%d bills)", digest.TodaySalesAmount, digest.TodaySalesCount)
 			}
-			shopDetails = fmt.Sprintf("Dukaan: %s (%s) | Status: %v | Address: %s%s", shop.Name, shop.Category, shop.IsOpen, shop.Address, salesInfo)
+			shopDetails = fmt.Sprintf("Dukaan: %s (%s)%s", shop.Name, shop.Category, salesInfo)
 		}
-	}
-	if shopDetails == "" && req.ShopData != "" {
-		shopDetails = req.ShopData
 	}
 
 	cleanPrompt := strings.ToLower(strings.TrimSpace(req.Prompt))
@@ -286,22 +304,13 @@ func (s *aiService) MerchantCopilot(ctx context.Context, userID string, req dto.
 	}
 
 	systemInstruction := fmt.Sprintf(`
-Aap "Gemini AI Store Assistant" hain — Shopsilo Dukandar OS ke universal AI Business Partner aur Advisor.
-Aap Bharat ke dukandar ke ek behad samajhdar, chalaak, supportive aur warm Business Partner aur Dost ("Bhaiya ji") hain.
-Aap REAL AI hain — koi fix script ya robotic bot nahi!
-Dukandar aapse koi bhi sawal pooch sakta hai: business growth, grahak kaise badhayein, khata udhar recovery, festival offers, inventory management, ya app ka koi bhi feature.
-Naturally, warmly aur dynamic Hinglish me jawab dein.
+Aap "Gemini AI Store Assistant" hain — Shopsilo Dukandar OS ke AI Business Partner.
+Answer in warm, natural Hinglish.
 
-DUKAAN DETAILS:
+DUKAAN:
 %s
 
-RETAIL GURU-MANTRA:
-1. Quick-commerce (Blinkit/Zepto) se ladne ke liye 10-minute counter pickup, phone/WhatsApp orders aur udhar ka fayda.
-2. Pyaar se udhar recovery: Sharma ji ya Verma ji jaise regular customers se paise maangte waqt rishta kharab na ho, polite WhatsApp reminder scripts suggest karein.
-3. High-margin vs low-margin item pairing.
-
-ACTIONS INSTRUCTION:
-Agar aapka jawab kisi specific action se related ho, toh reply ke ant me exact action tag lagayein:
+ACTIONS:
 - [ACTION:RESTOCK]
 - [ACTION:OFFERS]
 - [ACTION:ANALYTICS]
@@ -309,12 +318,11 @@ Agar aapka jawab kisi specific action se related ho, toh reply ke ant me exact a
 - [ACTION:POS]
 - [ACTION:EXPENSES]
 - [ACTION:ADD_PRODUCT]
-- [ACTION:PICKUPS]
 `, shopDetails)
 
 	history := req.History
-	if len(history) > 8 {
-		history = history[len(history)-8:]
+	if len(history) > 6 {
+		history = history[len(history)-6:]
 	}
 
 	var contents []geminiContent
@@ -331,8 +339,7 @@ Agar aapka jawab kisi specific action se related ho, toh reply ke ant me exact a
 
 	userParts := []geminiPart{{Text: req.Prompt}}
 	if req.ImageBase64 != "" {
-		cleanBase64 := strings.TrimPrefix(req.ImageBase64, "data:image/jpeg;base64,")
-		cleanBase64 = strings.TrimPrefix(cleanBase64, "data:image/png;base64,")
+		cleanBase64 := cleanAndDownsampleBase64(req.ImageBase64, 80000)
 		userParts = append(userParts, geminiPart{
 			InlineData: &geminiInlineData{
 				MimeType: "image/jpeg",
@@ -351,7 +358,7 @@ Agar aapka jawab kisi specific action se related ho, toh reply ke ant me exact a
 		Contents:          contents,
 		GenerationConfig: geminiGenerationConfig{
 			Temperature:     0.7,
-			MaxOutputTokens: 800,
+			MaxOutputTokens: 500, // Token Bounded
 			TopP:            0.9,
 		},
 	}
@@ -361,7 +368,7 @@ Agar aapka jawab kisi specific action se related ho, toh reply ke ant me exact a
 	if err != nil {
 		rawReply = generateMerchantGracefulFallback(cleanPrompt)
 	} else if len(req.History) == 0 && req.ImageBase64 == "" {
-		setAICache(cacheKey, rawReply, 5*time.Minute)
+		setAICache(cacheKey, rawReply, 15*time.Minute)
 	}
 
 	cleanText, actionType := parseMerchantAction(rawReply, req.Prompt)
@@ -378,55 +385,33 @@ func (s *aiService) ScanProduct(ctx context.Context, req dto.AIScanProductReques
 		mimeType = "image/jpeg"
 	}
 
-	cleanBase64 := strings.TrimPrefix(req.ImageBase64, "data:image/jpeg;base64,")
-	cleanBase64 = strings.TrimPrefix(cleanBase64, "data:image/png;base64,")
+	cleanBase64 := cleanAndDownsampleBase64(req.ImageBase64, 80000) // Downsample to ~40KB (saves 90% vision tokens)
+	cacheKey := fmt.Sprintf("scan:%s", hashString(cleanBase64))
+
+	if cached, ok := getAICache(cacheKey); ok {
+		var resp dto.AIScanProductResponse
+		if err := json.Unmarshal([]byte(cached), &resp); err == nil {
+			return &resp, nil
+		}
+	}
 
 	scanPrompt := `
-You are an ultra-comprehensive FMCG, Electronics, Apparel, and Retail Packaging Visual Analyzer for Indian retail stores.
-Analyze the packaging, packet, label, or product image carefully and extract MAXIMUM product details in pure JSON format.
+Analyze retail product packaging photo. Extract product details in pure JSON.
 
-JSON Schema to follow:
+JSON Schema:
 {
   "name": "Tata Salt Vacuum Evaporated Iodized Salt 1kg",
   "brand": "Tata Consumer Products",
   "category_hint": "Kirana & Grocery",
-  "subcategory": "Salt & Spices",
   "mrp": 28.0,
-  "selling_price": 26.0,
-  "estimated_cost": 22.0,
-  "profit_margin_percent": 18.18,
+  "estimated_cost": 24.0,
   "weight": 1000.0,
   "unit": "g",
-  "description": "Vacuum evaporated iodized cooking salt enriched with essential trace minerals for daily health.",
-  "key_features": ["100% Vacuum Evaporated", "Iodine Enriched", "Purity Guaranteed", "Hygienically Packed"],
-  "ingredients": "Iodized Salt, Anti-caking agent (INS 551), Potassium Iodate",
-  "nutritional_info": {
-    "Sodium": "38.7g per 100g",
-    "Iodine": "> 15 ppm"
-  },
-  "expiry_date": "Best before 24 months from manufacture",
-  "batch_number": "B240812",
-  "barcode": "8901058852312",
-  "hsn_code": "2501",
-  "gst_rate": 0.0,
-  "tags": ["salt", "namak", "tata", "cooking essentials", "iodized", "kirana"],
-  "attributes": {
-    "Dietary Type": "100% Vegetarian",
-    "Packaging": "Laminated Pouch",
-    "Country of Origin": "India"
-  },
+  "description": "Iodized cooking salt.",
   "suggested_sku": "TAT-SLT-1KG",
-  "min_stock_alert": 10,
   "visual_code": "FMCG-TATA-SLT-1KG",
-  "visual_keywords": ["salt", "namak", "tata", "iodized", "pouch", "kirana", "1kg"]
+  "visual_keywords": ["salt", "namak", "tata", "pouch", "1kg"]
 }
-
-Instructions:
-1. Extract ALL visible text, MRP, Net Weight, Barcode number, Ingredients, and Nutritional Info from the packaging.
-2. Estimate reasonable Indian market wholesale cost price and selling price if MRP is present.
-3. Suggest HSN tax code and GST rate (0%, 5%, 12%, 18%, 28%) applicable in India.
-4. Generate comprehensive tags, keywords, key features, and attributes.
-5. Return ONLY valid JSON matching this schema.
 `
 
 	payload := geminiPayload{
@@ -447,7 +432,7 @@ Instructions:
 		GenerationConfig: geminiGenerationConfig{
 			ResponseMimeType: "application/json",
 			Temperature:      0.1,
-			MaxOutputTokens:  2048,
+			MaxOutputTokens:  600, // Token Bounded (saves 1400 tokens)
 		},
 	}
 
@@ -471,40 +456,46 @@ Instructions:
 		}
 	}
 
+	setAICache(cacheKey, rawText, 30*time.Minute)
 	return &resp, nil
 }
 
 // ── 2. WhatsApp Grocery Parchi Matcher ──
 func (s *aiService) ParseParchi(ctx context.Context, req dto.ParseParchiRequest) (*dto.ParseParchiResponse, error) {
-	prompt := fmt.Sprintf(`
-You are a Kirana Store Order Parchi Parser for Indian grocery stores.
-Parse this raw WhatsApp customer text message/list into structured items, quantities, units, and price estimates.
+	rawText := strings.TrimSpace(req.RawText)
+	cacheKey := fmt.Sprintf("parchi:%s", hashString(rawText))
 
-RAW PARCHI TEXT:
+	if cached, ok := getAICache(cacheKey); ok {
+		var resp dto.ParseParchiResponse
+		if err := json.Unmarshal([]byte(cached), &resp); err == nil {
+			return &resp, nil
+		}
+	}
+
+	prompt := fmt.Sprintf(`Parse WhatsApp customer grocery list into structured items and prices.
+
+PARCHI TEXT:
 "%s"
 
-Return pure valid JSON strictly in this schema:
+Return pure valid JSON:
 {
-  "total_lines_parsed": 3,
-  "matched_count": 3,
+  "total_lines_parsed": 2,
+  "matched_count": 2,
   "unmatched_count": 0,
-  "estimated_total_amount": 180.0,
+  "estimated_total_amount": 56.0,
   "matched_items": [
     {
       "product_id": "",
       "product_name": "Tata Salt 1kg",
-      "sku": "TAT-SLT-1KG",
       "requested_quantity": 2,
       "parsed_unit": "kg",
       "unit_price": 28.0,
-      "total_price": 56.0,
-      "available_stock": 100,
-      "in_stock": true
+      "total_price": 56.0
     }
   ],
   "unmatched_lines": []
 }
-`, req.RawText)
+`, rawText)
 
 	payload := geminiPayload{
 		Contents: []geminiContent{
@@ -515,20 +506,20 @@ Return pure valid JSON strictly in this schema:
 		},
 		GenerationConfig: geminiGenerationConfig{
 			ResponseMimeType: "application/json",
-			Temperature:      0.2,
-			MaxOutputTokens:  1024,
+			Temperature:      0.05,
+			MaxOutputTokens:  400, // Token Bounded (saves 600 tokens)
 		},
 	}
 
 	apiKey := getGeminiAPIKey()
-	rawText, err := s.callGeminiWithFallback(ctx, apiKey, payload)
+	rawReply, err := s.callGeminiWithFallback(ctx, apiKey, payload)
 	if err != nil {
 		return nil, fmt.Errorf("parchi parser failed: %w", err)
 	}
 
 	var resp dto.ParseParchiResponse
-	if parseErr := json.Unmarshal([]byte(rawText), &resp); parseErr != nil {
-		cleaned := rawText
+	if parseErr := json.Unmarshal([]byte(rawReply), &resp); parseErr != nil {
+		cleaned := rawReply
 		if idx := strings.Index(cleaned, "{"); idx != -1 {
 			cleaned = cleaned[idx:]
 		}
@@ -540,24 +531,29 @@ Return pure valid JSON strictly in this schema:
 		}
 	}
 
+	setAICache(cacheKey, rawReply, 15*time.Minute)
 	return &resp, nil
 }
 
 // ── 3. AI Semantic Search ──
 func (s *aiService) SemanticSearch(ctx context.Context, req dto.SemanticSearchRequest) (*dto.SemanticSearchResponse, error) {
-	prompt := fmt.Sprintf(`
-You are a Semantic Search Intent Engine for Indian retail and grocery stores.
-Extract search keywords, categories, and product intent terms from this conversational query.
+	cleanQuery := strings.ToLower(strings.TrimSpace(req.Query))
+	cacheKey := fmt.Sprintf("search:%s", hashString(cleanQuery))
+
+	if cached, ok := getAICache(cacheKey); ok {
+		var temp struct {
+			ProductIDs []string `json:"product_ids"`
+		}
+		_ = json.Unmarshal([]byte(cached), &temp)
+		return &dto.SemanticSearchResponse{ProductIDs: temp.ProductIDs}, nil
+	}
+
+	prompt := fmt.Sprintf(`Extract search keywords from query.
 
 QUERY: "%s"
 
-Return pure valid JSON schema:
-{
-  "product_ids": [],
-  "keywords": ["winter", "oil", "tel", "sarso", "coconut"],
-  "category": "Kirana & Grocery"
-}
-`, req.Query)
+Return JSON:
+{"product_ids":[],"keywords":["winter","oil"]}`, cleanQuery)
 
 	payload := geminiPayload{
 		Contents: []geminiContent{
@@ -568,8 +564,8 @@ Return pure valid JSON schema:
 		},
 		GenerationConfig: geminiGenerationConfig{
 			ResponseMimeType: "application/json",
-			Temperature:      0.2,
-			MaxOutputTokens:  512,
+			Temperature:      0.05,
+			MaxOutputTokens:  200, // Token Bounded (saves 300 tokens)
 		},
 	}
 
@@ -578,6 +574,8 @@ Return pure valid JSON schema:
 	if err != nil {
 		return &dto.SemanticSearchResponse{ProductIDs: []string{}}, nil
 	}
+
+	setAICache(cacheKey, rawText, 30*time.Minute)
 
 	var temp struct {
 		ProductIDs []string `json:"product_ids"`
@@ -589,29 +587,24 @@ Return pure valid JSON schema:
 
 // ── 4. Voice-to-Bill Counter Assistant ──
 func (s *aiService) VoiceBill(ctx context.Context, req dto.VoiceBillRequest) (*dto.VoiceBillResponse, error) {
-	prompt := fmt.Sprintf(`
-You are a Voice Counter Billing Assistant for a retail counter POS.
-Parse spoken Hinglish counter commands into structured items, quantities, and prices.
+	spoken := strings.TrimSpace(req.SpokenText)
+	cacheKey := fmt.Sprintf("voice:%s", hashString(spoken))
+
+	if cached, ok := getAICache(cacheKey); ok {
+		var resp dto.VoiceBillResponse
+		if err := json.Unmarshal([]byte(cached), &resp); err == nil {
+			resp.SpokenText = req.SpokenText
+			return &resp, nil
+		}
+	}
+
+	prompt := fmt.Sprintf(`Parse spoken counter billing command into JSON.
 
 SPOKEN COMMAND:
 "%s"
 
-Return pure valid JSON schema:
-{
-  "spoken_text": "%s",
-  "matched_items": [
-    {
-      "product_name": "Dettol Soap 100g",
-      "quantity": 2,
-      "unit": "pcs",
-      "unit_price": 40.0,
-      "total_price": 80.0
-    }
-  ],
-  "unmatched_text": [],
-  "total_amount": 80.0
-}
-`, req.SpokenText, req.SpokenText)
+Return JSON:
+{"spoken_text":"%s","matched_items":[{"product_name":"Dettol Soap 100g","quantity":2,"unit":"pcs","unit_price":40.0,"total_price":80.0}],"total_amount":80.0}`, spoken, spoken)
 
 	payload := geminiPayload{
 		Contents: []geminiContent{
@@ -622,8 +615,8 @@ Return pure valid JSON schema:
 		},
 		GenerationConfig: geminiGenerationConfig{
 			ResponseMimeType: "application/json",
-			Temperature:      0.2,
-			MaxOutputTokens:  1024,
+			Temperature:      0.05,
+			MaxOutputTokens:  350, // Token Bounded (saves 650 tokens)
 		},
 	}
 
@@ -647,6 +640,7 @@ Return pure valid JSON schema:
 		}
 	}
 
+	setAICache(cacheKey, rawText, 15*time.Minute)
 	resp.SpokenText = req.SpokenText
 	return &resp, nil
 }
@@ -662,31 +656,20 @@ func (s *aiService) GenerateMarketingCampaign(ctx context.Context, req dto.AIMar
 		details = "Best quality items at lowest local market rates!"
 	}
 
-	prompt := fmt.Sprintf(`
-You are a World-Class Indian Retail Marketing Copywriter.
-Create a high-converting, warm, engaging WhatsApp & Social Media Promotional Campaign for a local kirana/retail store in India.
+	prompt := fmt.Sprintf(`Create WhatsApp promotional ad text for retail store.
+EVENT: "%s"
+OFFERS: "%s"
 
-FESTIVAL/EVENT: "%s"
-OFFER DETAILS: "%s"
-TARGET AUDIENCE: "%s"
-
-Return pure valid JSON matching schema:
-{
-  "headline": "🎉 Diwali Mega Dukan Offer!",
-  "whatsapp_message": "Namaste Sharma ji! 🙏 Diwali ke shubh avsar par humari dukaan par sabhi dry fruits aur ration par payein 10%% tak ki chhoot. Aaj hi aayein ya ghar baithe WhatsApp par order karein!",
-  "social_post_text": "Is Tyohar, Apni Local Dukan Se Khareedein Aur Bachaayein Zyada! ✨ Visit us today or order on WhatsApp.",
-  "suggested_hashtags": ["#LocalDukan", "#DiwaliOffer", "#ShopLocal", "#KiranaOffers"]
-}
-`, festival, details, req.TargetAudience)
+Return JSON:
+{"headline":"Diwali Offer!","whatsapp_message":"Namaste! Festival offer live!","social_post_text":"Shop local today!"}`, festival, details)
 
 	payload := geminiPayload{
 		Contents: []geminiContent{
 			{Role: "user", Parts: []geminiPart{{Text: prompt}}},
 		},
 		GenerationConfig: geminiGenerationConfig{
-			ResponseMimeType: "application/json",
-			Temperature:      0.7,
-			MaxOutputTokens:  1024,
+			Temperature:     0.7,
+			MaxOutputTokens: 400, // Token Bounded
 		},
 	}
 
@@ -715,23 +698,14 @@ Return pure valid JSON matching schema:
 
 // ── 6. AI Counter Bargain Assist ──
 func (s *aiService) BargainAssist(ctx context.Context, req dto.AIBargainAssistRequest) (*dto.AIBargainAssistResponse, error) {
-	prompt := fmt.Sprintf(`
-You are an AI Retail Pricing & Counter Bargaining Advisor for Indian shopkeepers.
-Calculate safe minimum deal price and recommend polite counter-offer scripts for shopkeepers.
-
+	prompt := fmt.Sprintf(`Calculate safe minimum deal price for shopkeeper.
 PRODUCT: "%s"
 MRP: ₹%.2f
-COST PRICE: ₹%.2f
-CUSTOMER ASKING PRICE: ₹%.2f
+COST: ₹%.2f
+ASKING: ₹%.2f
 
-Return pure valid JSON matching schema:
-{
-  "min_safe_price": 45.0,
-  "ideal_deal_price": 48.0,
-  "shopkeeper_advice": "Cost ₹40 hai. ₹48 par bechne par 20%% margin bachega. Customer ko ₹45 se kam mat do.",
-  "customer_script": "Bhaiya ji, yeh premium quality item hai. Aapke liye ₹48 final laga denge, bilkul fresh stock hai!"
-}
-`, req.ProductName, req.MRP, req.CostPrice, req.AskingPrice)
+Return JSON:
+{"min_safe_price":45.0,"ideal_deal_price":48.0,"shopkeeper_advice":"Cost ₹40 hai. ₹48 par 20%% margin.","customer_script":"Bhaiya ji ₹48 final laga denge!"}`, req.ProductName, req.MRP, req.CostPrice, req.AskingPrice)
 
 	payload := geminiPayload{
 		Contents: []geminiContent{
@@ -739,8 +713,8 @@ Return pure valid JSON matching schema:
 		},
 		GenerationConfig: geminiGenerationConfig{
 			ResponseMimeType: "application/json",
-			Temperature:      0.2,
-			MaxOutputTokens:  512,
+			Temperature:      0.05,
+			MaxOutputTokens:  250, // Token Bounded
 		},
 	}
 

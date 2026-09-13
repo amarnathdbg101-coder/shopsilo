@@ -97,6 +97,9 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	posService := services.NewPOSService(posRepo, shopRepo, productRepo, khataRepo)
 	posc := controller.NewPOSController(posService)
 
+	// Real-Time WebSocket Layer
+	wsc := controller.NewWebSocketController(shopService, logger)
+
 	// Wire aggregated repos to shopService for unified batch endpoints
 	shopService.SetAggregatedRepos(categoryRepo, productRepo, posRepo, loyaltyRepo)
 
@@ -186,6 +189,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Patch("/shops/me/status", sc.ToggleStatus)
 		r.Delete("/shops/me", sc.DeleteMyShop)
 		r.Post("/shops/me/restore", sc.RestoreMyShop)
+		r.Get("/shops/me/ws", wsc.ServeShopWebSocket)
 		r.With(middleware.UploadRateLimiter.Middleware()).Post("/shops/me/images", upc.UploadShopImages)
 
 		// Shop Product management
@@ -202,6 +206,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Post("/shops/me/inventory/alerts/{id}/dismiss", invc.DismissStockAlert)
 		r.Get("/shops/me/inventory/demand-watchlist", invc.GetDemandWatchlist)
 		r.Get("/shops/me/inventory/reorder-sheet.pdf", invc.DownloadReorderSheetPDF)
+		r.Post("/shops/me/inventory/procurement-pdf", invc.GenerateCustomProcurementPDF)
 		r.Get("/shops/me/inventory/reorder/whatsapp", invc.GetSupplierReorderWhatsApp)
 
 		// Shop Analytics & Profit Intelligence
@@ -297,9 +302,10 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/users", uc.AdminListUsers)
 		r.Patch("/users/{id}/status", uc.AdminUpdateUserStatus)
 
-		// 24-Hour Developer Error Telemetry Vault
+		// 24-Hour Developer Error Telemetry Vault & Live Performance Metrics
 		r.Get("/errors", telc.GetAdminErrors)
 		r.Delete("/errors/clear", telc.ClearAdminErrors)
+		r.Get("/performance-metrics", telc.GetLivePerformanceMetrics)
 	})
 
 	return r

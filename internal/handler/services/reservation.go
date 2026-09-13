@@ -127,6 +127,17 @@ func (s *ReservationService) CreateReservation(ctx context.Context, userID strin
 	}
 
 	enrichShop(fullRes.Shop)
+
+	// Broadcast Real-Time Sound Bell Alert to Shopkeeper's Counter in 0ms!
+	wsHub := GetWebSocketHub(nil)
+	wsHub.BroadcastToShop(prod.ShopID, "NEW_RESERVATION", map[string]interface{}{
+		"reservation_number": fullRes.ReservationNumber,
+		"product_name":       prod.Name,
+		"quantity":           fullRes.Quantity,
+		"pickup_code":        fullRes.PickupCode,
+		"created_at":         time.Now().Format("02-Jan 15:04"),
+	})
+
 	return fullRes, nil
 }
 
