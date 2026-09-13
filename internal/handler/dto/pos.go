@@ -7,6 +7,7 @@ type POSSaleItemRequest struct {
 	ProductID   string   `json:"product_id" validate:"required,uuid"`
 	Quantity    int      `json:"quantity" validate:"required,gt=0"`
 	CustomPrice *float64 `json:"custom_price,omitempty" validate:"omitempty,gte=0"`
+	VariantSize string   `json:"variant_size,omitempty"` // Selected size or variant e.g. "M", "XL"
 }
 
 type POSSplitPayment struct {

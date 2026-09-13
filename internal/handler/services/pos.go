@@ -95,6 +95,32 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 		}
 
 		unitPrice := prod.Price
+		displayName := prod.Name
+		displaySKU := prod.SKU
+
+		variantSize := strings.TrimSpace(it.VariantSize)
+		if variantSize != "" {
+			displayName = fmt.Sprintf("%s (%s)", prod.Name, variantSize)
+
+			// Look up variant price in product attributes if available
+			if variants, ok := prod.Attributes["variants"].([]interface{}); ok {
+				for _, v := range variants {
+					if vMap, okMap := v.(map[string]interface{}); okMap {
+						vSize, _ := vMap["size"].(string)
+						if strings.EqualFold(strings.TrimSpace(vSize), variantSize) {
+							if vPrice, okPrice := vMap["price"].(float64); okPrice && vPrice > 0 {
+								unitPrice = vPrice
+							}
+							if vSKU, okSKU := vMap["sku"].(string); okSKU && vSKU != "" {
+								displaySKU = vSKU
+							}
+							break
+						}
+					}
+				}
+			}
+		}
+
 		if it.CustomPrice != nil && *it.CustomPrice >= 0 {
 			unitPrice = *it.CustomPrice
 		}
@@ -115,8 +141,8 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 
 		billItems = append(billItems, &model.POSBillItem{
 			ProductID:   prod.ID,
-			ProductName: prod.Name,
-			ProductSKU:  prod.SKU,
+			ProductName: displayName,
+			ProductSKU:  displaySKU,
 			Quantity:    it.Quantity,
 			UnitPrice:   unitPrice,
 			UnitCost:    prod.CostPrice,
