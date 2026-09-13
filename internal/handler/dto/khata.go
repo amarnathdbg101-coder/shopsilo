@@ -32,7 +32,7 @@ type KhataCustomerResponse struct {
 
 // SetCreditLimitRequest sets a maximum credit cap on a customer's khata account.
 type SetCreditLimitRequest struct {
-	CreditLimit float64 `json:"credit_limit" validate:"min=0"`
+	CreditLimit float64 `json:"credit_limit" validate:"gte=0"`
 }
 
 // OverdueCustomerItem represents a customer with unpaid credit balance in an aging bracket.

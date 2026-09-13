@@ -302,9 +302,19 @@ func (r *UserRepo) ListUsersForAdmin(ctx context.Context, role, search string, l
 		whereSQL = "WHERE " + strings.Join(whereClauses, " AND ")
 	}
 
+	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM users %s`, whereSQL)
+	var totalCount int
+	if err := r.db.QueryRow(ctx, countQuery, args...).Scan(&totalCount); err != nil {
+		r.logger.Error("failed to count admin users", zap.Error(err))
+		return nil, 0, err
+	}
+
+	if totalCount == 0 {
+		return []*model.User{}, 0, nil
+	}
+
 	query := fmt.Sprintf(`
-		SELECT id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, created_at, updated_at,
-		       COUNT(*) OVER() AS total_count
+		SELECT id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, created_at, updated_at
 		FROM users
 		%s
 		ORDER BY created_at DESC
@@ -321,7 +331,6 @@ func (r *UserRepo) ListUsersForAdmin(ctx context.Context, role, search string, l
 	defer rows.Close()
 
 	var users []*model.User
-	totalCount := 0
 
 	for rows.Next() {
 		u := &model.User{}
@@ -336,7 +345,6 @@ func (r *UserRepo) ListUsersForAdmin(ctx context.Context, role, search string, l
 			&u.IsActive,
 			&u.CreatedAt,
 			&u.UpdatedAt,
-			&totalCount,
 		)
 		if err != nil {
 			r.logger.Error("failed to scan admin user row", zap.Error(err))

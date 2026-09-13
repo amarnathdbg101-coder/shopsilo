@@ -505,6 +505,19 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 
 	whereSQL := strings.Join(whereClauses, " AND ")
 
+	// 1. Get total count first (more efficient than COUNT(*) OVER() in PostgreSQL for large sets)
+	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM products p WHERE %s`, whereSQL)
+	var totalCount int
+	err := r.db.QueryRow(ctx, countQuery, args...).Scan(&totalCount)
+	if err != nil {
+		r.logger.Error("failed to count products", zap.Error(err))
+		return nil, 0, err
+	}
+
+	if totalCount == 0 {
+		return []*model.Product{}, 0, nil
+	}
+
 	orderBy := "p.created_at DESC"
 	switch filter.SortBy {
 	case "price_asc":
@@ -524,8 +537,7 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 		       p.category_id, p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1),
 		       COALESCE(s.name, ''), COALESCE(s.slug, ''), COALESCE(s.phone, ''), COALESCE(s.address, ''), COALESCE(s.city, ''),
-		       s.latitude, s.longitude, COALESCE(c.name, ''),
-		       COUNT(*) OVER() AS total_count
+		       s.latitude, s.longitude, COALESCE(c.name, '')
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
 		LEFT JOIN shops s ON s.id = p.shop_id
@@ -545,7 +557,6 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 	defer rows.Close()
 
 	var products []*model.Product
-	totalCount := 0
 
 	for rows.Next() {
 		p := &model.Product{}
@@ -582,7 +593,6 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 			&p.ShopLatitude,
 			&p.ShopLongitude,
 			&p.CategoryName,
-			&totalCount,
 		)
 		if err != nil {
 			r.logger.Error("failed to scan product row", zap.Error(err))
@@ -1047,6 +1057,15 @@ func (r *ProductRepo) FindNearbyProducts(
 	whereClauses = append(whereClauses, "s.latitude IS NOT NULL AND s.longitude IS NOT NULL")
 	whereClauses = append(whereClauses, "(i.quantity - i.reserved_quantity) > 0")
 
+	// Pre-filter with a bounding box for performance optimization
+	latDiff := radiusKm / 111.0
+	lngDiff := radiusKm / (111.0 * math.Cos(lat*math.Pi/180.0))
+	minLat, maxLat := lat-latDiff, lat+latDiff
+	minLng, maxLng := lng-lngDiff, lng+lngDiff
+
+	whereClauses = append(whereClauses, fmt.Sprintf("s.latitude BETWEEN %f AND %f", minLat, maxLat))
+	whereClauses = append(whereClauses, fmt.Sprintf("s.longitude BETWEEN %f AND %f", minLng, maxLng))
+
 	// Haversine distance condition in km
 	distanceFormula := `(6371 * acos(LEAST(1.0, GREATEST(-1.0,
 		cos(radians($1)) * cos(radians(s.latitude)) * cos(radians(s.longitude) - radians($2)) +
@@ -1075,13 +1094,30 @@ func (r *ProductRepo) FindNearbyProducts(
 
 	whereSQL := strings.Join(whereClauses, " AND ")
 
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*)
+		FROM products p
+		JOIN shops s ON p.shop_id = s.id
+		JOIN inventory i ON p.id = i.product_id
+		WHERE %s
+	`, whereSQL)
+
+	var totalCount int
+	if err := r.db.QueryRow(ctx, countQuery, args...).Scan(&totalCount); err != nil {
+		r.logger.Error("failed to count nearby products", zap.Error(err))
+		return nil, 0, err
+	}
+
+	if totalCount == 0 {
+		return []*dto.NearbyProductItem{}, 0, nil
+	}
+
 	sqlQuery := fmt.Sprintf(`
 		SELECT
 			p.id, p.name, p.slug, p.price, p.images, (i.quantity - i.reserved_quantity) AS avail_qty,
 			s.id AS shop_id, s.name AS shop_name, s.slug AS shop_slug, s.address AS shop_address, s.phone AS shop_phone,
 			s.is_open, s.opening_time, s.closing_time, s.weekly_off,
-			%s AS distance_km,
-			COUNT(*) OVER() AS total_count
+			%s AS distance_km
 		FROM products p
 		JOIN shops s ON p.shop_id = s.id
 		JOIN inventory i ON p.id = i.product_id
@@ -1100,7 +1136,6 @@ func (r *ProductRepo) FindNearbyProducts(
 	defer rows.Close()
 
 	var items []*dto.NearbyProductItem
-	totalCount := 0
 
 	for rows.Next() {
 		item := &dto.NearbyProductItem{}
@@ -1124,7 +1159,6 @@ func (r *ProductRepo) FindNearbyProducts(
 			&closeTime,
 			&weeklyOff,
 			&item.DistanceKm,
-			&totalCount,
 		)
 		if err != nil {
 			r.logger.Error("failed to scan nearby product row", zap.Error(err))
@@ -1231,7 +1265,7 @@ func (r *ProductRepo) CreateBargainDeal(ctx context.Context, deal *model.Product
 // GetValidBargainDeal fetches an active unexpired bargain deal for checkout redemption.
 func (r *ProductRepo) GetValidBargainDeal(ctx context.Context, productID, dealCode string) (*model.ProductBargainDeal, error) {
 	query := `
-		SELECT id, product_id, shop_id, customer_phone, COALESCE(customer_name, ''),
+		SELECT id, COALESCE(product_id::text, ''), shop_id, customer_phone, COALESCE(customer_name, ''),
 		       deal_code, offered_price, agreed_price, bundle_quantity, status, expires_at, created_at
 		FROM product_bargain_deals
 		WHERE product_id = $1 AND UPPER(deal_code) = UPPER($2) AND status = 'accepted' AND expires_at > NOW()

@@ -40,50 +40,49 @@ func GenerateFullDatabaseBackupDump(ctx context.Context, db *pgxpool.Pool) (*Dat
 		"pos_bill_items",
 		"customer_khata",
 		"khata_transactions",
-		"daily_expenses",
+		"shop_expenses",
 		"store_offers",
 	}
 
-	backupDump := make(map[string]interface{})
-	backupDump["meta"] = map[string]interface{}{
-		"system":            "ShopSilo Retail OS Cloud Backup Engine",
-		"created_at":        time.Now().Format(time.RFC3339),
-		"tables_included":   tables,
-	}
+	timestamp := time.Now().Format("2006_01_02_150405")
+	filename := fmt.Sprintf("db_backup_%s.json.gz", timestamp)
+	key := fmt.Sprintf("backups/%s", filename)
+
+	var gzBuf bytes.Buffer
+	gzWriter := gzip.NewWriter(&gzBuf)
+
+	// Stream JSON construction to avoid parsing giant tables into RAM (OOM Prevention)
+	gzWriter.Write([]byte("{\n"))
+
+	// Write meta
+	metaJSON, _ := json.Marshal(map[string]interface{}{
+		"system":          "ShopMe Retail OS Cloud Backup Engine",
+		"created_at":      time.Now().Format(time.RFC3339),
+		"tables_included": tables,
+	})
+	gzWriter.Write([]byte(`"meta": `))
+	gzWriter.Write(metaJSON)
 
 	// Fetch table row dumps
 	for _, tbl := range tables {
-		query := fmt.Sprintf("SELECT json_agg(t) FROM (SELECT * FROM %s) t", tbl)
-		var jsonRaw []byte
+		gzWriter.Write([]byte(",\n\"" + tbl + "\": "))
+
+		query := fmt.Sprintf("SELECT COALESCE(json_agg(t)::text, '[]') FROM (SELECT * FROM %s) t", tbl)
+		var jsonRaw string
 		err := db.QueryRow(ctx, query).Scan(&jsonRaw)
-		if err == nil && len(jsonRaw) > 0 {
-			var parsed interface{}
-			if json.Unmarshal(jsonRaw, &parsed) == nil {
-				backupDump[tbl] = parsed
-			}
+		if err != nil || jsonRaw == "" {
+			gzWriter.Write([]byte("[]"))
+		} else {
+			gzWriter.Write([]byte(jsonRaw))
 		}
 	}
+	gzWriter.Write([]byte("\n}"))
 
-	// Serialize dump to JSON
-	dumpBytes, err := json.Marshal(backupDump)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal database backup json: %w", err)
-	}
-
-	// Gzip compress backup payload
-	var gzBuf bytes.Buffer
-	gzWriter := gzip.NewWriter(&gzBuf)
-	if _, err := gzWriter.Write(dumpBytes); err != nil {
-		return nil, fmt.Errorf("failed to write gzip backup stream: %w", err)
-	}
 	if err := gzWriter.Close(); err != nil {
 		return nil, fmt.Errorf("failed to close gzip writer: %w", err)
 	}
 
 	compressedBytes := gzBuf.Bytes()
-	timestamp := time.Now().Format("2006_01_02_150405")
-	filename := fmt.Sprintf("db_backup_%s.json.gz", timestamp)
-	key := fmt.Sprintf("backups/%s", filename)
 
 	cfg := MustLoad()
 	if cfg.Endpoint == "" || cfg.Bucket == "" {
@@ -106,7 +105,7 @@ func GenerateFullDatabaseBackupDump(ctx context.Context, db *pgxpool.Pool) (*Dat
 	}))
 	s3Client := s3.New(sess)
 
-	_, err = s3Client.PutObjectWithContext(ctx, &s3.PutObjectInput{
+	_, err := s3Client.PutObjectWithContext(ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(cfg.Bucket),
 		Key:         aws.String(key),
 		Body:        bytes.NewReader(compressedBytes),

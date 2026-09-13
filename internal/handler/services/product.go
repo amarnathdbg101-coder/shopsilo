@@ -245,10 +245,9 @@ func (s *ProductService) DeleteProduct(ctx context.Context, userID, productID st
 		return err
 	}
 
-	// 4. Automatically delete all product images from R2 to avoid storage costs
-	for _, img := range existing.Images {
-		_ = reuse.DeleteImage(img)
-	}
+	// Note: We intentionally do NOT delete the images from Cloudflare R2 here.
+	// Because the product is only soft-deleted (is_active = false) so that past
+	// POS sales, receipts, and Khata bills can still display the product image.
 
 	return nil
 }
