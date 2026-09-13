@@ -11,6 +11,7 @@ import (
 	"shopMe/internal/middleware"
 	"shopMe/internal/reuse"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -473,6 +474,82 @@ func (c *ProductController) GetPOSBargainAssist(w http.ResponseWriter, r *http.R
 	}
 
 	reuse.Success(w, "POS bargain assist margin advice retrieved successfully", res)
+}
+
+// BulkImport handles batch importing 500+ products via CSV file or JSON array (Protected - Shop Owner)
+func (c *ProductController) BulkImport(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	contentType := r.Header.Get("Content-Type")
+
+	// 1. Handle multipart CSV file upload
+	if strings.Contains(contentType, "multipart/form-data") {
+		if err := r.ParseMultipartForm(10 * 1024 * 1024); err != nil { // 10MB limit
+			reuse.Error(w, http.StatusBadRequest, "failed to parse multipart form")
+			return
+		}
+
+		file, _, err := r.FormFile("file")
+		if err != nil {
+			file, _, err = r.FormFile("csv")
+		}
+		if err != nil {
+			reuse.Error(w, http.StatusBadRequest, "CSV file is required under field 'file' or 'csv'")
+			return
+		}
+		defer file.Close()
+
+		res, err := c.productService.BulkImportProductsFromCSV(r.Context(), claims.UserID, file)
+		if err != nil {
+			if errors.Is(err, services.ErrShopNotFound) {
+				reuse.Error(w, http.StatusNotFound, "you must register a shop first")
+				return
+			}
+			reuse.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		reuse.Created(w, "Bulk product CSV import completed successfully", res)
+		return
+	}
+
+	// 2. Handle JSON array body import
+	var items []dto.BulkImportProductItem
+	if err := json.NewDecoder(r.Body).Decode(&items); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body (expected CSV file or JSON array)")
+		return
+	}
+
+	if len(items) == 0 {
+		reuse.Error(w, http.StatusBadRequest, "at least one product item is required for bulk import")
+		return
+	}
+
+	res, err := c.productService.BulkImportProductsFromJSON(r.Context(), claims.UserID, items)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you must register a shop first")
+			return
+		}
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Created(w, "Bulk product JSON import completed successfully", res)
+}
+
+// DownloadImportTemplate serves a ready-to-use sample CSV import template file (Protected / Public)
+func (c *ProductController) DownloadImportTemplate(w http.ResponseWriter, r *http.Request) {
+	csvBytes := c.productService.GenerateCSVImportTemplate()
+
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", `attachment; filename="shopsilo_products_import_template.csv"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(csvBytes)
 }
 
 
