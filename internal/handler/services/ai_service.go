@@ -887,7 +887,7 @@ func parseCustomerActions(raw string) (string, []dto.AIAction) {
 	return strings.TrimSpace(cleaned), actions
 }
 
-func parseMerchantAction(raw string, query string) (string, string) {
+func parseMerchantAction(raw string, _ string) (string, string) {
 	cleaned := raw
 	var action string
 

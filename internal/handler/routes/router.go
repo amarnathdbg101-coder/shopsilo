@@ -182,6 +182,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 
 		// User profile actions
 		r.Get("/user/me", uc.GetProfile)
+				r.Get("/user/loyalty", loyc.GetUserLoyalty)
 		r.Put("/user/profile", uc.UpdateProfile)
 		r.With(middleware.UploadRateLimiter.Middleware()).Post("/user/avatar", upc.UploadUserAvatar)
 
@@ -197,6 +198,9 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Post("/shops/me/restore", sc.RestoreMyShop)
 		r.Get("/shops/me/ws", wsc.ServeShopWebSocket)
 		r.With(middleware.UploadRateLimiter.Middleware()).Post("/shops/me/images", upc.UploadShopImages)
+
+				// Authenticated merchant intelligence
+				r.Post("/ai/merchant-copilot", aic.MerchantCopilot)
 
 		// Shop Staff & Cashier sub-accounts
 		r.Get("/shops/me/staff", staffc.ListStaff)

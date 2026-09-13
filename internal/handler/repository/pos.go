@@ -254,6 +254,9 @@ func (r *POSRepo) GetBillByNumber(ctx context.Context, billNumber string) (*mode
 		}
 		bill.Items = append(bill.Items, item)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
 	return bill, nil
 }
@@ -604,6 +607,18 @@ func (r *POSRepo) GetWeeklyScorecardData(ctx context.Context, shopID string) (*d
 	if currErr != nil {
 		return nil, currErr
 	}
+	if prevErr != nil {
+		return nil, prevErr
+	}
+	if khataErr != nil {
+		return nil, khataErr
+	}
+	if topErr != nil {
+		return nil, topErr
+	}
+	if stockErr != nil {
+		return nil, stockErr
+	}
 
 	if prevErr == nil && res.PreviousWeekRevenue > 0 {
 		diff := res.CurrentWeekRevenue - res.PreviousWeekRevenue
@@ -623,10 +638,6 @@ func (r *POSRepo) GetWeeklyScorecardData(ctx context.Context, shopID string) (*d
 		topProducts = []*dto.WeeklyTopProductItem{}
 	}
 	res.TopSellingProducts = topProducts
-
-	_ = khataErr
-	_ = topErr
-	_ = stockErr
 
 	return res, nil
 }
@@ -684,6 +695,9 @@ func (r *POSRepo) GetCustomerLastBasket(ctx context.Context, shopID, customerPho
 			ProductID: it.ProductID,
 			Quantity:  it.Quantity,
 		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	if basketItems == nil {

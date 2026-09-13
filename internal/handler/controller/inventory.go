@@ -115,7 +115,20 @@ func (c *InventoryController) GenerateCustomProcurementPDF(w http.ResponseWriter
 	}
 
 	var req dto.CreateProcurementPDFRequest
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid procurement PDF request")
+		return
+	}
+	if len(req.Items) == 0 {
+		reuse.Error(w, http.StatusBadRequest, "procurement PDF requires at least one item")
+		return
+	}
+	for _, item := range req.Items {
+		if !item.IsValid() {
+			reuse.Error(w, http.StatusBadRequest, "procurement PDF contains an item without a name or quantity")
+			return
+		}
+	}
 
 	res, err := c.service.GenerateCustomProcurementPDF(r.Context(), claims.UserID, req)
 	if err != nil {
@@ -232,4 +245,3 @@ func (c *InventoryController) GetDemandWatchlist(w http.ResponseWriter, r *http.
 
 	reuse.Success(w, "Customer demand watchlist retrieved successfully", res)
 }
-

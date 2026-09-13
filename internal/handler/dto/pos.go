@@ -7,7 +7,7 @@ type POSSaleItemRequest struct {
 	ProductID   string   `json:"product_id" validate:"required,uuid"`
 	Quantity    int      `json:"quantity" validate:"required,gt=0"`
 	CustomPrice *float64 `json:"custom_price,omitempty" validate:"omitempty,gte=0"`
-	VariantSize string   `json:"variant_size,omitempty"` // Selected size or variant e.g. "M", "XL"
+	VariantSize string   `json:"variant_size,omitempty"` // Selected size option e.g. "1 kg", "5 kg"
 }
 
 type POSSplitPayment struct {
@@ -21,7 +21,7 @@ type CreatePOSSaleRequest struct {
 	CustomerName        string               `json:"customer_name,omitempty" validate:"omitempty,max=100"`
 	Items               []POSSaleItemRequest `json:"items" validate:"required,min=1,dive"`
 	DiscountAmount      float64              `json:"discount_amount" validate:"gte=0"`
-	PaymentMethod       string               `json:"payment_method" validate:"required,oneof=cash upi card credit split"`
+	PaymentMethod       string               `json:"payment_method" validate:"required,oneof=cash upi card online credit khata split"`
 	SplitPayments       *POSSplitPayment     `json:"split_payments,omitempty"`
 	BargainDealCode     string               `json:"bargain_deal_code,omitempty"`
 	RedeemLoyaltyPoints int                  `json:"redeem_loyalty_points,omitempty" validate:"omitempty,gte=0"`
@@ -107,7 +107,7 @@ type ParkPOSBillRequest struct {
 	CustomerPhone  string               `json:"customer_phone,omitempty" validate:"omitempty,max=20"`
 	Items          []POSSaleItemRequest `json:"items" validate:"required,min=1,dive"`
 	DiscountAmount float64              `json:"discount_amount" validate:"gte=0"`
-	PaymentMethod  string               `json:"payment_method" validate:"omitempty,oneof=cash upi card credit"`
+	PaymentMethod  string               `json:"payment_method" validate:"omitempty,oneof=cash upi card online credit khata"`
 }
 
 // ParkedBillSummaryItem is returned when listing all currently held carts on the counter.
