@@ -132,13 +132,13 @@ func GenerateWholesaleReorderPDF(shop *model.Shop, items []*dto.LowStockProduct)
 // GenerateCustomProcurementPDF generates a ready-to-print PDF purchase order sheet directly from screen procurement items.
 func GenerateCustomProcurementPDF(shop *model.Shop, title string, items []dto.ProcurementPDFItem) ([]byte, error) {
 	pdf := gofpdf.New("P", "mm", "A4", "")
-	pdf.SetMargins(15, 15, 15)
-	pdf.SetAutoPageBreak(true, 15)
+	pdf.SetMargins(12, 12, 12)
+	pdf.SetAutoPageBreak(true, 12)
 	pdf.AddPage()
 
 	// 1. Header Banner
 	pdf.SetFont("Arial", "B", 18)
-	pdf.SetTextColor(33, 37, 41)
+	pdf.SetTextColor(15, 23, 42) // Dark Navy
 	shopName := "Retail Store"
 	if shop != nil && shop.Name != "" {
 		shopName = shop.Name
@@ -146,7 +146,7 @@ func GenerateCustomProcurementPDF(shop *model.Shop, title string, items []dto.Pr
 	pdf.CellFormat(0, 10, shopName, "", 1, "L", false, 0, "")
 
 	pdf.SetFont("Arial", "", 10)
-	pdf.SetTextColor(108, 117, 125)
+	pdf.SetTextColor(71, 85, 105)
 	if shop != nil {
 		if shop.Address != "" {
 			pdf.CellFormat(0, 5, fmt.Sprintf("Address: %s, %s %s", shop.Address, shop.City, shop.Pincode), "", 1, "L", false, 0, "")
@@ -163,9 +163,9 @@ func GenerateCustomProcurementPDF(shop *model.Shop, title string, items []dto.Pr
 	pdf.Ln(4)
 
 	// Horizontal Rule
-	pdf.SetDrawColor(220, 224, 230)
+	pdf.SetDrawColor(203, 213, 225)
 	pdf.SetLineWidth(0.5)
-	pdf.Line(15, pdf.GetY(), 195, pdf.GetY())
+	pdf.Line(12, pdf.GetY(), 198, pdf.GetY())
 	pdf.Ln(6)
 
 	// Document Title
@@ -175,23 +175,23 @@ func GenerateCustomProcurementPDF(shop *model.Shop, title string, items []dto.Pr
 	}
 
 	pdf.SetFont("Arial", "B", 13)
-	pdf.SetTextColor(13, 110, 253)
+	pdf.SetTextColor(124, 58, 237) // Purple
 	pdf.CellFormat(0, 8, docTitle, "", 1, "C", false, 0, "")
 	pdf.Ln(2)
 
 	pdf.SetFont("Arial", "I", 9)
-	pdf.SetTextColor(108, 117, 125)
+	pdf.SetTextColor(100, 116, 139)
 	pdf.CellFormat(0, 5, fmt.Sprintf("Total Reorder Items: %d", len(items)), "", 1, "C", false, 0, "")
 	pdf.Ln(4)
 
 	// Table Header
-	pdf.SetFillColor(241, 243, 245)
-	pdf.SetTextColor(33, 37, 41)
-	pdf.SetDrawColor(206, 212, 218)
+	pdf.SetFillColor(241, 245, 249)
+	pdf.SetTextColor(15, 23, 42)
+	pdf.SetDrawColor(203, 213, 225)
 	pdf.SetLineWidth(0.3)
 	pdf.SetFont("Arial", "B", 9)
 
-	colWidths := []float64{12, 85, 35, 23, 25}
+	colWidths := []float64{12, 90, 38, 20, 26}
 	headers := []string{"#", "Item Description", "Required Qty", "Check", "Notes"}
 
 	for i, h := range headers {
@@ -201,15 +201,15 @@ func GenerateCustomProcurementPDF(shop *model.Shop, title string, items []dto.Pr
 
 	// Table Body
 	pdf.SetFont("Arial", "", 9)
-	pdf.SetTextColor(40, 40, 40)
+	pdf.SetTextColor(30, 41, 59)
 
 	if len(items) == 0 {
-		pdf.CellFormat(180, 10, "No procurement items provided in sheet payload.", "1", 1, "C", false, 0, "")
+		pdf.CellFormat(186, 10, "No procurement items added yet. Add items on screen or via AI Smart Paste.", "1", 1, "C", false, 0, "")
 	} else {
 		for idx, item := range items {
 			name := item.Name
-			if len(name) > 42 {
-				name = name[:39] + "..."
+			if len(name) > 46 {
+				name = name[:43] + "..."
 			}
 
 			qty := item.Qty
@@ -217,19 +217,24 @@ func GenerateCustomProcurementPDF(shop *model.Shop, title string, items []dto.Pr
 				qty = "1"
 			}
 
-			pdf.CellFormat(colWidths[0], 7, fmt.Sprintf("%d", idx+1), "1", 0, "C", false, 0, "")
-			pdf.CellFormat(colWidths[1], 7, fmt.Sprintf(" %s", name), "1", 0, "L", false, 0, "")
-			pdf.CellFormat(colWidths[2], 7, fmt.Sprintf(" %s", qty), "1", 0, "C", false, 0, "")
-			pdf.CellFormat(colWidths[3], 7, "[   ]", "1", 0, "C", false, 0, "")
-			pdf.CellFormat(colWidths[4], 7, fmt.Sprintf(" %s", item.Notes), "1", 1, "L", false, 0, "")
+			notes := item.Notes
+			if notes == "" {
+				notes = "Market Order"
+			}
+
+			pdf.CellFormat(colWidths[0], 8, fmt.Sprintf("%d", idx+1), "1", 0, "C", false, 0, "")
+			pdf.CellFormat(colWidths[1], 8, fmt.Sprintf(" %s", name), "1", 0, "L", false, 0, "")
+			pdf.CellFormat(colWidths[2], 8, fmt.Sprintf(" %s", qty), "1", 0, "C", false, 0, "")
+			pdf.CellFormat(colWidths[3], 8, "[   ]", "1", 0, "C", false, 0, "")
+			pdf.CellFormat(colWidths[4], 8, fmt.Sprintf(" %s", notes), "1", 1, "L", false, 0, "")
 		}
 	}
 
 	pdf.Ln(8)
 	// Instructions for Wholesale Vendor
 	pdf.SetFont("Arial", "I", 8)
-	pdf.SetTextColor(108, 117, 125)
-	pdf.MultiCell(0, 4, "Notes: Please verify stock availability and market rates. Generated automatically by Shopsilo Retail OS.", "", "L", false)
+	pdf.SetTextColor(100, 116, 139)
+	pdf.MultiCell(0, 4, "Notes: Please verify stock availability and wholesale rates. Generated automatically by Shopsilo Retail OS.", "", "L", false)
 
 	var buf bytes.Buffer
 	if err := pdf.Output(&buf); err != nil {
