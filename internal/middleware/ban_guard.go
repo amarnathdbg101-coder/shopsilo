@@ -21,6 +21,23 @@ var (
 	banCache   = make(map[string]banCacheEntry)
 )
 
+func init() {
+	// Background routine to prune expired cache records to prevent memory leak and CPU spikes
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		for range ticker.C {
+			banCacheMu.Lock()
+			now := time.Now()
+			for k, v := range banCache {
+				if now.After(v.expiresAt) {
+					delete(banCache, k)
+				}
+			}
+			banCacheMu.Unlock()
+		}
+	}()
+}
+
 // InvalidateBanCache clears cached blacklist lookups (called when admin updates blacklist)
 func InvalidateBanCache() {
 	banCacheMu.Lock()
@@ -45,16 +62,13 @@ func checkBannedCached(ctx context.Context, modRepo *repository.ModerationRepo, 
 	}
 
 	banCacheMu.Lock()
+	// Protect against unbounded memory growth under attack
+	if len(banCache) > 50000 {
+		banCache = make(map[string]banCacheEntry) // Emergency reset
+	}
 	banCache[key] = banCacheEntry{
 		banned:    banned,
 		expiresAt: now.Add(60 * time.Second),
-	}
-	if len(banCache) > 5000 {
-		for k, v := range banCache {
-			if now.After(v.expiresAt) {
-				delete(banCache, k)
-			}
-		}
 	}
 	banCacheMu.Unlock()
 

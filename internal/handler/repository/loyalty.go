@@ -80,7 +80,7 @@ func (r *LoyaltyRepo) RecordReturnWithTx(ctx context.Context, tx pgx.Tx, ret *mo
 
 func (r *LoyaltyRepo) ListShopReturns(ctx context.Context, shopID string) ([]*model.ProductReturn, error) {
 	query := `
-		SELECT r.id, r.shop_id, r.user_id, r.product_id, r.reservation_id, r.quantity, r.refund_amount,
+		SELECT r.id, r.shop_id, COALESCE(r.user_id::text, ''), COALESCE(r.product_id::text, ''), COALESCE(r.reservation_id::text, ''), r.quantity, r.refund_amount,
 		       COALESCE(r.reason, ''), r.created_at, p.name AS product_name
 		FROM product_returns r
 		JOIN products p ON r.product_id = p.id

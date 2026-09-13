@@ -34,9 +34,9 @@ type Shop struct {
 	Status            string    `json:"status"` // active, pending_review, flagged, suspended, banned
 	FlaggedCount      int       `json:"flagged_count"`
 	SuspensionReason  string    `json:"suspension_reason,omitempty"`
-	CreationIP        string    `json:"creation_ip,omitempty"`
-	CreationUserAgent string    `json:"creation_user_agent,omitempty"`
-	DeviceFingerprint string    `json:"device_fingerprint,omitempty"`
+	CreationIP        string    `json:"-"`
+	CreationUserAgent string    `json:"-"`
+	DeviceFingerprint string    `json:"-"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }

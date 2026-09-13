@@ -225,7 +225,7 @@ func (r *POSRepo) GetBillByNumber(ctx context.Context, billNumber string) (*mode
 
 	// Fetch items
 	itemsQuery := `
-		SELECT id, bill_id, product_id, product_name, COALESCE(product_sku, ''), quantity, unit_price, unit_cost, total_price
+		SELECT id, bill_id, COALESCE(product_id::text, ''), product_name, COALESCE(product_sku, ''), quantity, unit_price, unit_cost, total_price
 		FROM pos_bill_items
 		WHERE bill_id = $1
 		ORDER BY id ASC

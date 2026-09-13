@@ -503,13 +503,33 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 		       is_open, is_active, status, flagged_count, suspension_reason,
 		       creation_ip, creation_user_agent, device_fingerprint,
 		       created_at, updated_at,
-		       distance_km,
-		       COUNT(*) OVER() AS total_count
+		       distance_km
 		FROM filtered_shops
 		%s
 		ORDER BY %s
 		LIMIT $%d OFFSET $%d
 	`, distanceExpr, innerWhereSQL, outerWhereSQL, orderBy, argIdx, argIdx+1)
+
+	countQuery := fmt.Sprintf(`
+		WITH filtered_shops AS (
+			SELECT id, %s AS distance_km
+			FROM shops
+			WHERE %s
+		)
+		SELECT COUNT(*)
+		FROM filtered_shops
+		%s
+	`, distanceExpr, innerWhereSQL, outerWhereSQL)
+
+	var totalCount int
+	if err := r.db.QueryRow(ctx, countQuery, args...).Scan(&totalCount); err != nil {
+		r.logger.Error("failed to count shops", zap.Error(err))
+		return nil, 0, err
+	}
+
+	if totalCount == 0 {
+		return []*model.Shop{}, 0, nil
+	}
 
 	args = append(args, limit, offset)
 
@@ -521,7 +541,6 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 	defer rows.Close()
 
 	var shops []*model.Shop
-	totalCount := 0
 
 	for rows.Next() {
 		s := &model.Shop{}
@@ -559,7 +578,6 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 			&s.CreatedAt,
 			&s.UpdatedAt,
 			&distKm,
-			&totalCount,
 		)
 		if err != nil {
 			r.logger.Error("failed to scan shop row", zap.Error(err))
