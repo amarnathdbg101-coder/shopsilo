@@ -245,7 +245,10 @@ func GenerateCustomProcurementPDF(shop *model.Shop, title string, items []dto.Pr
 				pdf.SetFillColor(248, 250, 252)
 			}
 
-			name := item.Name
+			name := strings.TrimSpace(item.Name)
+			if name == "" {
+				name = "Procurement Item"
+			}
 			if len(name) > 50 {
 				name = name[:47] + "..."
 			}

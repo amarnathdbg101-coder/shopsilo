@@ -1,6 +1,8 @@
 // Package dto handle request and response struct.
 package dto
 
+import "encoding/json"
+
 type AdjustStockRequest struct {
 	ProductID         string `json:"product_id" validate:"required,uuid"`
 	Adjustment        int    `json:"adjustment" validate:"required"` // e.g. +50 or -5
@@ -60,6 +62,38 @@ type ProcurementPDFItem struct {
 	Name  string `json:"name"`
 	Qty   string `json:"qty"`
 	Notes string `json:"notes,omitempty"`
+}
+
+// UnmarshalJSON custom deserializer to accept name, product_name, item_name, title or item keys seamlessly
+func (p *ProcurementPDFItem) UnmarshalJSON(data []byte) error {
+	type Alias ProcurementPDFItem
+	aux := &struct {
+		ProductName string `json:"product_name"`
+		ItemName    string `json:"item_name"`
+		Title       string `json:"title"`
+		Item        string `json:"item"`
+		*Alias
+	}{
+		Alias: (*Alias)(p),
+	}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	if p.Name == "" {
+		if aux.ProductName != "" {
+			p.Name = aux.ProductName
+		} else if aux.ItemName != "" {
+			p.Name = aux.ItemName
+		} else if aux.Title != "" {
+			p.Name = aux.Title
+		} else if aux.Item != "" {
+			p.Name = aux.Item
+		}
+	}
+
+	return nil
 }
 
 type CreateProcurementPDFRequest struct {

@@ -27,28 +27,52 @@ func computeShopOpenStatus(s *model.Shop) {
 	if s == nil {
 		return
 	}
+	// If shop is inactive or shopkeeper manually closed it, it is CLOSED.
 	if !s.IsOpen || !s.IsActive {
 		s.IsCurrentlyOpen = false
 		return
 	}
 
-	now := time.Now()
-	// Check weekly off day
-	if s.WeeklyOff != "" && strings.EqualFold(now.Weekday().String(), strings.TrimSpace(s.WeeklyOff)) {
-		s.IsCurrentlyOpen = false
-		return
+	// Always compute operating hours in Indian Standard Time (Asia/Kolkata = UTC+5:30)
+	loc, err := time.LoadLocation("Asia/Kolkata")
+	var now time.Time
+	if err == nil {
+		now = time.Now().In(loc)
+	} else {
+		// Fallback to UTC+5:30 offset if tzdata is missing on minimal Linux container images
+		now = time.Now().UTC().Add(5*time.Hour + 30*time.Minute)
+	}
+
+	// Check weekly off day (e.g. "Sunday")
+	weeklyOff := strings.TrimSpace(s.WeeklyOff)
+	if weeklyOff != "" && !strings.EqualFold(weeklyOff, "none") && !strings.EqualFold(weeklyOff, "null") {
+		if strings.EqualFold(now.Weekday().String(), weeklyOff) {
+			s.IsCurrentlyOpen = false
+			return
+		}
 	}
 
 	// Check opening and closing times if configured (expected format HH:MM, e.g. "09:00", "21:30")
-	if s.OpeningTime != "" && s.ClosingTime != "" {
+	openTime := strings.TrimSpace(s.OpeningTime)
+	closeTime := strings.TrimSpace(s.ClosingTime)
+
+	if openTime != "" && closeTime != "" {
 		curMinutes := now.Hour()*60 + now.Minute()
 		var openH, openM, closeH, closeM int
-		if n, _ := fmt.Sscanf(s.OpeningTime, "%d:%d", &openH, &openM); n == 2 {
-			if n2, _ := fmt.Sscanf(s.ClosingTime, "%d:%d", &closeH, &closeM); n2 == 2 {
+		if n, _ := fmt.Sscanf(openTime, "%d:%d", &openH, &openM); n == 2 {
+			if n2, _ := fmt.Sscanf(closeTime, "%d:%d", &closeH, &closeM); n2 == 2 {
 				openMinutes := openH*60 + openM
 				closeMinutes := closeH*60 + closeM
+
 				if openMinutes < closeMinutes {
+					// Standard same-day shift (e.g., 09:00 to 21:00)
 					if curMinutes < openMinutes || curMinutes >= closeMinutes {
+						s.IsCurrentlyOpen = false
+						return
+					}
+				} else if openMinutes > closeMinutes {
+					// Overnight shift (e.g., 20:00 to 02:00)
+					if curMinutes < openMinutes && curMinutes >= closeMinutes {
 						s.IsCurrentlyOpen = false
 						return
 					}
