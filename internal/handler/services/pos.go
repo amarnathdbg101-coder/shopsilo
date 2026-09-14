@@ -296,6 +296,18 @@ case "split":
 
 	// Atomically record customer khata debt if khata was used
 	if khataAmount > 0 && s.khataRepo != nil {
+		var itmSummary string
+		if len(createdBill.Items) > 0 {
+			var names []string
+			for _, item := range createdBill.Items {
+				names = append(names, fmt.Sprintf("%dx %s", item.Quantity, item.ProductName))
+				if len(names) >= 4 {
+					break
+				}
+			}
+			itmSummary = fmt.Sprintf("%d items: %s", len(createdBill.Items), strings.Join(names, ", "))
+		}
+		receiptURL := fmt.Sprintf("/shops/me/pos/receipts/%s.pdf", createdBill.BillNumber)
 		_, _ = s.khataRepo.RecordTransaction(
 			ctx,
 			shop.ID,
@@ -306,6 +318,8 @@ case "split":
 			fmt.Sprintf("POS Bill %s", createdBill.BillNumber),
 			createdBill.BillNumber,
 			"",
+			receiptURL,
+			itmSummary,
 		)
 	}
 
@@ -916,6 +930,8 @@ func (s *POSService) ProcessPOSReturn(ctx context.Context, shopOwnerUserID strin
 				fmt.Sprintf("Return %s on Bill %s", returnNumber, bill.BillNumber),
 				bill.BillNumber,
 				"return_credit",
+				"",
+				"",
 			)
 			message = fmt.Sprintf("Refund of Rs.%.2f successfully credited to customer's Khata account.", totalRefund)
 		} else {

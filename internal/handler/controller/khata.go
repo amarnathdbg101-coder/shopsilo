@@ -341,3 +341,188 @@ func (c *KhataController) GetStatementShare(w http.ResponseWriter, r *http.Reque
 	reuse.Success(w, "WhatsApp statement link generated successfully", res)
 }
 
+// RequestClosure initiates a dual-OTP closure request by the merchant (Protected - Shop)
+func (c *KhataController) RequestClosure(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	khataID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if khataID == "" {
+		reuse.Error(w, http.StatusBadRequest, "khata ID is required")
+		return
+	}
+
+	res, err := c.service.RequestKhataClosureByMerchant(r.Context(), claims.UserID, khataID)
+	if err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Success(w, res.Message, res)
+}
+
+// VerifyClosureOTP validates the 6-digit OTP entered by the merchant to finalize closure (Protected - Shop)
+func (c *KhataController) VerifyClosureOTP(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	khataID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if khataID == "" {
+		reuse.Error(w, http.StatusBadRequest, "khata ID is required")
+		return
+	}
+
+	var input dto.VerifyKhataClosureOTPRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := reuse.ValidateStruct(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	err := c.service.VerifyKhataClosureOTPByMerchant(r.Context(), claims.UserID, khataID, input.OTP)
+	if err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Khata successfully closed and moved to archive via mutual Dual-OTP verification", nil)
+}
+
+// ReverseTransaction records an official audit reversal for an erroneous transaction (Protected - Shop)
+func (c *KhataController) ReverseTransaction(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	khataID := strings.TrimSpace(chi.URLParam(r, "id"))
+	txID := strings.TrimSpace(chi.URLParam(r, "txId"))
+	if khataID == "" || txID == "" {
+		reuse.Error(w, http.StatusBadRequest, "khata ID and transaction ID are required")
+		return
+	}
+
+	var input dto.ReverseTransactionRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := reuse.ValidateStruct(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	revTx, err := c.service.ReverseTransaction(r.Context(), claims.UserID, khataID, txID, input.Reason)
+	if err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Created(w, "Galti sudhar entry (Reversal) successfully recorded", revTx)
+}
+
+// ResolveDispute resolves a customer's open dispute on a transaction (Protected - Shop)
+func (c *KhataController) ResolveDispute(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	khataID := strings.TrimSpace(chi.URLParam(r, "id"))
+	txID := strings.TrimSpace(chi.URLParam(r, "txId"))
+	if khataID == "" || txID == "" {
+		reuse.Error(w, http.StatusBadRequest, "khata ID and transaction ID are required")
+		return
+	}
+
+	var input dto.ResolveDisputeRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := reuse.ValidateStruct(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	err := c.service.ResolveDispute(r.Context(), claims.UserID, khataID, txID, input.Action, input.Notes)
+	if err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Dispute resolved successfully", nil)
+}
+
+// SetPromiseToPay sets an agreed repayment target date and installment amount (Protected - Shop)
+func (c *KhataController) SetPromiseToPay(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	khataID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if khataID == "" {
+		reuse.Error(w, http.StatusBadRequest, "khata ID is required")
+		return
+	}
+
+	var input dto.SetPromiseToPayRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := reuse.ValidateStruct(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	err := c.service.SetPromiseToPay(r.Context(), claims.UserID, khataID, input)
+	if err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Promise to pay target successfully updated", nil)
+}
+
+// GetCustomerTrustScore returns a customer's real-time credit score (Protected - Shop)
+func (c *KhataController) GetCustomerTrustScore(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	mobile := strings.TrimSpace(chi.URLParam(r, "mobile"))
+	if mobile == "" {
+		reuse.Error(w, http.StatusBadRequest, "customer mobile is required")
+		return
+	}
+
+	score, err := c.service.GetCustomerTrustScore(r.Context(), claims.UserID, mobile)
+	if err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Customer trust score retrieved", score)
+}
+
+

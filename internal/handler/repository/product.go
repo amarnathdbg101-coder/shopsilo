@@ -11,6 +11,7 @@ import (
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
 	"shopMe/internal/reuse"
+	"shopMe/internal/utils"
 	"sort"
 	"strings"
 	"time"
@@ -475,16 +476,80 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 	}
 
 	if filter.CategoryID != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("p.category_id = $%d", argIdx))
-		args = append(args, filter.CategoryID)
+		catTerm := strings.TrimSpace(filter.CategoryID)
+
+		var catID, catName, catSlug string
+		_ = r.db.QueryRow(ctx, `SELECT COALESCE(id::text, ''), COALESCE(name, ''), COALESCE(slug, '') FROM categories WHERE id::text = $1 OR slug ILIKE $1 OR name ILIKE $1 LIMIT 1`, catTerm).Scan(&catID, &catName, &catSlug)
+
+		targetID := catTerm
+		if catID != "" {
+			targetID = catID
+		}
+
+		var catOrs []string
+		// Direct category ID match
+		catOrs = append(catOrs, fmt.Sprintf("p.category_id::text = $%d", argIdx))
+		args = append(args, targetID)
 		argIdx++
+
+		if catSlug != "" {
+			catOrs = append(catOrs, fmt.Sprintf("(p.category_id::text = $%d OR p.category_id IN (SELECT id FROM categories WHERE slug ILIKE $%d))", argIdx, argIdx))
+			args = append(args, catSlug)
+			argIdx++
+		}
+
+		// Tokenized and Hinglish keyword fallback for unassigned or legacy products
+		keywordSource := catName
+		if keywordSource == "" {
+			keywordSource = catSlug
+		}
+		if keywordSource == "" {
+			keywordSource = catTerm
+		}
+
+		// Replace & with space
+		cleanSource := strings.ReplaceAll(keywordSource, "&", " ")
+		cleanSource = strings.ReplaceAll(cleanSource, "-", " ")
+		groups := utils.ExpandHinglishSearchGroups(cleanSource)
+		for _, g := range groups {
+			for _, term := range g.Terms {
+				term = strings.TrimSpace(term)
+				if len(term) < 3 || term == "and" || term == "the" || term == "care" || term == "food" {
+					continue
+				}
+				wild := "%" + term + "%"
+				catOrs = append(catOrs, fmt.Sprintf("(p.name ILIKE $%d OR p.description ILIKE $%d OR p.tags::text ILIKE $%d)", argIdx, argIdx, argIdx))
+				args = append(args, wild)
+				argIdx++
+			}
+		}
+
+		if len(catOrs) > 0 {
+			whereClauses = append(whereClauses, "("+strings.Join(catOrs, " OR ")+")")
+		}
 	}
 
 	if filter.Search != "" {
-		searchTerm := "%" + strings.TrimSpace(filter.Search) + "%"
-		whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR p.sku ILIKE $%d OR p.description ILIKE $%d OR p.slug ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
-		args = append(args, searchTerm)
-		argIdx++
+		groups := utils.ExpandHinglishSearchGroups(filter.Search)
+		if len(groups) > 0 {
+			for _, group := range groups {
+				var groupOrs []string
+				for _, term := range group.Terms {
+					wild := "%" + term + "%"
+					groupOrs = append(groupOrs, fmt.Sprintf("(p.name ILIKE $%d OR p.sku ILIKE $%d OR p.description ILIKE $%d OR p.slug ILIKE $%d OR p.tags::text ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx))
+					args = append(args, wild)
+					argIdx++
+				}
+				if len(groupOrs) > 0 {
+					whereClauses = append(whereClauses, "("+strings.Join(groupOrs, " OR ")+")")
+				}
+			}
+		} else {
+			searchTerm := "%" + strings.TrimSpace(filter.Search) + "%"
+			whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR p.sku ILIKE $%d OR p.description ILIKE $%d OR p.slug ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
+			args = append(args, searchTerm)
+			argIdx++
+		}
 	}
 
 	if filter.MinPrice > 0 {
@@ -505,6 +570,43 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 		argIdx++
 	}
 
+	// Location & Distance Range Filter (strictly limits database scanning to shops within radius)
+	hasGeoFilter := filter.ShopID == "" && filter.Lat != nil && filter.Lng != nil
+	if hasGeoFilter {
+		radius := 10.0
+		if filter.RadiusKm != nil && *filter.RadiusKm > 0 {
+			radius = *filter.RadiusKm
+		}
+		lat := *filter.Lat
+		lng := *filter.Lng
+
+		latDiff := radius / 111.0
+		cosLat := math.Cos(lat * math.Pi / 180.0)
+		if cosLat == 0 {
+			cosLat = 0.0001
+		}
+		lngDiff := radius / (111.0 * math.Abs(cosLat))
+		minLat, maxLat := lat-latDiff, lat+latDiff
+		minLng, maxLng := lng-lngDiff, lng+lngDiff
+
+		geoSubquery := fmt.Sprintf(`p.shop_id IN (
+			SELECT id FROM shops
+			WHERE is_active = true AND status = 'active'
+			  AND latitude BETWEEN %f AND %f
+			  AND longitude BETWEEN %f AND %f
+			  AND (6371 * acos(LEAST(1.0, GREATEST(-1.0,
+				  cos(radians(%f)) * cos(radians(latitude)) * cos(radians(longitude) - radians(%f)) +
+				  sin(radians(%f)) * sin(radians(latitude))
+			  )))) <= %f
+		)`, minLat, maxLat, minLng, maxLng, lat, lng, lat, radius)
+
+		whereClauses = append(whereClauses, geoSubquery)
+	} else if filter.ShopID == "" && strings.TrimSpace(filter.City) != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("p.shop_id IN (SELECT id FROM shops WHERE is_active = true AND status = 'active' AND city ILIKE $%d)", argIdx))
+		args = append(args, "%"+strings.TrimSpace(filter.City)+"%")
+		argIdx++
+	}
+
 	whereSQL := strings.Join(whereClauses, " AND ")
 
 	// 1. Get total count first (more efficient than COUNT(*) OVER() in PostgreSQL for large sets)
@@ -521,6 +623,9 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 	}
 
 	orderBy := "p.created_at DESC"
+	if hasGeoFilter {
+		orderBy = fmt.Sprintf("((s.latitude - %f)*(s.latitude - %f) + (s.longitude - %f)*(s.longitude - %f)) ASC, p.created_at DESC", *filter.Lat, *filter.Lat, *filter.Lng, *filter.Lng)
+	}
 	switch filter.SortBy {
 	case "price_asc":
 		orderBy = "p.price ASC"
@@ -1093,9 +1198,25 @@ func (r *ProductRepo) FindNearbyProducts(
 
 	trimmedQ := strings.TrimSpace(query)
 	if trimmedQ != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR p.description ILIKE $%d OR p.sku ILIKE $%d)", argIdx, argIdx, argIdx))
-		args = append(args, "%"+trimmedQ+"%")
-		argIdx++
+		groups := utils.ExpandHinglishSearchGroups(trimmedQ)
+		if len(groups) > 0 {
+			for _, group := range groups {
+				var groupOrs []string
+				for _, term := range group.Terms {
+					wild := "%" + term + "%"
+					groupOrs = append(groupOrs, fmt.Sprintf("(p.name ILIKE $%d OR p.description ILIKE $%d OR p.sku ILIKE $%d)", argIdx, argIdx, argIdx))
+					args = append(args, wild)
+					argIdx++
+				}
+				if len(groupOrs) > 0 {
+					whereClauses = append(whereClauses, "("+strings.Join(groupOrs, " OR ")+")")
+				}
+			}
+		} else {
+			whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR p.description ILIKE $%d OR p.sku ILIKE $%d)", argIdx, argIdx, argIdx))
+			args = append(args, "%"+trimmedQ+"%")
+			argIdx++
+		}
 	}
 
 	trimmedCat := strings.TrimSpace(category)

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
+	"shopMe/internal/utils"
 	"strings"
 	"time"
 
@@ -429,10 +430,26 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 	innerWhereClauses = append(innerWhereClauses, "status = 'active'")
 
 	if filter.Search != "" {
-		searchTerm := "%" + strings.TrimSpace(filter.Search) + "%"
-		innerWhereClauses = append(innerWhereClauses, fmt.Sprintf("(name ILIKE $%d OR category ILIKE $%d OR description ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
-		args = append(args, searchTerm)
-		argIdx++
+		groups := utils.ExpandHinglishSearchGroups(filter.Search)
+		if len(groups) > 0 {
+			for _, group := range groups {
+				var groupOrs []string
+				for _, term := range group.Terms {
+					wild := "%" + term + "%"
+					groupOrs = append(groupOrs, fmt.Sprintf("(name ILIKE $%d OR category ILIKE $%d OR description ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
+					args = append(args, wild)
+					argIdx++
+				}
+				if len(groupOrs) > 0 {
+					innerWhereClauses = append(innerWhereClauses, "("+strings.Join(groupOrs, " OR ")+")")
+				}
+			}
+		} else {
+			searchTerm := "%" + strings.TrimSpace(filter.Search) + "%"
+			innerWhereClauses = append(innerWhereClauses, fmt.Sprintf("(name ILIKE $%d OR category ILIKE $%d OR description ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
+			args = append(args, searchTerm)
+			argIdx++
+		}
 	}
 
 	if filter.Category != "" {
