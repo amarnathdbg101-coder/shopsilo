@@ -71,8 +71,10 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 
 	// Khata layer (Customer credit & udhar book)
 	khataRepo := repository.NewKhataRepo(db, logger)
-	khataService := services.NewKhataService(khataRepo, shopRepo)
+	khataService := services.NewKhataService(khataRepo, shopRepo, userRepo)
+	userService.SetKhataRepo(khataRepo)
 	khatac := controller.NewKhataController(khataService)
+	custKhatac := controller.NewCustomerKhataController(khataService)
 
 	// Analytics layer (Monthly profit, Best/Worst/Old/New product matrix, Net Pocket Profit)
 	analyticsService := services.NewAnalyticsService(productRepo, shopRepo, expenseRepo)
@@ -182,9 +184,16 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 
 		// User profile actions
 		r.Get("/user/me", uc.GetProfile)
-				r.Get("/user/loyalty", loyc.GetUserLoyalty)
+		r.Get("/user/loyalty", loyc.GetUserLoyalty)
 		r.Put("/user/profile", uc.UpdateProfile)
 		r.With(middleware.UploadRateLimiter.Middleware()).Post("/user/avatar", upc.UploadUserAvatar)
+
+		// Customer Khata & Dual-Entry Udhar Passbook
+		r.Get("/customer/khata", custKhatac.GetCustomerKhataSummary)
+		r.Get("/customer/khata/{khataId}/transactions", custKhatac.GetCustomerKhataPassbook)
+		r.Post("/customer/khata/{khataId}/dispute", custKhatac.DisputeTransaction)
+		r.Post("/customer/khata/{khataId}/pay-upi", custKhatac.SubmitUPIPayment)
+		r.Get("/customer/khata/{khataId}/statement.pdf", custKhatac.DownloadCustomerPDF)
 
 		// Shop Owner management
 		r.Post("/shops", sc.Create)
@@ -268,6 +277,23 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Put("/shops/me/khata/{mobile}/credit-limit", khatac.UpdateCreditLimit)
 		r.Post("/shops/me/khata", khatac.RecordCredit)
 		r.Post("/shops/me/khata/{mobile}/payment", khatac.RecordPayment)
+		r.Post("/shops/me/khata/{id}/request-closure", khatac.RequestClosure)
+		r.Post("/shops/me/khata/{id}/verify-closure-otp", khatac.VerifyClosureOTP)
+		r.Post("/shops/me/khata/{id}/transactions/{txId}/reverse", khatac.ReverseTransaction)
+		r.Post("/shops/me/khata/{id}/dispute/{txId}/resolve", khatac.ResolveDispute)
+		r.Post("/shops/me/khata/{id}/promise-date", khatac.SetPromiseToPay)
+		r.Get("/shops/me/khata/{mobile}/trust-score", khatac.GetCustomerTrustScore)
+
+		// Customer Digital Khata & Udhar Passbook (Dual-Entry Ledger)
+		r.Get("/customer/khata", custKhatac.GetCustomerKhataSummary)
+		r.Get("/customer/khata/{khataId}/transactions", custKhatac.GetCustomerKhataPassbook)
+		r.Post("/customer/khata/{khataId}/dispute", custKhatac.DisputeTransaction)
+		r.Post("/customer/khata/{khataId}/pay-upi", custKhatac.SubmitUPIPayment)
+		r.Get("/customer/khata/{khataId}/statement.pdf", custKhatac.DownloadCustomerPDF)
+		r.Post("/customer/khata/{khataId}/request-closure", custKhatac.RequestClosure)
+		r.Post("/customer/khata/{khataId}/verify-closure-otp", custKhatac.VerifyClosureOTP)
+		r.Put("/customer/khata/{khataId}/otp-protection", custKhatac.SetCreditOTPProtection)
+		r.Post("/customer/khata/{khataId}/promise-date", custKhatac.SetPromiseToPay)
 
 		// Shop Returns & VIP Offers
 		r.Post("/shops/me/returns", loyc.ProcessReturn)

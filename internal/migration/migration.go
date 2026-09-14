@@ -27,6 +27,14 @@ func RunAutoMigrations(dbURL string) error {
 	defer m.Close()
 
 	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		var dirtyErr migrate.ErrDirty
+		if errors.As(err, &dirtyErr) {
+			_ = m.Force(dirtyErr.Version - 1)
+			if retryErr := m.Up(); retryErr != nil && !errors.Is(retryErr, migrate.ErrNoChange) {
+				return fmt.Errorf("migration up retry failed: %w", retryErr)
+			}
+			return nil
+		}
 		return fmt.Errorf("migration up failed: %w", err)
 	}
 

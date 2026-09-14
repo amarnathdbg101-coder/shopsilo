@@ -59,6 +59,10 @@ type ProductFilter struct {
 	SortBy     string   `json:"sort_by,omitempty"` // price_asc, price_desc, newest, stock_desc, oldest
 	Page       int      `json:"page,omitempty"`
 	Limit      int      `json:"limit,omitempty"`
+	Lat        *float64 `json:"lat,omitempty"`
+	Lng        *float64 `json:"lng,omitempty"`
+	RadiusKm   *float64 `json:"radius_km,omitempty"`
+	City       string   `json:"city,omitempty"`
 }
 
 type ProductPaginationResponse struct {

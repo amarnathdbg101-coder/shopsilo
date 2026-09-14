@@ -205,6 +205,20 @@ func (c *ProductController) List(w http.ResponseWriter, r *http.Request) {
 		limit = 12
 	}
 
+	var lat, lng, radiusKm *float64
+	if latVal, err := strconv.ParseFloat(query.Get("lat"), 64); err == nil {
+		lat = &latVal
+	}
+	if lngVal, err := strconv.ParseFloat(query.Get("lng"), 64); err == nil {
+		lng = &lngVal
+	}
+	if radVal, err := strconv.ParseFloat(query.Get("radius_km"), 64); err == nil && radVal > 0 {
+		radiusKm = &radVal
+	} else if radVal, err := strconv.ParseFloat(query.Get("radius"), 64); err == nil && radVal > 0 {
+		radiusKm = &radVal
+	}
+	city := query.Get("city")
+
 	filter := dto.ProductFilter{
 		Search:     search,
 		CategoryID: categoryID,
@@ -214,6 +228,10 @@ func (c *ProductController) List(w http.ResponseWriter, r *http.Request) {
 		SortBy:     sortBy,
 		Page:       page,
 		Limit:      limit,
+		Lat:        lat,
+		Lng:        lng,
+		RadiusKm:   radiusKm,
+		City:       city,
 	}
 
 	result, err := c.productService.ListProducts(r.Context(), filter)
@@ -253,9 +271,14 @@ func (c *ProductController) ListMyShopProducts(w http.ResponseWriter, r *http.Re
 		limit = 100
 	}
 
+	search := query.Get("q")
+	if search == "" {
+		search = query.Get("search")
+	}
+
 	filter := dto.ProductFilter{
 		ShopID:     shop.ID,
-		Search:     query.Get("q"),
+		Search:     search,
 		CategoryID: query.Get("category_id"),
 		SortBy:     query.Get("sort_by"),
 		Page:       page,
@@ -296,12 +319,17 @@ func (c *ProductController) ListByShop(w http.ResponseWriter, r *http.Request) {
 	}
 	limit, _ := strconv.Atoi(query.Get("limit"))
 	if limit < 1 || limit > 100 {
-		limit = 12
+		limit = 16
+	}
+
+	search := query.Get("q")
+	if search == "" {
+		search = query.Get("search")
 	}
 
 	filter := dto.ProductFilter{
 		ShopID:     shop.ID,
-		Search:     query.Get("q"),
+		Search:     search,
 		CategoryID: query.Get("category_id"),
 		SortBy:     query.Get("sort_by"),
 		Page:       page,

@@ -607,6 +607,9 @@ func (s *ShopService) GetHomeFeed(ctx context.Context, lat, lng *float64, city s
 			pFilter := dto.ProductFilter{
 				Limit: limitProducts,
 				Page:  1,
+				Lat:   lat,
+				Lng:   lng,
+				City:  city,
 			}
 			products, _, err := s.productRepo.FindAll(ctx, pFilter)
 			if err != nil {

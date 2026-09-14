@@ -2,18 +2,12 @@ package main
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"net/http"
-	"os"
-	"os/signal"
-	"shopMe/internal/handler/repository"
 	"shopMe/internal/handler/routes"
 	"shopMe/internal/middleware"
 	"shopMe/internal/migration"
+	"shopMe/internal/servers"
 	"shopMe/internal/utils"
-	"syscall"
-	"time"
+	"shopMe/internal/worker"
 
 	"go.uber.org/zap"
 )
@@ -42,95 +36,16 @@ func main() {
 	// Context for background concurrent workers
 	appCtx, stopApp := context.WithCancel(context.Background())
 	defer stopApp()
-
 	// Background Concurrency Worker: Periodically expires stale holds and releases reserved inventory
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				logger.Error("background reservation cleaner recovered from unexpected panic", zap.Any("panic", r))
-			}
-		}()
-
-		ticker := time.NewTicker(2 * time.Minute)
-		defer ticker.Stop()
-
-		resRepo := repository.NewReservationRepo(db, logger)
-
-		for {
-			select {
-			case <-appCtx.Done():
-				logger.Info("background reservation cleaner stopped cleanly")
-				return
-			case <-ticker.C:
-				cleanCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-				if err := resRepo.ExpireStaleReservations(cleanCtx); err != nil {
-					logger.Warn("background reservation cleaner encountered an issue", zap.Error(err))
-				}
-				cancel()
-			}
-		}
-	}()
+	go worker.StartReservationCleaner(appCtx, db, logger)
 
 	// Background Concurrency Worker 2: Nightly Automated Database Backup to Cloudflare R2 (Runs every 24h)
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				logger.Error("background database backup worker recovered from panic", zap.Any("panic", r))
-			}
-		}()
+	go worker.StartBackupWorker(appCtx, db, logger)
 
-		ticker := time.NewTicker(24 * time.Hour)
-		defer ticker.Stop()
+	server := servers.NewServer(utils.MustLoad().Port, router)
 
-		for {
-			select {
-			case <-appCtx.Done():
-				logger.Info("background database backup worker stopped cleanly")
-				return
-			case <-ticker.C:
-				cleanCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-				meta, err := utils.GenerateFullDatabaseBackupDump(cleanCtx, db)
-				if err != nil {
-					logger.Error("nightly automated database backup failed", zap.Error(err))
-				} else {
-					logger.Info("nightly automated database backup completed successfully", zap.String("filename", meta.Filename), zap.Int64("size_bytes", meta.SizeBytes))
-				}
-				cancel()
-			}
-		}
-	}()
-
-	server := &http.Server{
-		Addr:              fmt.Sprintf(":%s", cfg.Port),
-		Handler:           router,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		MaxHeaderBytes:    1 << 20, // 1MB
-	}
+	servers.StartServer(server, logger)
 
 	// Channel to listen for interrupt signals for graceful shutdown
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-
-	go func() {
-		logger.Info("server starting", zap.String("port", cfg.Port))
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Fatal("server failed", zap.Error(err))
-		}
-	}()
-
-	<-stop
-	logger.Info("shutting down server gracefully...")
-	stopApp() // Signal background worker goroutine to terminate
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	if err := server.Shutdown(ctx); err != nil {
-		logger.Error("server forced to shutdown", zap.Error(err))
-	}
-
-	logger.Info("server exited cleanly")
+	servers.GracefulShutdown(server, stopApp, logger)
 }

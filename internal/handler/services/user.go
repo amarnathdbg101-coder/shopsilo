@@ -22,13 +22,18 @@ import (
 
 
 type UserService struct {
-	repo *repository.UserRepo
+	repo      *repository.UserRepo
+	khataRepo *repository.KhataRepo
 }
 
 func NewUserService(repo *repository.UserRepo) *UserService {
 	return &UserService{
 		repo: repo,
 	}
+}
+
+func (s *UserService) SetKhataRepo(khataRepo *repository.KhataRepo) {
+	s.khataRepo = khataRepo
 }
 
 func (s *UserService) Register(ctx context.Context, input dto.UserRegisterRequest) (*dto.RegisterResponse, error) {
@@ -62,6 +67,11 @@ func (s *UserService) Register(ctx context.Context, input dto.UserRegisterReques
 		return nil, err
 	}
 
+	// Auto-link any existing offline shop khatas to this user
+	if s.khataRepo != nil && createdUser.Phone != "" {
+		_, _ = s.khataRepo.AutoLinkCustomerKhatas(ctx, createdUser.ID, createdUser.Phone)
+	}
+
 	token, err := reuse.GenerateJwt(createdUser.ID, createdUser.Email, createdUser.Role)
 	if err != nil {
 		return &dto.RegisterResponse{User: createdUser}, nil
@@ -87,6 +97,11 @@ func (s *UserService) Login(ctx context.Context, input dto.UserLoginRequest) (*d
 
 	if !reuse.CheckPasswordHash(input.Password, user.PasswordHash) {
 		return nil, ErrInvalidCredentials
+	}
+
+	// Auto-link any pending shop khatas on login as well
+	if s.khataRepo != nil && user.Phone != "" {
+		_, _ = s.khataRepo.AutoLinkCustomerKhatas(ctx, user.ID, user.Phone)
 	}
 
 	token, err := reuse.GenerateJwt(user.ID, user.Email, user.Role)
