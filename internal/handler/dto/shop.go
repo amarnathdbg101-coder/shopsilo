@@ -42,8 +42,8 @@ type UpdateShopRequest struct {
 	OpeningTime    *string   `json:"opening_time,omitempty" validate:"omitempty,max=10"`
 	ClosingTime    *string   `json:"closing_time,omitempty" validate:"omitempty,max=10"`
 	WeeklyOff      *string   `json:"weekly_off,omitempty" validate:"omitempty,max=20"`
-	IsOpen         *bool     `json:"is_open,omitempty"`
 	UPIID          *string   `json:"upi_id,omitempty" validate:"omitempty,max=100"`
+	IsOpen         *bool     `json:"is_open,omitempty"`
 }
 
 type ToggleShopStatusRequest struct {
