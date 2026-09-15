@@ -124,14 +124,14 @@ func (r *ShopRepo) CreateWithTx(ctx context.Context, tx pgx.Tx, s *model.Shop) (
 	query := `
 		INSERT INTO shops (
 			user_id, name, slug, description, category, phone, address,
-			latitude, longitude, city, pincode, whatsapp_number,
+			latitude, longitude, city, pincode, whatsapp_number, upi_id,
 			logo_url, banners, timing, opening_time, closing_time, weekly_off, is_open, is_active,
 			status, creation_ip, creation_user_agent, device_fingerprint, created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, NOW(), NOW())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, NOW(), NOW())
 		RETURNING id, user_id, name, slug, COALESCE(description, ''), COALESCE(category, ''), COALESCE(phone, ''), COALESCE(address, ''),
 		          latitude, longitude, COALESCE(city, ''), COALESCE(pincode, ''), COALESCE(whatsapp_number, ''),
-		          COALESCE(logo_url, ''), banners, COALESCE(timing, ''),
+		          COALESCE(upi_id, ''), COALESCE(logo_url, ''), banners, COALESCE(timing, ''),
 		          COALESCE(opening_time, '09:00'), COALESCE(closing_time, '21:00'), COALESCE(weekly_off, ''),
 		          is_open, is_active, status, flagged_count, COALESCE(suspension_reason, ''),
 		          COALESCE(creation_ip, ''), COALESCE(creation_user_agent, ''), COALESCE(device_fingerprint, ''),
@@ -155,6 +155,7 @@ func (r *ShopRepo) CreateWithTx(ctx context.Context, tx pgx.Tx, s *model.Shop) (
 		strings.TrimSpace(s.City),
 		strings.TrimSpace(s.Pincode),
 		strings.TrimSpace(s.WhatsAppNumber),
+		strings.TrimSpace(s.UPIID),
 		strings.TrimSpace(s.LogoURL),
 		bannersJSON,
 		strings.TrimSpace(s.Timing),
@@ -181,6 +182,7 @@ func (r *ShopRepo) CreateWithTx(ctx context.Context, tx pgx.Tx, s *model.Shop) (
 		&created.City,
 		&created.Pincode,
 		&created.WhatsAppNumber,
+		&created.UPIID,
 		&created.LogoURL,
 		&bannersBytes,
 		&created.Timing,
@@ -223,7 +225,7 @@ func (r *ShopRepo) FindByUserID(ctx context.Context, userID string) (*model.Shop
 	query := `
 		SELECT id, user_id, name, slug, COALESCE(description, ''), COALESCE(category, ''), COALESCE(phone, ''), COALESCE(address, ''),
 		       latitude, longitude, COALESCE(city, ''), COALESCE(pincode, ''), COALESCE(whatsapp_number, ''),
-		       COALESCE(logo_url, ''), banners, COALESCE(timing, ''),
+		       COALESCE(upi_id, ''), COALESCE(logo_url, ''), banners, COALESCE(timing, ''),
 		       COALESCE(opening_time, '09:00'), COALESCE(closing_time, '21:00'), COALESCE(weekly_off, ''),
 		       is_open, is_active, status, flagged_count, COALESCE(suspension_reason, ''),
 		       COALESCE(creation_ip, ''), COALESCE(creation_user_agent, ''), COALESCE(device_fingerprint, ''),
@@ -249,6 +251,7 @@ func (r *ShopRepo) FindByUserID(ctx context.Context, userID string) (*model.Shop
 		&s.City,
 		&s.Pincode,
 		&s.WhatsAppNumber,
+		&s.UPIID,
 		&s.LogoURL,
 		&bannersBytes,
 		&s.Timing,
@@ -287,7 +290,7 @@ func (r *ShopRepo) FindByID(ctx context.Context, id string) (*model.Shop, error)
 	query := `
 		SELECT id, user_id, name, slug, COALESCE(description, ''), COALESCE(category, ''), COALESCE(phone, ''), COALESCE(address, ''),
 		       latitude, longitude, COALESCE(city, ''), COALESCE(pincode, ''), COALESCE(whatsapp_number, ''),
-		       COALESCE(logo_url, ''), banners, COALESCE(timing, ''),
+		       COALESCE(upi_id, ''), COALESCE(logo_url, ''), banners, COALESCE(timing, ''),
 		       COALESCE(opening_time, '09:00'), COALESCE(closing_time, '21:00'), COALESCE(weekly_off, ''),
 		       is_open, is_active, status, flagged_count, COALESCE(suspension_reason, ''),
 		       COALESCE(creation_ip, ''), COALESCE(creation_user_agent, ''), COALESCE(device_fingerprint, ''),
@@ -313,6 +316,7 @@ func (r *ShopRepo) FindByID(ctx context.Context, id string) (*model.Shop, error)
 		&s.City,
 		&s.Pincode,
 		&s.WhatsAppNumber,
+		&s.UPIID,
 		&s.LogoURL,
 		&bannersBytes,
 		&s.Timing,
@@ -351,7 +355,7 @@ func (r *ShopRepo) FindBySlug(ctx context.Context, slug string) (*model.Shop, er
 	query := `
 		SELECT id, user_id, name, slug, COALESCE(description, ''), COALESCE(category, ''), COALESCE(phone, ''), COALESCE(address, ''),
 		       latitude, longitude, COALESCE(city, ''), COALESCE(pincode, ''), COALESCE(whatsapp_number, ''),
-		       COALESCE(logo_url, ''), banners, COALESCE(timing, ''),
+		       COALESCE(upi_id, ''), COALESCE(logo_url, ''), banners, COALESCE(timing, ''),
 		       COALESCE(opening_time, '09:00'), COALESCE(closing_time, '21:00'), COALESCE(weekly_off, ''),
 		       is_open, is_active, status, flagged_count, COALESCE(suspension_reason, ''),
 		       COALESCE(creation_ip, ''), COALESCE(creation_user_agent, ''), COALESCE(device_fingerprint, ''),
@@ -377,6 +381,7 @@ func (r *ShopRepo) FindBySlug(ctx context.Context, slug string) (*model.Shop, er
 		&s.City,
 		&s.Pincode,
 		&s.WhatsAppNumber,
+		&s.UPIID,
 		&s.LogoURL,
 		&bannersBytes,
 		&s.Timing,
@@ -522,6 +527,7 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 			       COALESCE(city, '') AS city, 
 			       COALESCE(pincode, '') AS pincode, 
 			       COALESCE(whatsapp_number, '') AS whatsapp_number,
+			       COALESCE(upi_id, '') AS upi_id,
 			       COALESCE(logo_url, '') AS logo_url, 
 			       banners, 
 			       COALESCE(timing, '') AS timing,
@@ -539,7 +545,7 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 			WHERE %s
 		)
 		SELECT id, user_id, name, slug, description, category, phone, address,
-		       latitude, longitude, city, pincode, whatsapp_number,
+		       latitude, longitude, city, pincode, whatsapp_number, upi_id,
 		       logo_url, banners, timing, opening_time, closing_time, weekly_off,
 		       is_open, is_active, status, flagged_count, suspension_reason,
 		       creation_ip, creation_user_agent, device_fingerprint,
@@ -602,6 +608,7 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 			&s.City,
 			&s.Pincode,
 			&s.WhatsAppNumber,
+			&s.UPIID,
 			&s.LogoURL,
 			&bannersBytes,
 			&s.Timing,
@@ -648,15 +655,15 @@ func (r *ShopRepo) Update(ctx context.Context, s *model.Shop) (*model.Shop, erro
 		UPDATE shops
 		SET name = $1, slug = $2, description = $3, category = $4, phone = $5, address = $6,
 		    latitude = $7, longitude = $8, city = $9, pincode = $10, whatsapp_number = $11,
-		    logo_url = $12, banners = $13, timing = $14,
-		    opening_time = CASE WHEN $15 != '' THEN $15 ELSE opening_time END,
-		    closing_time = CASE WHEN $16 != '' THEN $16 ELSE closing_time END,
-		    weekly_off = CASE WHEN $17 != '' THEN $17 ELSE weekly_off END,
-		    is_open = $18, updated_at = NOW()
-		WHERE id = $19 AND user_id = $20
+		    upi_id = $12, logo_url = $13, banners = $14, timing = $15,
+		    opening_time = CASE WHEN $16 != '' THEN $16 ELSE opening_time END,
+		    closing_time = CASE WHEN $17 != '' THEN $17 ELSE closing_time END,
+		    weekly_off = CASE WHEN $18 != '' THEN $18 ELSE weekly_off END,
+		    is_open = $19, updated_at = NOW()
+		WHERE id = $20 AND user_id = $21
 		RETURNING id, user_id, name, slug, COALESCE(description, ''), COALESCE(category, ''), COALESCE(phone, ''), COALESCE(address, ''),
 		          latitude, longitude, COALESCE(city, ''), COALESCE(pincode, ''), COALESCE(whatsapp_number, ''),
-		          COALESCE(logo_url, ''), banners, COALESCE(timing, ''),
+		          COALESCE(upi_id, ''), COALESCE(logo_url, ''), banners, COALESCE(timing, ''),
 		          COALESCE(opening_time, '09:00'), COALESCE(closing_time, '21:00'), COALESCE(weekly_off, ''),
 		          is_open, is_active, status, flagged_count, COALESCE(suspension_reason, ''),
 		          COALESCE(creation_ip, ''), COALESCE(creation_user_agent, ''), COALESCE(device_fingerprint, ''),
@@ -679,6 +686,7 @@ func (r *ShopRepo) Update(ctx context.Context, s *model.Shop) (*model.Shop, erro
 		strings.TrimSpace(s.City),
 		strings.TrimSpace(s.Pincode),
 		strings.TrimSpace(s.WhatsAppNumber),
+		strings.TrimSpace(s.UPIID),
 		strings.TrimSpace(s.LogoURL),
 		bannersJSON,
 		strings.TrimSpace(s.Timing),
@@ -702,6 +710,7 @@ func (r *ShopRepo) Update(ctx context.Context, s *model.Shop) (*model.Shop, erro
 		&updated.City,
 		&updated.Pincode,
 		&updated.WhatsAppNumber,
+		&updated.UPIID,
 		&updated.LogoURL,
 		&bannersBytes,
 		&updated.Timing,
@@ -747,7 +756,7 @@ func (r *ShopRepo) ToggleStatus(ctx context.Context, userID string, isOpen bool)
 		WHERE user_id = $2
 		RETURNING id, user_id, name, slug, COALESCE(description, ''), COALESCE(category, ''), COALESCE(phone, ''), COALESCE(address, ''),
 		          latitude, longitude, COALESCE(city, ''), COALESCE(pincode, ''), COALESCE(whatsapp_number, ''),
-		          COALESCE(logo_url, ''), banners, COALESCE(timing, ''),
+		          COALESCE(upi_id, ''), COALESCE(logo_url, ''), banners, COALESCE(timing, ''),
 		          COALESCE(opening_time, '09:00'), COALESCE(closing_time, '21:00'), COALESCE(weekly_off, ''),
 		          is_open, is_active, status, flagged_count, COALESCE(suspension_reason, ''),
 		          COALESCE(creation_ip, ''), COALESCE(creation_user_agent, ''), COALESCE(device_fingerprint, ''),
@@ -770,6 +779,7 @@ func (r *ShopRepo) ToggleStatus(ctx context.Context, userID string, isOpen bool)
 		&updated.City,
 		&updated.Pincode,
 		&updated.WhatsAppNumber,
+		&updated.UPIID,
 		&updated.LogoURL,
 		&bannersBytes,
 		&updated.Timing,

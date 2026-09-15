@@ -150,6 +150,7 @@ func (s *ShopService) CreateShop(
 		OpeningTime:       strings.TrimSpace(input.OpeningTime),
 		ClosingTime:       strings.TrimSpace(input.ClosingTime),
 		WeeklyOff:         strings.TrimSpace(input.WeeklyOff),
+		UPIID:             strings.TrimSpace(input.UPIID),
 		IsOpen:            true,
 		IsActive:          true,
 		Status:            model.ShopStatusActive,
@@ -331,6 +332,9 @@ func (s *ShopService) UpdateMyShop(ctx context.Context, userID string, input dto
 	}
 	if input.WeeklyOff != nil {
 		shop.WeeklyOff = strings.TrimSpace(*input.WeeklyOff)
+	}
+	if input.UPIID != nil {
+		shop.UPIID = strings.TrimSpace(*input.UPIID)
 	}
 	if input.IsOpen != nil {
 		shop.IsOpen = *input.IsOpen
