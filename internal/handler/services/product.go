@@ -268,10 +268,18 @@ func (s *ProductService) UpdateProduct(ctx context.Context, userID, productID st
 			newImagesMap[img] = true
 		}
 
-		// Delete images that were removed in the update to save R2 storage
+		// Multi-Tenant Safe Cleanup: Delete images only if no other product/shop in the platform references them
 		for _, oldImg := range existing.Images {
 			if !newImagesMap[oldImg] {
-				_ = reuse.DeleteImage(oldImg)
+				canPurge := true
+				if s.mediaVaultRepo != nil {
+					if activeCount, err := s.mediaVaultRepo.GetActiveUsageCount(ctx, oldImg); err == nil && activeCount > 1 {
+						canPurge = false
+					}
+				}
+				if canPurge {
+					_ = reuse.DeleteImage(oldImg)
+				}
 			}
 		}
 
