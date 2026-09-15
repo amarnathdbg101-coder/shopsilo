@@ -150,6 +150,7 @@ func (s *ShopService) CreateShop(
 		OpeningTime:       strings.TrimSpace(input.OpeningTime),
 		ClosingTime:       strings.TrimSpace(input.ClosingTime),
 		WeeklyOff:         strings.TrimSpace(input.WeeklyOff),
+		UPIID:             strings.TrimSpace(input.UPIID),
 		IsOpen:            true,
 		IsActive:          true,
 		Status:            model.ShopStatusActive,
@@ -179,6 +180,11 @@ func (s *ShopService) CreateShop(
 		return nil, errors.New("failed to commit shop creation")
 	}
 
+	if strings.TrimSpace(input.UPIID) != "" {
+		_ = s.shopRepo.UpdateUPIID(ctx, createdShop.ID, input.UPIID)
+		createdShop.UPIID = strings.TrimSpace(input.UPIID)
+	}
+
 	enrichShop(createdShop)
 
 	// 7. Generate upgraded JWT token with role "shop"
@@ -201,6 +207,9 @@ func (s *ShopService) GetMyShop(ctx context.Context, userID string) (*model.Shop
 		}
 		return nil, err
 	}
+	if shop.UPIID == "" {
+		shop.UPIID = s.shopRepo.GetUPIID(ctx, shop.ID)
+	}
 	enrichShop(shop)
 	return shop, nil
 }
@@ -213,6 +222,9 @@ func (s *ShopService) GetShopByID(ctx context.Context, id string) (*model.Shop, 
 		}
 		return nil, err
 	}
+	if shop.UPIID == "" {
+		shop.UPIID = s.shopRepo.GetUPIID(ctx, shop.ID)
+	}
 	enrichShop(shop)
 	return shop, nil
 }
@@ -224,6 +236,9 @@ func (s *ShopService) GetShopBySlug(ctx context.Context, slug string) (*model.Sh
 			return nil, ErrShopNotFound
 		}
 		return nil, err
+	}
+	if shop.UPIID == "" {
+		shop.UPIID = s.shopRepo.GetUPIID(ctx, shop.ID)
 	}
 	enrichShop(shop)
 	return shop, nil
@@ -332,6 +347,10 @@ func (s *ShopService) UpdateMyShop(ctx context.Context, userID string, input dto
 	if input.WeeklyOff != nil {
 		shop.WeeklyOff = strings.TrimSpace(*input.WeeklyOff)
 	}
+	if input.UPIID != nil {
+		shop.UPIID = strings.TrimSpace(*input.UPIID)
+		_ = s.shopRepo.UpdateUPIID(ctx, shop.ID, *input.UPIID)
+	}
 	if input.IsOpen != nil {
 		shop.IsOpen = *input.IsOpen
 	}
@@ -344,6 +363,11 @@ func (s *ShopService) UpdateMyShop(ctx context.Context, userID string, input dto
 		return nil, err
 	}
 
+	if input.UPIID != nil {
+		updated.UPIID = strings.TrimSpace(*input.UPIID)
+	} else if updated.UPIID == "" {
+		updated.UPIID = s.shopRepo.GetUPIID(ctx, updated.ID)
+	}
 	enrichShop(updated)
 	return updated, nil
 }

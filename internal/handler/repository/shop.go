@@ -870,3 +870,20 @@ func (r *ShopRepo) GetShopDailyDigest(ctx context.Context, shopID string) (*mode
 	return digest, nil
 }
 
+// UpdateUPIID updates the shop's UPI VPA address.
+func (r *ShopRepo) UpdateUPIID(ctx context.Context, shopID, upiID string) error {
+	_, err := r.db.Exec(ctx, `UPDATE shops SET upi_id = $1, updated_at = NOW() WHERE id = $2`, strings.TrimSpace(upiID), shopID)
+	if err != nil {
+		r.logger.Error("failed to update shop upi_id", zap.Error(err), zap.String("shop_id", shopID))
+		return err
+	}
+	return nil
+}
+
+// GetUPIID retrieves the shop's UPI VPA address.
+func (r *ShopRepo) GetUPIID(ctx context.Context, shopID string) string {
+	var upiID string
+	_ = r.db.QueryRow(ctx, `SELECT COALESCE(upi_id, '') FROM shops WHERE id = $1`, shopID).Scan(&upiID)
+	return strings.TrimSpace(upiID)
+}
+
