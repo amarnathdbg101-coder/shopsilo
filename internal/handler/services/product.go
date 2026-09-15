@@ -2,6 +2,7 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"encoding/csv"
 	"errors"
@@ -676,8 +677,32 @@ func (s *ProductService) BulkImportProductsFromCSV(ctx context.Context, userID s
 		return nil, ErrShopNotFound
 	}
 
-	reader := csv.NewReader(csvReader)
+	rawBytes, err := io.ReadAll(csvReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read CSV data: %w", err)
+	}
+
+	// Strip UTF-8 BOM if present
+	if len(rawBytes) >= 3 && rawBytes[0] == 0xEF && rawBytes[1] == 0xBB && rawBytes[2] == 0xBF {
+		rawBytes = rawBytes[3:]
+	}
+
+	// Delimiter detection: check for semicolon or tab if comma isn't prominent
+	commaCount := bytes.Count(rawBytes, []byte(","))
+	semiCount := bytes.Count(rawBytes, []byte(";"))
+	tabCount := bytes.Count(rawBytes, []byte("\t"))
+
+	var delimiter rune = ','
+	if semiCount > commaCount && semiCount > tabCount {
+		delimiter = ';'
+	} else if tabCount > commaCount && tabCount > semiCount {
+		delimiter = '\t'
+	}
+
+	reader := csv.NewReader(bytes.NewReader(rawBytes))
+	reader.Comma = delimiter
 	reader.TrimLeadingSpace = true
+	reader.FieldsPerRecord = -1 // flexible column count per row
 
 	records, err := reader.ReadAll()
 	if err != nil {
@@ -722,6 +747,15 @@ func (s *ProductService) BulkImportProductsFromCSV(ctx context.Context, userID s
 		priceCol = 1
 	}
 
+	cleanNumber := func(val string) string {
+		v := strings.TrimSpace(val)
+		v = strings.ReplaceAll(v, "₹", "")
+		v = strings.ReplaceAll(v, "Rs.", "")
+		v = strings.ReplaceAll(v, "Rs", "")
+		v = strings.ReplaceAll(v, ",", "")
+		return strings.TrimSpace(v)
+	}
+
 	var items []dto.BulkImportProductItem
 
 	for _, row := range records[1:] {
@@ -738,21 +772,26 @@ func (s *ProductService) BulkImportProductsFromCSV(ctx context.Context, userID s
 			item.SKU = strings.TrimSpace(row[skuCol])
 		}
 		if priceCol < len(row) {
-			pVal, _ := strconv.ParseFloat(strings.TrimSpace(row[priceCol]), 64)
+			pVal, _ := strconv.ParseFloat(cleanNumber(row[priceCol]), 64)
+			if pVal <= 0 {
+				pVal = 10.0 // Default reasonable price if 0 or unparsed
+			}
 			item.Price = pVal
+		} else {
+			item.Price = 10.0
 		}
 		if costCol != -1 && costCol < len(row) {
-			cVal, _ := strconv.ParseFloat(strings.TrimSpace(row[costCol]), 64)
+			cVal, _ := strconv.ParseFloat(cleanNumber(row[costCol]), 64)
 			item.CostPrice = cVal
 		}
 		if stockCol != -1 && stockCol < len(row) {
-			sVal, _ := strconv.Atoi(strings.TrimSpace(row[stockCol]))
+			sVal, _ := strconv.Atoi(cleanNumber(row[stockCol]))
 			item.StockQuantity = sVal
 		} else {
 			item.StockQuantity = 10
 		}
 		if minStockCol != -1 && minStockCol < len(row) {
-			mVal, _ := strconv.Atoi(strings.TrimSpace(row[minStockCol]))
+			mVal, _ := strconv.Atoi(cleanNumber(row[minStockCol]))
 			item.MinStock = mVal
 		}
 		if descCol != -1 && descCol < len(row) {

@@ -174,6 +174,8 @@ type BulkImportProductItem struct {
 	StockQuantity int     `json:"stock_quantity"`
 	MinStock      int     `json:"min_stock,omitempty"`
 	CategoryName  string  `json:"category_name,omitempty"`
+	CategoryID    string  `json:"category_id,omitempty"`
+	Unit          string  `json:"unit,omitempty"`
 	Description   string  `json:"description,omitempty"`
 }
 
