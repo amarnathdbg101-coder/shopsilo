@@ -128,5 +128,55 @@ func TestControllerValidation(t *testing.T) {
 			t.Fatalf("expected status 400 Bad Request, got %d", w.Code)
 		}
 	})
+
+	t.Run("SendRegistrationOTP Validation Failure (Missing Phone)", func(t *testing.T) {
+		invalidBody, _ := json.Marshal(dto.SendPhoneOTPRequest{
+			Phone: "",
+		})
+
+		req := httptest.NewRequest(http.MethodPost, "/auth/send-otp", bytes.NewBuffer(invalidBody))
+		w := httptest.NewRecorder()
+
+		uc.SendRegistrationOTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status 400 Bad Request, got %d", w.Code)
+		}
+	})
+
+	t.Run("VerifyRegistrationOTP Validation Failure (Invalid OTP Length)", func(t *testing.T) {
+		invalidBody, _ := json.Marshal(dto.VerifyPhoneOTPRequest{
+			Phone: "9876543210",
+			OTP:   "123", // Must be 6 digits
+		})
+
+		req := httptest.NewRequest(http.MethodPost, "/auth/verify-otp", bytes.NewBuffer(invalidBody))
+		w := httptest.NewRecorder()
+
+		uc.VerifyRegistrationOTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status 400 Bad Request, got %d", w.Code)
+		}
+	})
+
+	t.Run("Register Validation Failure (Missing Verification Token)", func(t *testing.T) {
+		invalidBody, _ := json.Marshal(dto.UserRegisterRequest{
+			FullName:          "Valid Name",
+			Email:             "valid@example.com",
+			Password:          "password123",
+			Phone:             "9876543210",
+			VerificationToken: "", // required
+		})
+
+		req := httptest.NewRequest(http.MethodPost, "/auth/register", bytes.NewBuffer(invalidBody))
+		w := httptest.NewRecorder()
+
+		uc.Register(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status 400 Bad Request, got %d", w.Code)
+		}
+	})
 }
 
