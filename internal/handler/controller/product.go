@@ -580,4 +580,24 @@ func (c *ProductController) DownloadImportTemplate(w http.ResponseWriter, r *htt
 	_, _ = w.Write(csvBytes)
 }
 
+// SuggestMasterImages searches master product image vault by barcode/SKU code or product name keywords
+func (c *ProductController) SuggestMasterImages(w http.ResponseWriter, r *http.Request) {
+	code := r.URL.Query().Get("code")
+	if code == "" {
+		code = r.URL.Query().Get("sku")
+	}
+	if code == "" {
+		code = r.URL.Query().Get("barcode")
+	}
+	name := r.URL.Query().Get("name")
+
+	items, err := c.productService.SuggestMasterImages(r.Context(), code, name)
+	if err != nil {
+		reuse.Error(w, http.StatusInternalServerError, "failed to query image vault")
+		return
+	}
+
+	reuse.Success(w, "Master product images retrieved successfully", items)
+}
+
 

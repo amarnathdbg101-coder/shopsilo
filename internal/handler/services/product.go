@@ -21,21 +21,39 @@ import (
 )
 
 type ProductService struct {
-	productRepo  *repository.ProductRepo
-	shopRepo     *repository.ShopRepo
-	categoryRepo *repository.CategoryRepo
+	productRepo    *repository.ProductRepo
+	shopRepo       *repository.ShopRepo
+	categoryRepo   *repository.CategoryRepo
+	mediaVaultRepo *repository.MediaVaultRepo
 }
 
 func NewProductService(
 	productRepo *repository.ProductRepo,
 	shopRepo *repository.ShopRepo,
 	categoryRepo *repository.CategoryRepo,
+	mediaVaultRepo ...*repository.MediaVaultRepo,
 ) *ProductService {
-	return &ProductService{
+	svc := &ProductService{
 		productRepo:  productRepo,
 		shopRepo:     shopRepo,
 		categoryRepo: categoryRepo,
 	}
+	if len(mediaVaultRepo) > 0 {
+		svc.mediaVaultRepo = mediaVaultRepo[0]
+	}
+	return svc
+}
+
+func (s *ProductService) SetMediaVaultRepo(repo *repository.MediaVaultRepo) {
+	s.mediaVaultRepo = repo
+}
+
+// SuggestMasterImages searches global vault for verified catalog images matching barcode/SKU or name
+func (s *ProductService) SuggestMasterImages(ctx context.Context, code string, name string) ([]model.ProductMediaVaultItem, error) {
+	if s.mediaVaultRepo == nil {
+		return []model.ProductMediaVaultItem{}, nil
+	}
+	return s.mediaVaultRepo.SuggestImages(ctx, code, name)
 }
 
 // resolveCategoryID accepts both the persisted UUID and the frontend-owned slug.
@@ -65,12 +83,26 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 		return nil, err
 	}
 
-	// 3. Enforce max 4 images (Cost & Storage efficiency rule)
-	if len(input.Images) > 4 {
+	sku := strings.TrimSpace(strings.ToUpper(input.SKU))
+	images := input.Images
+
+	// 3. Auto-inherit master image from vault if images array is empty and SKU is provided
+	if len(images) == 0 && sku != "" && s.mediaVaultRepo != nil {
+		if vaultItems, vErr := s.mediaVaultRepo.FindByProductCode(ctx, sku); vErr == nil && len(vaultItems) > 0 {
+			for _, vi := range vaultItems {
+				if vi.ImageURL != "" && len(images) < 4 {
+					images = append(images, vi.ImageURL)
+				}
+			}
+		}
+	}
+
+	// 4. Enforce max 4 images (Cost & Storage efficiency rule)
+	if len(images) > 4 {
 		return nil, ErrTooManyProductImages
 	}
 
-	// 4. Generate unique slug
+	// 5. Generate unique slug
 	slug := reuse.Slugify(input.Name)
 	if _, err := s.productRepo.FindBySlug(ctx, slug); err == nil {
 		r := rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -89,12 +121,12 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 		Name:              strings.TrimSpace(input.Name),
 		Slug:              slug,
 		Description:       strings.TrimSpace(input.Description),
-		SKU:               strings.TrimSpace(strings.ToUpper(input.SKU)),
+		SKU:               sku,
 		Price:             input.Price,
 		CostPrice:         input.CostPrice,
 		ComparePrice:      input.ComparePrice,
 		CategoryID:        categoryID,
-		Images:            input.Images,
+		Images:            images,
 		Weight:            input.Weight,
 		IsActive:          true,
 		IsFeatured:        input.IsFeatured,

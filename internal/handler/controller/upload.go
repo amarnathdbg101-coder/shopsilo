@@ -163,7 +163,15 @@ func (c *UploadController) UploadProductImages(w http.ResponseWriter, r *http.Re
 		files = append(files, f)
 	}
 
-	urls, err := c.service.UploadProductImages(r.Context(), claims.UserID, files, headers)
+	productCode := r.FormValue("product_code")
+	if productCode == "" {
+		productCode = r.FormValue("sku")
+	}
+	if productCode == "" {
+		productCode = r.FormValue("barcode")
+	}
+
+	urls, err := c.service.UploadProductImages(r.Context(), claims.UserID, files, headers, productCode)
 	if err != nil {
 		if errors.Is(err, reuse.ErrImageTooLarge) || errors.Is(err, reuse.ErrInvalidImageType) {
 			reuse.Error(w, http.StatusBadRequest, err.Error())

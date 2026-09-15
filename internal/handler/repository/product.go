@@ -1501,12 +1501,42 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 
 	rGenerator := rand.New(rand.NewSource(time.Now().UnixNano()))
 
+	// Batch lookup existing master images from product_media_vault for these SKUs
+	skuList := make([]string, 0, len(items))
+	for _, it := range items {
+		cleanS := strings.ToUpper(strings.TrimSpace(it.SKU))
+		if cleanS != "" {
+			skuList = append(skuList, cleanS)
+		}
+	}
+
+	vaultImages := make(map[string]string)
+	if len(skuList) > 0 {
+		vRows, vErr := tx.Query(ctx, `
+			SELECT UPPER(product_code), image_url 
+			FROM product_media_vault 
+			WHERE UPPER(product_code) = ANY($1) 
+			ORDER BY is_verified_master DESC, reference_count DESC
+		`, skuList)
+		if vErr == nil {
+			defer vRows.Close()
+			for vRows.Next() {
+				var pCode, imgURL string
+				if err := vRows.Scan(&pCode, &imgURL); err == nil {
+					if _, exists := vaultImages[pCode]; !exists {
+						vaultImages[pCode] = imgURL
+					}
+				}
+			}
+		}
+	}
+
 	insertQuery := `
 		INSERT INTO products (
 			shop_id, name, slug, description, sku, price, cost_price, compare_price,
 			category_id, images, weight, is_active, is_featured, tags, attributes, created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, '[]'::jsonb, 0, true, false, '{}'::text[], '{}'::jsonb, NOW(), NOW())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9::jsonb, 0, true, false, '{}'::text[], '{}'::jsonb, NOW(), NOW())
 		RETURNING id
 	`
 
@@ -1540,6 +1570,11 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 			catID = item.CategoryID
 		}
 
+		imagesJSON := "[]"
+		if matchedImg, found := vaultImages[sku]; found && matchedImg != "" {
+			imagesJSON = fmt.Sprintf(`["%s"]`, matchedImg)
+		}
+
 		var productID string
 		err := tx.QueryRow(
 			ctx,
@@ -1552,6 +1587,7 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 			item.Price,
 			item.CostPrice,
 			catID,
+			imagesJSON,
 		).Scan(&productID)
 
 		if err != nil {
@@ -1571,6 +1607,7 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 					item.Price,
 					item.CostPrice,
 					catID,
+					imagesJSON,
 				).Scan(&productID)
 			}
 			if err != nil {
