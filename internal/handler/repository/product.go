@@ -7,8 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/rand"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
+	"shopMe/internal/reuse"
+	"shopMe/internal/utils"
 	"sort"
 	"strings"
 	"time"
@@ -182,7 +185,7 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 func (r *ProductRepo) FindByID(ctx context.Context, id string) (*model.Product, error) {
 	query := `
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
-		       p.category_id, p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
+		       COALESCE(p.category_id::text, ''), COALESCE(p.images, '[]'::jsonb), COALESCE(p.weight, 0), p.is_active, p.is_featured, COALESCE(p.tags, '{}'), COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1),
 		       COALESCE(p.floor_price, 0), COALESCE(p.allow_bargain, true)
 		FROM products p
@@ -252,7 +255,7 @@ func (r *ProductRepo) FindByIDs(ctx context.Context, shopID string, ids []string
 
 	query := `
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
-		       p.category_id, p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
+		       COALESCE(p.category_id::text, ''), COALESCE(p.images, '[]'::jsonb), COALESCE(p.weight, 0), p.is_active, p.is_featured, COALESCE(p.tags, '{}'), COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1),
 		       COALESCE(p.floor_price, 0), COALESCE(p.allow_bargain, true)
 		FROM products p
@@ -327,7 +330,7 @@ func (r *ProductRepo) FindByIDs(ctx context.Context, shopID string, ids []string
 func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*model.Product, error) {
 	query := `
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
-		       p.category_id, p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
+		       COALESCE(p.category_id::text, ''), COALESCE(p.images, '[]'::jsonb), COALESCE(p.weight, 0), p.is_active, p.is_featured, COALESCE(p.tags, '{}'), COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
@@ -390,7 +393,7 @@ func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*model.Produ
 func (r *ProductRepo) FindBySKU(ctx context.Context, shopID, sku string) (*model.Product, error) {
 	query := `
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
-		       p.category_id, p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
+		       COALESCE(p.category_id::text, ''), COALESCE(p.images, '[]'::jsonb), COALESCE(p.weight, 0), p.is_active, p.is_featured, COALESCE(p.tags, '{}'), COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
@@ -473,16 +476,80 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 	}
 
 	if filter.CategoryID != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("p.category_id = $%d", argIdx))
-		args = append(args, filter.CategoryID)
+		catTerm := strings.TrimSpace(filter.CategoryID)
+
+		var catID, catName, catSlug string
+		_ = r.db.QueryRow(ctx, `SELECT COALESCE(id::text, ''), COALESCE(name, ''), COALESCE(slug, '') FROM categories WHERE id::text = $1 OR slug ILIKE $1 OR name ILIKE $1 LIMIT 1`, catTerm).Scan(&catID, &catName, &catSlug)
+
+		targetID := catTerm
+		if catID != "" {
+			targetID = catID
+		}
+
+		var catOrs []string
+		// Direct category ID match
+		catOrs = append(catOrs, fmt.Sprintf("p.category_id::text = $%d", argIdx))
+		args = append(args, targetID)
 		argIdx++
+
+		if catSlug != "" {
+			catOrs = append(catOrs, fmt.Sprintf("(p.category_id::text = $%d OR p.category_id IN (SELECT id FROM categories WHERE slug ILIKE $%d))", argIdx, argIdx))
+			args = append(args, catSlug)
+			argIdx++
+		}
+
+		// Tokenized and Hinglish keyword fallback for unassigned or legacy products
+		keywordSource := catName
+		if keywordSource == "" {
+			keywordSource = catSlug
+		}
+		if keywordSource == "" {
+			keywordSource = catTerm
+		}
+
+		// Replace & with space
+		cleanSource := strings.ReplaceAll(keywordSource, "&", " ")
+		cleanSource = strings.ReplaceAll(cleanSource, "-", " ")
+		groups := utils.ExpandHinglishSearchGroups(cleanSource)
+		for _, g := range groups {
+			for _, term := range g.Terms {
+				term = strings.TrimSpace(term)
+				if len(term) < 3 || term == "and" || term == "the" || term == "care" || term == "food" {
+					continue
+				}
+				wild := "%" + term + "%"
+				catOrs = append(catOrs, fmt.Sprintf("(p.name ILIKE $%d OR p.description ILIKE $%d OR p.tags::text ILIKE $%d)", argIdx, argIdx, argIdx))
+				args = append(args, wild)
+				argIdx++
+			}
+		}
+
+		if len(catOrs) > 0 {
+			whereClauses = append(whereClauses, "("+strings.Join(catOrs, " OR ")+")")
+		}
 	}
 
 	if filter.Search != "" {
-		searchTerm := "%" + strings.TrimSpace(filter.Search) + "%"
-		whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR p.sku ILIKE $%d OR p.description ILIKE $%d OR p.slug ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
-		args = append(args, searchTerm)
-		argIdx++
+		groups := utils.ExpandHinglishSearchGroups(filter.Search)
+		if len(groups) > 0 {
+			for _, group := range groups {
+				var groupOrs []string
+				for _, term := range group.Terms {
+					wild := "%" + term + "%"
+					groupOrs = append(groupOrs, fmt.Sprintf("(p.name ILIKE $%d OR p.sku ILIKE $%d OR p.description ILIKE $%d OR p.slug ILIKE $%d OR p.tags::text ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx))
+					args = append(args, wild)
+					argIdx++
+				}
+				if len(groupOrs) > 0 {
+					whereClauses = append(whereClauses, "("+strings.Join(groupOrs, " OR ")+")")
+				}
+			}
+		} else {
+			searchTerm := "%" + strings.TrimSpace(filter.Search) + "%"
+			whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR p.sku ILIKE $%d OR p.description ILIKE $%d OR p.slug ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
+			args = append(args, searchTerm)
+			argIdx++
+		}
 	}
 
 	if filter.MinPrice > 0 {
@@ -503,9 +570,62 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 		argIdx++
 	}
 
+	// Location & Distance Range Filter (strictly limits database scanning to shops within radius)
+	hasGeoFilter := filter.ShopID == "" && filter.Lat != nil && filter.Lng != nil
+	if hasGeoFilter {
+		radius := 10.0
+		if filter.RadiusKm != nil && *filter.RadiusKm > 0 {
+			radius = *filter.RadiusKm
+		}
+		lat := *filter.Lat
+		lng := *filter.Lng
+
+		latDiff := radius / 111.0
+		cosLat := math.Cos(lat * math.Pi / 180.0)
+		if cosLat == 0 {
+			cosLat = 0.0001
+		}
+		lngDiff := radius / (111.0 * math.Abs(cosLat))
+		minLat, maxLat := lat-latDiff, lat+latDiff
+		minLng, maxLng := lng-lngDiff, lng+lngDiff
+
+		geoSubquery := fmt.Sprintf(`p.shop_id IN (
+			SELECT id FROM shops
+			WHERE is_active = true AND status = 'active'
+			  AND latitude BETWEEN %f AND %f
+			  AND longitude BETWEEN %f AND %f
+			  AND (6371 * acos(LEAST(1.0, GREATEST(-1.0,
+				  cos(radians(%f)) * cos(radians(latitude)) * cos(radians(longitude) - radians(%f)) +
+				  sin(radians(%f)) * sin(radians(latitude))
+			  )))) <= %f
+		)`, minLat, maxLat, minLng, maxLng, lat, lng, lat, radius)
+
+		whereClauses = append(whereClauses, geoSubquery)
+	} else if filter.ShopID == "" && strings.TrimSpace(filter.City) != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("p.shop_id IN (SELECT id FROM shops WHERE is_active = true AND status = 'active' AND city ILIKE $%d)", argIdx))
+		args = append(args, "%"+strings.TrimSpace(filter.City)+"%")
+		argIdx++
+	}
+
 	whereSQL := strings.Join(whereClauses, " AND ")
 
+	// 1. Get total count first (more efficient than COUNT(*) OVER() in PostgreSQL for large sets)
+	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM products p WHERE %s`, whereSQL)
+	var totalCount int
+	err := r.db.QueryRow(ctx, countQuery, args...).Scan(&totalCount)
+	if err != nil {
+		r.logger.Error("failed to count products", zap.Error(err))
+		return nil, 0, err
+	}
+
+	if totalCount == 0 {
+		return []*model.Product{}, 0, nil
+	}
+
 	orderBy := "p.created_at DESC"
+	if hasGeoFilter {
+		orderBy = fmt.Sprintf("((s.latitude - %f)*(s.latitude - %f) + (s.longitude - %f)*(s.longitude - %f)) ASC, p.created_at DESC", *filter.Lat, *filter.Lat, *filter.Lng, *filter.Lng)
+	}
 	switch filter.SortBy {
 	case "price_asc":
 		orderBy = "p.price ASC"
@@ -521,11 +641,10 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 
 	query := fmt.Sprintf(`
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
-		       p.category_id, p.images, COALESCE(p.weight, 0), p.is_active, p.is_featured, p.tags, COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
+		       COALESCE(p.category_id::text, ''), COALESCE(p.images, '[]'::jsonb), COALESCE(p.weight, 0), p.is_active, p.is_featured, COALESCE(p.tags, '{}'), COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1),
 		       COALESCE(s.name, ''), COALESCE(s.slug, ''), COALESCE(s.phone, ''), COALESCE(s.address, ''), COALESCE(s.city, ''),
-		       s.latitude, s.longitude, COALESCE(c.name, ''),
-		       COUNT(*) OVER() AS total_count
+		       s.latitude, s.longitude, COALESCE(c.name, '')
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
 		LEFT JOIN shops s ON s.id = p.shop_id
@@ -545,7 +664,6 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 	defer rows.Close()
 
 	var products []*model.Product
-	totalCount := 0
 
 	for rows.Next() {
 		p := &model.Product{}
@@ -582,7 +700,6 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 			&p.ShopLatitude,
 			&p.ShopLongitude,
 			&p.CategoryName,
-			&totalCount,
 		)
 		if err != nil {
 			r.logger.Error("failed to scan product row", zap.Error(err))
@@ -626,12 +743,19 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 		attributesJSON = []byte("{}")
 	}
 
+	var catID *string
+	if strings.TrimSpace(p.CategoryID) != "" {
+		c := strings.TrimSpace(p.CategoryID)
+		catID = &c
+	}
+
 	query := `
 		UPDATE products
 		SET name = $1, slug = $2, description = $3, sku = $4, price = $5, cost_price = $6, compare_price = $7,
-		    category_id = $8, images = $9, weight = $10, is_active = $11, is_featured = $12, tags = $13, attributes = $14, updated_at = NOW()
-		WHERE id = $15 AND shop_id = $16
-		RETURNING id, shop_id, name, slug, COALESCE(description, ''), sku, price, COALESCE(cost_price, 0), COALESCE(compare_price, 0), category_id, images, COALESCE(weight, 0), is_active, is_featured, tags, COALESCE(attributes, '{}'::jsonb), created_at, updated_at
+		    category_id = $8, images = $9, weight = $10, is_active = $11, is_featured = $12, tags = $13, attributes = $14,
+		    floor_price = $15, allow_bargain = $16, updated_at = NOW()
+		WHERE id = $17 AND shop_id = $18
+		RETURNING id, shop_id, name, slug, COALESCE(description, ''), sku, price, COALESCE(cost_price, 0), COALESCE(compare_price, 0), COALESCE(category_id::text, ''), images, COALESCE(weight, 0), is_active, is_featured, tags, COALESCE(attributes, '{}'::jsonb), created_at, updated_at, COALESCE(floor_price, 0), COALESCE(allow_bargain, true)
 	`
 	updated := &model.Product{}
 	var imagesBytes, attributesBytes []byte
@@ -646,13 +770,15 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 		p.Price,
 		p.CostPrice,
 		p.ComparePrice,
-		p.CategoryID,
+		catID,
 		imagesJSON,
 		p.Weight,
 		p.IsActive,
 		p.IsFeatured,
 		p.Tags,
 		attributesJSON,
+		p.FloorPrice,
+		p.AllowBargain,
 		p.ID,
 		p.ShopID,
 	).Scan(
@@ -674,6 +800,8 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 		&attributesBytes,
 		&updated.CreatedAt,
 		&updated.UpdatedAt,
+		&updated.FloorPrice,
+		&updated.AllowBargain,
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -747,13 +875,15 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 }
 
 func (r *ProductRepo) Delete(ctx context.Context, id, shopID string) error {
+	// Soft delete product so past POS sales, receipts, and Khata bills remain intact!
 	query := `
-		DELETE FROM products
+		UPDATE products
+		SET is_active = false, updated_at = NOW()
 		WHERE id = $1 AND shop_id = $2
 	`
 	cmdTag, err := r.db.Exec(ctx, query, id, shopID)
 	if err != nil {
-		r.logger.Error("failed to delete product", zap.Error(err), zap.String("product_id", id))
+		r.logger.Error("failed to soft delete product", zap.Error(err), zap.String("product_id", id))
 		return err
 	}
 	if cmdTag.RowsAffected() == 0 {
@@ -844,6 +974,17 @@ func (r *ProductRepo) GetLowStockProducts(ctx context.Context, shopID string) ([
 	}
 
 	return items, nil
+}
+
+func (r *ProductRepo) DismissStockAlert(ctx context.Context, shopID, productID string) error {
+	query := `
+		UPDATE inventory i
+		SET low_stock_threshold = -1, updated_at = NOW()
+		FROM products p
+		WHERE i.product_id = p.id AND p.id = $1 AND p.shop_id = $2
+	`
+	_, err := r.db.Exec(ctx, query, productID, shopID)
+	return err
 }
 
 // GetMonthlyProfitAnalytics aggregates sales, revenue, cost and net profit for a shop in a specific month (combining POS bills and completed reservations).
@@ -1034,6 +1175,15 @@ func (r *ProductRepo) FindNearbyProducts(
 	whereClauses = append(whereClauses, "s.latitude IS NOT NULL AND s.longitude IS NOT NULL")
 	whereClauses = append(whereClauses, "(i.quantity - i.reserved_quantity) > 0")
 
+	// Pre-filter with a bounding box for performance optimization
+	latDiff := radiusKm / 111.0
+	lngDiff := radiusKm / (111.0 * math.Cos(lat*math.Pi/180.0))
+	minLat, maxLat := lat-latDiff, lat+latDiff
+	minLng, maxLng := lng-lngDiff, lng+lngDiff
+
+	whereClauses = append(whereClauses, fmt.Sprintf("s.latitude BETWEEN %f AND %f", minLat, maxLat))
+	whereClauses = append(whereClauses, fmt.Sprintf("s.longitude BETWEEN %f AND %f", minLng, maxLng))
+
 	// Haversine distance condition in km
 	distanceFormula := `(6371 * acos(LEAST(1.0, GREATEST(-1.0,
 		cos(radians($1)) * cos(radians(s.latitude)) * cos(radians(s.longitude) - radians($2)) +
@@ -1048,9 +1198,25 @@ func (r *ProductRepo) FindNearbyProducts(
 
 	trimmedQ := strings.TrimSpace(query)
 	if trimmedQ != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR p.description ILIKE $%d OR p.sku ILIKE $%d)", argIdx, argIdx, argIdx))
-		args = append(args, "%"+trimmedQ+"%")
-		argIdx++
+		groups := utils.ExpandHinglishSearchGroups(trimmedQ)
+		if len(groups) > 0 {
+			for _, group := range groups {
+				var groupOrs []string
+				for _, term := range group.Terms {
+					wild := "%" + term + "%"
+					groupOrs = append(groupOrs, fmt.Sprintf("(p.name ILIKE $%d OR p.description ILIKE $%d OR p.sku ILIKE $%d)", argIdx, argIdx, argIdx))
+					args = append(args, wild)
+					argIdx++
+				}
+				if len(groupOrs) > 0 {
+					whereClauses = append(whereClauses, "("+strings.Join(groupOrs, " OR ")+")")
+				}
+			}
+		} else {
+			whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR p.description ILIKE $%d OR p.sku ILIKE $%d)", argIdx, argIdx, argIdx))
+			args = append(args, "%"+trimmedQ+"%")
+			argIdx++
+		}
 	}
 
 	trimmedCat := strings.TrimSpace(category)
@@ -1062,13 +1228,30 @@ func (r *ProductRepo) FindNearbyProducts(
 
 	whereSQL := strings.Join(whereClauses, " AND ")
 
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*)
+		FROM products p
+		JOIN shops s ON p.shop_id = s.id
+		JOIN inventory i ON p.id = i.product_id
+		WHERE %s
+	`, whereSQL)
+
+	var totalCount int
+	if err := r.db.QueryRow(ctx, countQuery, args...).Scan(&totalCount); err != nil {
+		r.logger.Error("failed to count nearby products", zap.Error(err))
+		return nil, 0, err
+	}
+
+	if totalCount == 0 {
+		return []*dto.NearbyProductItem{}, 0, nil
+	}
+
 	sqlQuery := fmt.Sprintf(`
 		SELECT
 			p.id, p.name, p.slug, p.price, p.images, (i.quantity - i.reserved_quantity) AS avail_qty,
 			s.id AS shop_id, s.name AS shop_name, s.slug AS shop_slug, s.address AS shop_address, s.phone AS shop_phone,
 			s.is_open, s.opening_time, s.closing_time, s.weekly_off,
-			%s AS distance_km,
-			COUNT(*) OVER() AS total_count
+			%s AS distance_km
 		FROM products p
 		JOIN shops s ON p.shop_id = s.id
 		JOIN inventory i ON p.id = i.product_id
@@ -1087,7 +1270,6 @@ func (r *ProductRepo) FindNearbyProducts(
 	defer rows.Close()
 
 	var items []*dto.NearbyProductItem
-	totalCount := 0
 
 	for rows.Next() {
 		item := &dto.NearbyProductItem{}
@@ -1111,7 +1293,6 @@ func (r *ProductRepo) FindNearbyProducts(
 			&closeTime,
 			&weeklyOff,
 			&item.DistanceKm,
-			&totalCount,
 		)
 		if err != nil {
 			r.logger.Error("failed to scan nearby product row", zap.Error(err))
@@ -1218,7 +1399,7 @@ func (r *ProductRepo) CreateBargainDeal(ctx context.Context, deal *model.Product
 // GetValidBargainDeal fetches an active unexpired bargain deal for checkout redemption.
 func (r *ProductRepo) GetValidBargainDeal(ctx context.Context, productID, dealCode string) (*model.ProductBargainDeal, error) {
 	query := `
-		SELECT id, product_id, shop_id, customer_phone, COALESCE(customer_name, ''),
+		SELECT id, COALESCE(product_id::text, ''), shop_id, customer_phone, COALESCE(customer_name, ''),
 		       deal_code, offered_price, agreed_price, bundle_quantity, status, expires_at, created_at
 		FROM product_bargain_deals
 		WHERE product_id = $1 AND UPPER(deal_code) = UPPER($2) AND status = 'accepted' AND expires_at > NOW()
@@ -1288,6 +1469,101 @@ func (r *ProductRepo) FindActiveProductsByTokens(ctx context.Context, shopID str
 		products = append(products, &p)
 	}
 	return products, nil
+}
+
+// BulkImportProducts executes a high-speed batch insert transaction for importing 500+ products in seconds.
+func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, items []dto.BulkImportProductItem) (*dto.BulkImportResponse, error) {
+	if len(items) == 0 {
+		return &dto.BulkImportResponse{TotalRows: 0, ImportedCount: 0, SkippedCount: 0, Errors: []string{}}, nil
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin bulk import transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var importedCount int
+	var skippedCount int
+	var errMsgs []string
+
+	rGenerator := rand.New(rand.NewSource(time.Now().UnixNano()))
+
+	for idx, item := range items {
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			skippedCount++
+			errMsgs = append(errMsgs, fmt.Sprintf("Row %d: Product name is empty", idx+1))
+			continue
+		}
+
+		if item.Price <= 0 {
+			skippedCount++
+			errMsgs = append(errMsgs, fmt.Sprintf("Row %d: Product price must be greater than 0", idx+1))
+			continue
+		}
+
+		sku := strings.TrimSpace(strings.ToUpper(item.SKU))
+		if sku == "" {
+			sku = fmt.Sprintf("SKU-%d-%d", time.Now().Unix()%10000, rGenerator.Intn(9000)+1000)
+		}
+
+		slug := reuse.Slugify(name)
+		slug = fmt.Sprintf("%s-%d", slug, rGenerator.Intn(900000)+10000)
+
+		// Insert product
+		insertQuery := `
+			INSERT INTO products (shop_id, name, slug, description, sku, price, cost_price, is_active, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, true, NOW(), NOW())
+			RETURNING id
+		`
+		var productID string
+		err := tx.QueryRow(ctx, insertQuery, shopID, name, slug, strings.TrimSpace(item.Description), sku, item.Price, item.CostPrice).Scan(&productID)
+		if err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+				// Retry with unique fallback SKU/Slug
+				altSKU := fmt.Sprintf("%s-%d", sku, rGenerator.Intn(900)+100)
+				altSlug := fmt.Sprintf("%s-alt-%d", slug, rGenerator.Intn(900)+100)
+				err = tx.QueryRow(ctx, insertQuery, shopID, name, altSlug, strings.TrimSpace(item.Description), altSKU, item.Price, item.CostPrice).Scan(&productID)
+			}
+			if err != nil {
+				skippedCount++
+				errMsgs = append(errMsgs, fmt.Sprintf("Row %d ('%s'): %v", idx+1, name, err))
+				continue
+			}
+		}
+
+		// Insert inventory
+		stock := item.StockQuantity
+		if stock < 0 {
+			stock = 0
+		}
+		minStock := item.MinStock
+		if minStock <= 0 {
+			minStock = 5
+		}
+
+		invQuery := `
+			INSERT INTO inventory (product_id, quantity, reserved_quantity, low_stock_threshold, updated_at)
+			VALUES ($1, $2, 0, $3, NOW())
+			ON CONFLICT (product_id) DO UPDATE SET quantity = EXCLUDED.quantity, low_stock_threshold = EXCLUDED.low_stock_threshold
+		`
+		_, _ = tx.Exec(ctx, invQuery, productID, stock, minStock)
+
+		importedCount++
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit bulk import transaction: %w", err)
+	}
+
+	return &dto.BulkImportResponse{
+		TotalRows:     len(items),
+		ImportedCount: importedCount,
+		SkippedCount:  skippedCount,
+		Errors:        errMsgs,
+	}, nil
 }
 
 

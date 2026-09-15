@@ -11,6 +11,7 @@ import (
 	"shopMe/internal/middleware"
 	"shopMe/internal/reuse"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -204,6 +205,20 @@ func (c *ProductController) List(w http.ResponseWriter, r *http.Request) {
 		limit = 12
 	}
 
+	var lat, lng, radiusKm *float64
+	if latVal, err := strconv.ParseFloat(query.Get("lat"), 64); err == nil {
+		lat = &latVal
+	}
+	if lngVal, err := strconv.ParseFloat(query.Get("lng"), 64); err == nil {
+		lng = &lngVal
+	}
+	if radVal, err := strconv.ParseFloat(query.Get("radius_km"), 64); err == nil && radVal > 0 {
+		radiusKm = &radVal
+	} else if radVal, err := strconv.ParseFloat(query.Get("radius"), 64); err == nil && radVal > 0 {
+		radiusKm = &radVal
+	}
+	city := query.Get("city")
+
 	filter := dto.ProductFilter{
 		Search:     search,
 		CategoryID: categoryID,
@@ -211,6 +226,61 @@ func (c *ProductController) List(w http.ResponseWriter, r *http.Request) {
 		MinPrice:   minPrice,
 		MaxPrice:   maxPrice,
 		SortBy:     sortBy,
+		Page:       page,
+		Limit:      limit,
+		Lat:        lat,
+		Lng:        lng,
+		RadiusKm:   radiusKm,
+		City:       city,
+	}
+
+	result, err := c.productService.ListProducts(r.Context(), filter)
+	if err != nil {
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Products retrieved successfully", result)
+}
+
+// ListMyShopProducts handles retrieving all products belonging strictly to the logged-in shop keeper (Protected - Owner)
+func (c *ProductController) ListMyShopProducts(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	shop, err := c.shopService.GetMyShop(r.Context(), claims.UserID)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you must register a shop first")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	query := r.URL.Query()
+	page, _ := strconv.Atoi(query.Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	limit, _ := strconv.Atoi(query.Get("limit"))
+	if limit < 1 || limit > 100 {
+		limit = 100
+	}
+
+	search := query.Get("q")
+	if search == "" {
+		search = query.Get("search")
+	}
+
+	filter := dto.ProductFilter{
+		ShopID:     shop.ID,
+		Search:     search,
+		CategoryID: query.Get("category_id"),
+		SortBy:     query.Get("sort_by"),
 		Page:       page,
 		Limit:      limit,
 	}
@@ -221,7 +291,7 @@ func (c *ProductController) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reuse.Success(w, "Products retrieved successfully", result)
+	reuse.Success(w, "Shop products retrieved successfully", result)
 }
 
 // ListByShop handles retrieving all products for a specific shop by slug (Public)
@@ -249,12 +319,17 @@ func (c *ProductController) ListByShop(w http.ResponseWriter, r *http.Request) {
 	}
 	limit, _ := strconv.Atoi(query.Get("limit"))
 	if limit < 1 || limit > 100 {
-		limit = 12
+		limit = 16
+	}
+
+	search := query.Get("q")
+	if search == "" {
+		search = query.Get("search")
 	}
 
 	filter := dto.ProductFilter{
 		ShopID:     shop.ID,
-		Search:     query.Get("q"),
+		Search:     search,
 		CategoryID: query.Get("category_id"),
 		SortBy:     query.Get("sort_by"),
 		Page:       page,
@@ -427,6 +502,82 @@ func (c *ProductController) GetPOSBargainAssist(w http.ResponseWriter, r *http.R
 	}
 
 	reuse.Success(w, "POS bargain assist margin advice retrieved successfully", res)
+}
+
+// BulkImport handles batch importing 500+ products via CSV file or JSON array (Protected - Shop Owner)
+func (c *ProductController) BulkImport(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	contentType := r.Header.Get("Content-Type")
+
+	// 1. Handle multipart CSV file upload
+	if strings.Contains(contentType, "multipart/form-data") {
+		if err := r.ParseMultipartForm(10 * 1024 * 1024); err != nil { // 10MB limit
+			reuse.Error(w, http.StatusBadRequest, "failed to parse multipart form")
+			return
+		}
+
+		file, _, err := r.FormFile("file")
+		if err != nil {
+			file, _, err = r.FormFile("csv")
+		}
+		if err != nil {
+			reuse.Error(w, http.StatusBadRequest, "CSV file is required under field 'file' or 'csv'")
+			return
+		}
+		defer file.Close()
+
+		res, err := c.productService.BulkImportProductsFromCSV(r.Context(), claims.UserID, file)
+		if err != nil {
+			if errors.Is(err, services.ErrShopNotFound) {
+				reuse.Error(w, http.StatusNotFound, "you must register a shop first")
+				return
+			}
+			reuse.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		reuse.Created(w, "Bulk product CSV import completed successfully", res)
+		return
+	}
+
+	// 2. Handle JSON array body import
+	var items []dto.BulkImportProductItem
+	if err := json.NewDecoder(r.Body).Decode(&items); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body (expected CSV file or JSON array)")
+		return
+	}
+
+	if len(items) == 0 {
+		reuse.Error(w, http.StatusBadRequest, "at least one product item is required for bulk import")
+		return
+	}
+
+	res, err := c.productService.BulkImportProductsFromJSON(r.Context(), claims.UserID, items)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you must register a shop first")
+			return
+		}
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Created(w, "Bulk product JSON import completed successfully", res)
+}
+
+// DownloadImportTemplate serves a ready-to-use sample CSV import template file (Protected / Public)
+func (c *ProductController) DownloadImportTemplate(w http.ResponseWriter, r *http.Request) {
+	csvBytes := c.productService.GenerateCSVImportTemplate()
+
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", `attachment; filename="shopsilo_products_import_template.csv"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(csvBytes)
 }
 
 

@@ -97,3 +97,45 @@ func ParseTokenForRefresh(tokenStr string) (string, error) {
 	return userID, nil
 }
 
+// PhoneVerificationClaims stores the verified phone and verification record ID
+type PhoneVerificationClaims struct {
+	Phone          string `json:"phone"`
+	VerificationID string `json:"verification_id"`
+	Purpose        string `json:"purpose"` // "phone_registration"
+	jwt.RegisteredClaims
+}
+
+// GeneratePhoneVerificationToken generates a short-lived (15 minute) cryptographically signed token
+// indicating that the specified phone number has been successfully verified via OTP.
+func GeneratePhoneVerificationToken(phone, verificationID, secret string) (string, error) {
+	claims := PhoneVerificationClaims{
+		Phone:          phone,
+		VerificationID: verificationID,
+		Purpose:        "phone_registration",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(secret))
+}
+
+// VerifyPhoneVerificationToken verifies the signature, expiration, and claims of a phone verification token.
+func VerifyPhoneVerificationToken(tokenStr, secret string) (*PhoneVerificationClaims, error) {
+	claims := &PhoneVerificationClaims{}
+	token, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
+		return []byte(secret), nil
+	})
+	if err != nil || !token.Valid {
+		return nil, errors.New("invalid or expired phone verification token")
+	}
+	if claims.Purpose != "phone_registration" || claims.Phone == "" || claims.VerificationID == "" {
+		return nil, errors.New("invalid phone verification token claims")
+	}
+	return claims, nil
+}
+

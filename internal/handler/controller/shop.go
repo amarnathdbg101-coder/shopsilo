@@ -193,7 +193,30 @@ func (c *ShopController) DeleteMyShop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reuse.Success(w, "Shop deleted successfully and account reverted to customer role", map[string]string{
+	reuse.Success(w, "Shop placed in 30-day quarantine vault. Account reverted to customer role.", map[string]string{
+		"access_token": newToken,
+	})
+}
+
+// RestoreMyShop handles 30-day quarantine vault shop restoration (Protected - Owner)
+func (c *ShopController) RestoreMyShop(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	newToken, err := c.service.RestoreMyShop(r.Context(), claims.UserID, claims.Email)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "no shop found in quarantine vault")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Shop restored successfully from 30-day vault", map[string]string{
 		"access_token": newToken,
 	})
 }

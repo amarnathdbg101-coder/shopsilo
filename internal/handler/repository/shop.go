@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
+	"shopMe/internal/utils"
 	"strings"
 	"time"
 
@@ -27,28 +28,52 @@ func computeShopOpenStatus(s *model.Shop) {
 	if s == nil {
 		return
 	}
+	// If shop is inactive or shopkeeper manually closed it, it is CLOSED.
 	if !s.IsOpen || !s.IsActive {
 		s.IsCurrentlyOpen = false
 		return
 	}
 
-	now := time.Now()
-	// Check weekly off day
-	if s.WeeklyOff != "" && strings.EqualFold(now.Weekday().String(), strings.TrimSpace(s.WeeklyOff)) {
-		s.IsCurrentlyOpen = false
-		return
+	// Always compute operating hours in Indian Standard Time (Asia/Kolkata = UTC+5:30)
+	loc, err := time.LoadLocation("Asia/Kolkata")
+	var now time.Time
+	if err == nil {
+		now = time.Now().In(loc)
+	} else {
+		// Fallback to UTC+5:30 offset if tzdata is missing on minimal Linux container images
+		now = time.Now().UTC().Add(5*time.Hour + 30*time.Minute)
+	}
+
+	// Check weekly off day (e.g. "Sunday")
+	weeklyOff := strings.TrimSpace(s.WeeklyOff)
+	if weeklyOff != "" && !strings.EqualFold(weeklyOff, "none") && !strings.EqualFold(weeklyOff, "null") {
+		if strings.EqualFold(now.Weekday().String(), weeklyOff) {
+			s.IsCurrentlyOpen = false
+			return
+		}
 	}
 
 	// Check opening and closing times if configured (expected format HH:MM, e.g. "09:00", "21:30")
-	if s.OpeningTime != "" && s.ClosingTime != "" {
+	openTime := strings.TrimSpace(s.OpeningTime)
+	closeTime := strings.TrimSpace(s.ClosingTime)
+
+	if openTime != "" && closeTime != "" {
 		curMinutes := now.Hour()*60 + now.Minute()
 		var openH, openM, closeH, closeM int
-		if n, _ := fmt.Sscanf(s.OpeningTime, "%d:%d", &openH, &openM); n == 2 {
-			if n2, _ := fmt.Sscanf(s.ClosingTime, "%d:%d", &closeH, &closeM); n2 == 2 {
+		if n, _ := fmt.Sscanf(openTime, "%d:%d", &openH, &openM); n == 2 {
+			if n2, _ := fmt.Sscanf(closeTime, "%d:%d", &closeH, &closeM); n2 == 2 {
 				openMinutes := openH*60 + openM
 				closeMinutes := closeH*60 + closeM
+
 				if openMinutes < closeMinutes {
+					// Standard same-day shift (e.g., 09:00 to 21:00)
 					if curMinutes < openMinutes || curMinutes >= closeMinutes {
+						s.IsCurrentlyOpen = false
+						return
+					}
+				} else if openMinutes > closeMinutes {
+					// Overnight shift (e.g., 20:00 to 02:00)
+					if curMinutes < openMinutes && curMinutes >= closeMinutes {
 						s.IsCurrentlyOpen = false
 						return
 					}
@@ -405,10 +430,26 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 	innerWhereClauses = append(innerWhereClauses, "status = 'active'")
 
 	if filter.Search != "" {
-		searchTerm := "%" + strings.TrimSpace(filter.Search) + "%"
-		innerWhereClauses = append(innerWhereClauses, fmt.Sprintf("(name ILIKE $%d OR category ILIKE $%d OR description ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
-		args = append(args, searchTerm)
-		argIdx++
+		groups := utils.ExpandHinglishSearchGroups(filter.Search)
+		if len(groups) > 0 {
+			for _, group := range groups {
+				var groupOrs []string
+				for _, term := range group.Terms {
+					wild := "%" + term + "%"
+					groupOrs = append(groupOrs, fmt.Sprintf("(name ILIKE $%d OR category ILIKE $%d OR description ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
+					args = append(args, wild)
+					argIdx++
+				}
+				if len(groupOrs) > 0 {
+					innerWhereClauses = append(innerWhereClauses, "("+strings.Join(groupOrs, " OR ")+")")
+				}
+			}
+		} else {
+			searchTerm := "%" + strings.TrimSpace(filter.Search) + "%"
+			innerWhereClauses = append(innerWhereClauses, fmt.Sprintf("(name ILIKE $%d OR category ILIKE $%d OR description ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
+			args = append(args, searchTerm)
+			argIdx++
+		}
 	}
 
 	if filter.Category != "" {
@@ -503,13 +544,33 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 		       is_open, is_active, status, flagged_count, suspension_reason,
 		       creation_ip, creation_user_agent, device_fingerprint,
 		       created_at, updated_at,
-		       distance_km,
-		       COUNT(*) OVER() AS total_count
+		       distance_km
 		FROM filtered_shops
 		%s
 		ORDER BY %s
 		LIMIT $%d OFFSET $%d
 	`, distanceExpr, innerWhereSQL, outerWhereSQL, orderBy, argIdx, argIdx+1)
+
+	countQuery := fmt.Sprintf(`
+		WITH filtered_shops AS (
+			SELECT id, %s AS distance_km
+			FROM shops
+			WHERE %s
+		)
+		SELECT COUNT(*)
+		FROM filtered_shops
+		%s
+	`, distanceExpr, innerWhereSQL, outerWhereSQL)
+
+	var totalCount int
+	if err := r.db.QueryRow(ctx, countQuery, args...).Scan(&totalCount); err != nil {
+		r.logger.Error("failed to count shops", zap.Error(err))
+		return nil, 0, err
+	}
+
+	if totalCount == 0 {
+		return []*model.Shop{}, 0, nil
+	}
 
 	args = append(args, limit, offset)
 
@@ -521,7 +582,6 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 	defer rows.Close()
 
 	var shops []*model.Shop
-	totalCount := 0
 
 	for rows.Next() {
 		s := &model.Shop{}
@@ -559,7 +619,6 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 			&s.CreatedAt,
 			&s.UpdatedAt,
 			&distKm,
-			&totalCount,
 		)
 		if err != nil {
 			r.logger.Error("failed to scan shop row", zap.Error(err))
@@ -746,13 +805,33 @@ func (r *ShopRepo) ToggleStatus(ctx context.Context, userID string, isOpen bool)
 }
 
 func (r *ShopRepo) DeleteWithTx(ctx context.Context, tx pgx.Tx, userID string) error {
+	// Genius Safety: Soft-delete shop and place in 30-day quarantine vault instead of immediate hard delete!
 	query := `
-		DELETE FROM shops
+		UPDATE shops
+		SET is_active = false, is_open = false, status = 'quarantined'
 		WHERE user_id = $1
 	`
 	cmdTag, err := tx.Exec(ctx, query, userID)
 	if err != nil {
-		r.logger.Error("failed to delete shop in tx", zap.Error(err), zap.String("user_id", userID))
+		r.logger.Error("failed to soft delete shop in tx", zap.Error(err), zap.String("user_id", userID))
+		return err
+	}
+	if cmdTag.RowsAffected() == 0 {
+		return ErrShopNotFound
+	}
+	return nil
+}
+
+func (r *ShopRepo) RestoreWithTx(ctx context.Context, tx pgx.Tx, userID string) error {
+	// Genius Restoration: Instantly restore soft-deleted quarantined shop!
+	query := `
+		UPDATE shops
+		SET is_active = true, is_open = true, status = 'active'
+		WHERE user_id = $1
+	`
+	cmdTag, err := tx.Exec(ctx, query, userID)
+	if err != nil {
+		r.logger.Error("failed to restore shop in tx", zap.Error(err), zap.String("user_id", userID))
 		return err
 	}
 	if cmdTag.RowsAffected() == 0 {

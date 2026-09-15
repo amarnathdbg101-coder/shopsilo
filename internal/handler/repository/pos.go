@@ -225,7 +225,7 @@ func (r *POSRepo) GetBillByNumber(ctx context.Context, billNumber string) (*mode
 
 	// Fetch items
 	itemsQuery := `
-		SELECT id, bill_id, product_id, product_name, COALESCE(product_sku, ''), quantity, unit_price, unit_cost, total_price
+		SELECT id, bill_id, COALESCE(product_id::text, ''), product_name, COALESCE(product_sku, ''), quantity, unit_price, unit_cost, total_price
 		FROM pos_bill_items
 		WHERE bill_id = $1
 		ORDER BY id ASC
@@ -253,6 +253,9 @@ func (r *POSRepo) GetBillByNumber(ctx context.Context, billNumber string) (*mode
 			return nil, err
 		}
 		bill.Items = append(bill.Items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return bill, nil
@@ -604,6 +607,18 @@ func (r *POSRepo) GetWeeklyScorecardData(ctx context.Context, shopID string) (*d
 	if currErr != nil {
 		return nil, currErr
 	}
+	if prevErr != nil {
+		return nil, prevErr
+	}
+	if khataErr != nil {
+		return nil, khataErr
+	}
+	if topErr != nil {
+		return nil, topErr
+	}
+	if stockErr != nil {
+		return nil, stockErr
+	}
 
 	if prevErr == nil && res.PreviousWeekRevenue > 0 {
 		diff := res.CurrentWeekRevenue - res.PreviousWeekRevenue
@@ -623,10 +638,6 @@ func (r *POSRepo) GetWeeklyScorecardData(ctx context.Context, shopID string) (*d
 		topProducts = []*dto.WeeklyTopProductItem{}
 	}
 	res.TopSellingProducts = topProducts
-
-	_ = khataErr
-	_ = topErr
-	_ = stockErr
 
 	return res, nil
 }
@@ -684,6 +695,9 @@ func (r *POSRepo) GetCustomerLastBasket(ctx context.Context, shopID, customerPho
 			ProductID: it.ProductID,
 			Quantity:  it.Quantity,
 		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	if basketItems == nil {
@@ -771,6 +785,57 @@ func (r *POSRepo) ProcessPOSReturnWithTx(ctx context.Context, tx pgx.Tx, shopID 
 
 	totalRefund = math.Round(totalRefund*100) / 100
 	return bill, totalRefund, restockedCount, nil
+}
+
+func (r *POSRepo) CancelBillWithTx(ctx context.Context, tx pgx.Tx, shopID, billNumber, reason string) (*model.POSBill, error) {
+	bill, err := r.GetBillByNumber(ctx, billNumber)
+	if err != nil {
+		return nil, fmt.Errorf("bill '%s' not found", billNumber)
+	}
+	if bill.ShopID != shopID {
+		return nil, errors.New("bill does not belong to your shop")
+	}
+
+	// 1. State Transition: update status = 'cancelled'
+	updateQuery := `
+		UPDATE pos_bills
+		SET status = 'cancelled', cancellation_reason = $1, cancelled_at = NOW()
+		WHERE id = $2 AND shop_id = $3
+	`
+	cleanReason := strings.TrimSpace(reason)
+	if cleanReason == "" {
+		cleanReason = "Cancelled by cashier at counter"
+	}
+
+	_, err = tx.Exec(ctx, updateQuery, cleanReason, bill.ID, shopID)
+	if err != nil {
+		r.logger.Error("failed to update bill status to cancelled", zap.Error(err), zap.String("bill_number", billNumber))
+		return nil, err
+	}
+
+	// 2. Restock all items on the bill back into inventory
+	batch := &pgx.Batch{}
+	for _, it := range bill.Items {
+		restockQuery := `
+			UPDATE inventory
+			SET quantity = quantity + $1, updated_at = NOW()
+			WHERE product_id = $2
+		`
+		batch.Queue(restockQuery, it.Quantity, it.ProductID)
+	}
+
+	br := tx.SendBatch(ctx, batch)
+	defer br.Close()
+
+	for range bill.Items {
+		if _, err := br.Exec(); err != nil {
+			r.logger.Error("failed to restock inventory on bill cancellation", zap.Error(err))
+			return nil, err
+		}
+	}
+
+	bill.Status = "cancelled"
+	return bill, nil
 }
 
 

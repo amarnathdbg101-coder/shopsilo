@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	MaxImageSizeBytes = 2 * 1024 * 1024 // 2MB strict limit to manage storage costs
+	MaxImageSizeBytes = 8 * 1024 * 1024 // 8MB limit to support large camera HD photos before backend auto-downscales them!
 )
 
 var (

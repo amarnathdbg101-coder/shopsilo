@@ -19,7 +19,9 @@ import (
 func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	// User layer
 	userRepo := repository.NewUserRepo(db, logger)
+	phoneVerificationRepo := repository.NewPhoneVerificationRepo(db, logger)
 	userService := services.NewUserService(userRepo)
+	userService.SetPhoneVerificationRepo(phoneVerificationRepo)
 	uc := controller.NewUserController(userService)
 
 	// Moderation & Anti-Abuse layer
@@ -71,8 +73,10 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 
 	// Khata layer (Customer credit & udhar book)
 	khataRepo := repository.NewKhataRepo(db, logger)
-	khataService := services.NewKhataService(khataRepo, shopRepo)
+	khataService := services.NewKhataService(khataRepo, shopRepo, userRepo)
+	userService.SetKhataRepo(khataRepo)
 	khatac := controller.NewKhataController(khataService)
+	custKhatac := controller.NewCustomerKhataController(khataService)
 
 	// Analytics layer (Monthly profit, Best/Worst/Old/New product matrix, Net Pocket Profit)
 	analyticsService := services.NewAnalyticsService(productRepo, shopRepo, expenseRepo)
@@ -83,6 +87,11 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	loyaltyService := services.NewLoyaltyService(loyaltyRepo, shopRepo, productRepo)
 	loyc := controller.NewLoyaltyController(loyaltyService)
 
+	// Telemetry & Error Audit layer
+	telemetryRepo := repository.NewTelemetryRepo(db, logger)
+	telemetryService := services.NewTelemetryService(telemetryRepo)
+	telc := controller.NewTelemetryController(telemetryService)
+
 	// AI Layer (Gemini Flash - Customer Shopping Sathi & Merchant Copilot)
 	aiService := services.NewAIService(shopRepo)
 	aic := controller.NewAIController(aiService)
@@ -91,6 +100,14 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	posRepo := repository.NewPOSRepo(db, logger)
 	posService := services.NewPOSService(posRepo, shopRepo, productRepo, khataRepo)
 	posc := controller.NewPOSController(posService)
+
+	// Real-Time WebSocket Layer
+	wsc := controller.NewWebSocketController(shopService, logger)
+
+	// Shop Staff & Cashier sub-account layer
+	staffRepo := repository.NewStaffRepo(db, logger)
+	staffService := services.NewStaffService(staffRepo, shopRepo)
+	staffc := controller.NewStaffController(staffService)
 
 	// Wire aggregated repos to shopService for unified batch endpoints
 	shopService.SetAggregatedRepos(categoryRepo, productRepo, posRepo, loyaltyRepo)
@@ -123,8 +140,12 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	// Public Auth routes (Rate limited to 10 attempts/min per IP to prevent brute force)
 	r.Route("/auth", func(r chi.Router) {
 		r.Use(middleware.AuthRateLimiter.Middleware())
+		r.Post("/send-otp", uc.SendRegistrationOTP)
+		r.Post("/verify-otp", uc.VerifyRegistrationOTP)
 		r.Post("/register", uc.Register)
 		r.Post("/login", uc.Login)
+		r.Post("/staff-login", staffc.StaffLogin)
+		r.Post("/google", uc.GoogleLogin)
 		r.Post("/forgot-password", uc.ForgotPassword)
 		r.Post("/forget-password", uc.ForgotPassword) // alias for convenience
 		r.Post("/reset-password", uc.ResetPassword)
@@ -134,7 +155,12 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	// Public Browsing routes (customers & visitors)
 	r.Get("/catalog/home-feed", sc.GetHomeFeed) // Consolidated customer explore feed
 	r.Post("/ai/customer-chat", aic.CustomerChat)
-	r.Post("/ai/merchant-copilot", aic.MerchantCopilot)
+	r.Post("/ai/scan-product", aic.ScanProduct)
+	r.Post("/ai/parse-parchi", aic.ParseParchi)
+	r.Post("/ai/semantic-search", aic.SemanticSearch)
+	r.Post("/ai/voice-bill", aic.VoiceBill)
+	r.Post("/ai/marketing-campaign", aic.GenerateMarketingCampaign)
+	r.Post("/ai/bargain-assist", aic.BargainAssist)
 	r.Get("/categories", catc.List)
 	r.Get("/shops", sc.List)
 	r.Get("/shops/{id}", sc.GetByID)
@@ -153,6 +179,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	r.Post("/products/{id}/notify-me", invc.SubscribeStockAlert)
 	r.Post("/products/{id}/make-offer", pc.MakeOffer)
 	r.Get("/receipts/{bill_number}", posc.ViewPublicReceiptPDF)
+	r.Post("/reports/telemetry-error", telc.LogFrontendError)
 	r.Get("/images/*", upc.ServeImage) // Public Cloudflare R2 image streaming proxy
 
 	// Protected routes (JWT authentication required)
@@ -161,9 +188,16 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 
 		// User profile actions
 		r.Get("/user/me", uc.GetProfile)
+		r.Get("/user/loyalty", loyc.GetUserLoyalty)
 		r.Put("/user/profile", uc.UpdateProfile)
 		r.With(middleware.UploadRateLimiter.Middleware()).Post("/user/avatar", upc.UploadUserAvatar)
-		r.Get("/user/loyalty", loyc.GetUserLoyalty)
+
+		// Customer Khata & Dual-Entry Udhar Passbook
+		r.Get("/customer/khata", custKhatac.GetCustomerKhataSummary)
+		r.Get("/customer/khata/{khataId}/transactions", custKhatac.GetCustomerKhataPassbook)
+		r.Post("/customer/khata/{khataId}/dispute", custKhatac.DisputeTransaction)
+		r.Post("/customer/khata/{khataId}/pay-upi", custKhatac.SubmitUPIPayment)
+		r.Get("/customer/khata/{khataId}/statement.pdf", custKhatac.DownloadCustomerPDF)
 
 		// Shop Owner management
 		r.Post("/shops", sc.Create)
@@ -171,24 +205,39 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/shops/me/dashboard", sc.GetMerchantDashboard) // Consolidated merchant dashboard
 		r.Get("/shops/me/qr", sc.GetMyShopQR)
 		r.Get("/shops/me/digest", sc.GetDailyDigest)
-		r.Post("/shops/me/copilot", aic.MerchantCopilot)
 		r.Put("/shops/me", sc.UpdateMyShop)
 		r.Patch("/shops/me/status", sc.ToggleStatus)
 		r.Delete("/shops/me", sc.DeleteMyShop)
+		r.Post("/shops/me/restore", sc.RestoreMyShop)
+		r.Get("/shops/me/ws", wsc.ServeShopWebSocket)
 		r.With(middleware.UploadRateLimiter.Middleware()).Post("/shops/me/images", upc.UploadShopImages)
 
+				// Authenticated merchant intelligence
+				r.Post("/ai/merchant-copilot", aic.MerchantCopilot)
+
+		// Shop Staff & Cashier sub-accounts
+		r.Get("/shops/me/staff", staffc.ListStaff)
+		r.Post("/shops/me/staff", staffc.CreateStaff)
+		r.Put("/shops/me/staff/{id}", staffc.UpdateStaff)
+		r.Delete("/shops/me/staff/{id}", staffc.DeleteStaff)
+
 		// Shop Product management
+		r.Get("/shops/me/products", pc.ListMyShopProducts)
 		r.Post("/products", pc.Create)
 		r.Put("/products/{id}", pc.Update)
 		r.Delete("/products/{id}", pc.Delete)
 		r.With(middleware.UploadRateLimiter.Middleware()).Post("/products/images", upc.UploadProductImages)
 		r.Post("/shops/me/products/{id}/markdown", pc.ApplyClearanceMarkdown)
+		r.Post("/shops/me/products/bulk-import", pc.BulkImport)
+		r.Get("/shops/me/products/import-template.csv", pc.DownloadImportTemplate)
 
 		// Shop Inventory & Wholesale Restock
 		r.Post("/shops/me/inventory/adjust", invc.AdjustStock)
 		r.Get("/shops/me/inventory/low-stock", invc.GetLowStockAlerts)
+		r.Post("/shops/me/inventory/alerts/{id}/dismiss", invc.DismissStockAlert)
 		r.Get("/shops/me/inventory/demand-watchlist", invc.GetDemandWatchlist)
 		r.Get("/shops/me/inventory/reorder-sheet.pdf", invc.DownloadReorderSheetPDF)
+		r.Post("/shops/me/inventory/procurement-pdf", invc.GenerateCustomProcurementPDF)
 		r.Get("/shops/me/inventory/reorder/whatsapp", invc.GetSupplierReorderWhatsApp)
 
 		// Shop Analytics & Profit Intelligence
@@ -197,6 +246,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 
 		// Shop Counter POS & Digital Receipts
 		r.Post("/shops/me/pos/sale", posc.CreateSale)
+		r.Post("/shops/me/pos/sales/{billNumber}/cancel", posc.CancelBill)
 		r.Get("/shops/me/pos/daily-summary", posc.GetDailySummary)
 		r.Get("/shops/me/pos/summary", posc.GetDailySummary) // frontend alias
 		r.Get("/shops/me/pos/scan/{sku}", posc.ScanBarcode)
@@ -209,7 +259,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/shops/me/pos/park/{id}", posc.GetParkedBill)
 		r.Delete("/shops/me/pos/park/{id}", posc.DeleteParkedBill)
 		r.Get("/shops/me/pos/bargain-assist", pc.GetPOSBargainAssist)
-		r.Post("/shops/me/pos/parse-parchi", posc.ParseParchi)
+		r.Post("/shops/me/pos/parse-parchi", aic.ParseParchi)
 		r.Get("/shops/me/pos/weekly-scorecard", posc.GetWeeklyScorecard)
 		r.Get("/shops/me/pos/customers/{phone}/recent-basket", posc.GetCustomerRecentBasket)
 		r.Post("/shops/me/pos/returns", posc.ProcessPOSReturn)
@@ -231,11 +281,31 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Put("/shops/me/khata/{mobile}/credit-limit", khatac.UpdateCreditLimit)
 		r.Post("/shops/me/khata", khatac.RecordCredit)
 		r.Post("/shops/me/khata/{mobile}/payment", khatac.RecordPayment)
+		r.Post("/shops/me/khata/{id}/request-closure", khatac.RequestClosure)
+		r.Post("/shops/me/khata/{id}/verify-closure-otp", khatac.VerifyClosureOTP)
+		r.Post("/shops/me/khata/{id}/transactions/{txId}/reverse", khatac.ReverseTransaction)
+		r.Post("/shops/me/khata/{id}/dispute/{txId}/resolve", khatac.ResolveDispute)
+		r.Post("/shops/me/khata/{id}/promise-date", khatac.SetPromiseToPay)
+		r.Get("/shops/me/khata/{mobile}/trust-score", khatac.GetCustomerTrustScore)
+
+		// Customer Digital Khata & Udhar Passbook (Dual-Entry Ledger)
+		r.Get("/customer/khata", custKhatac.GetCustomerKhataSummary)
+		r.Get("/customer/khata/{khataId}/transactions", custKhatac.GetCustomerKhataPassbook)
+		r.Post("/customer/khata/{khataId}/dispute", custKhatac.DisputeTransaction)
+		r.Post("/customer/khata/{khataId}/pay-upi", custKhatac.SubmitUPIPayment)
+		r.Get("/customer/khata/{khataId}/statement.pdf", custKhatac.DownloadCustomerPDF)
+		r.Post("/customer/khata/{khataId}/request-closure", custKhatac.RequestClosure)
+		r.Post("/customer/khata/{khataId}/verify-closure-otp", custKhatac.VerifyClosureOTP)
+		r.Put("/customer/khata/{khataId}/otp-protection", custKhatac.SetCreditOTPProtection)
+		r.Post("/customer/khata/{khataId}/promise-date", custKhatac.SetPromiseToPay)
 
 		// Shop Returns & VIP Offers
 		r.Post("/shops/me/returns", loyc.ProcessReturn)
 		r.Get("/shops/me/returns", loyc.ListReturns)
 		r.Post("/shops/me/offers", loyc.CreateOffer)
+		r.Put("/shops/me/offers/{id}", loyc.UpdateOffer)
+		r.Delete("/shops/me/offers/{id}", loyc.DeleteOffer)
+		r.Get("/shops/me/offers/history", loyc.GetOfferHistory)
 
 		// In-Store Item Reservations (Customer)
 		r.Post("/reservations", resc.Create)
@@ -279,6 +349,11 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		// User & Merchant management
 		r.Get("/users", uc.AdminListUsers)
 		r.Patch("/users/{id}/status", uc.AdminUpdateUserStatus)
+
+		// 24-Hour Developer Error Telemetry Vault & Live Performance Metrics
+		r.Get("/errors", telc.GetAdminErrors)
+		r.Delete("/errors/clear", telc.ClearAdminErrors)
+		r.Get("/performance-metrics", telc.GetLivePerformanceMetrics)
 	})
 
 	return r

@@ -3,6 +3,7 @@ package services
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"shopMe/internal/handler/repository"
 	"shopMe/internal/utils"
 	"strings"
+	"time"
 )
 
 type InventoryService struct {
@@ -70,7 +72,19 @@ func (s *InventoryService) GetLowStockAlerts(ctx context.Context, shopOwnerUserI
 	}, nil
 }
 
-// GenerateReorderSheetPDF creates a printable wholesale re-order sheet in PDF.
+func (s *InventoryService) DismissStockAlert(ctx context.Context, shopOwnerUserID, productID string) error {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return ErrShopNotFound
+		}
+		return err
+	}
+
+	return s.productRepo.DismissStockAlert(ctx, shop.ID, productID)
+}
+
+// GenerateReorderSheetPDF creates a printable wholesale re-order sheet in PDF combining low stock & customer demand.
 func (s *InventoryService) GenerateReorderSheetPDF(ctx context.Context, shopOwnerUserID string) ([]byte, error) {
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
@@ -81,11 +95,73 @@ func (s *InventoryService) GenerateReorderSheetPDF(ctx context.Context, shopOwne
 	}
 
 	items, err := s.productRepo.GetLowStockProducts(ctx, shop.ID)
+	if err != nil || items == nil {
+		items = []*dto.LowStockProduct{}
+	}
+
+	// Include customer demand watchlist items into the Mandi Khareed PDF!
+	demandItems, _ := s.productRepo.GetDemandWatchlist(ctx, shop.ID)
+	for _, d := range demandItems {
+		items = append(items, &dto.LowStockProduct{
+			ProductID:           d.ProductID,
+			Name:                fmt.Sprintf("%s (%d Demand)", d.ProductName, d.WaitingCustomersCount),
+			SKU:                 d.SKU,
+			CurrentStock:        d.CurrentStock,
+			SuggestedReorderQty: 10,
+		})
+	}
+
+	return utils.RenderPDFWithConcurrencyLimit(ctx, func() ([]byte, error) {
+		return utils.GenerateWholesaleReorderPDF(shop, items)
+	})
+}
+
+// GenerateCustomProcurementPDF generates Base64 PDF payload for custom Mandi Khareed items
+func (s *InventoryService) GenerateCustomProcurementPDF(ctx context.Context, shopOwnerUserID string, req dto.CreateProcurementPDFRequest) (*dto.GeneratedPDFResponse, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, ErrShopNotFound
+		}
+		return nil, err
+	}
+
+	// 💡 SMART FALLBACK: If payload items are empty, auto-populate from DB (Low Stock + Customer Demand Watchlist)!
+	if len(req.Items) == 0 {
+		lowStockItems, _ := s.productRepo.GetLowStockProducts(ctx, shop.ID)
+		for _, l := range lowStockItems {
+			req.Items = append(req.Items, dto.ProcurementPDFItem{
+				Name:  l.Name,
+				Qty:   fmt.Sprintf("%d units (Reorder)", l.SuggestedReorderQty),
+				Notes: fmt.Sprintf("In Stock: %d", l.CurrentStock),
+			})
+		}
+
+		demandItems, _ := s.productRepo.GetDemandWatchlist(ctx, shop.ID)
+		for _, d := range demandItems {
+			req.Items = append(req.Items, dto.ProcurementPDFItem{
+				Name:  d.ProductName,
+				Qty:   fmt.Sprintf("%d Customer Demand", d.WaitingCustomersCount),
+				Notes: "Out of stock demand",
+			})
+		}
+	}
+
+	pdfBytes, err := utils.RenderPDFWithConcurrencyLimit(ctx, func() ([]byte, error) {
+		return utils.GenerateCustomProcurementPDF(shop, req.Title, req.Items)
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	return utils.GenerateWholesaleReorderPDF(shop, items)
+	b64 := base64.StdEncoding.EncodeToString(pdfBytes)
+	filename := fmt.Sprintf("mandi-procurement-sheet-%s.pdf", time.Now().Format("2006-01-02"))
+
+	return &dto.GeneratedPDFResponse{
+		Filename:  filename,
+		PDFBase64: b64,
+		SizeBytes: len(pdfBytes),
+	}, nil
 }
 
 // GenerateSupplierReorderWhatsApp creates a WhatsApp click-to-chat purchase order message with low stock items.

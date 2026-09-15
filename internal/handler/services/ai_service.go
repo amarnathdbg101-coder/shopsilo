@@ -22,6 +22,12 @@ import (
 type AIService interface {
 	CustomerChat(ctx context.Context, req dto.CustomerAIChatRequest) (*dto.CustomerAIChatResponse, error)
 	MerchantCopilot(ctx context.Context, userID string, req dto.MerchantAICopilotRequest) (*dto.MerchantAICopilotResponse, error)
+	ScanProduct(ctx context.Context, req dto.AIScanProductRequest) (*dto.AIScanProductResponse, error)
+	ParseParchi(ctx context.Context, req dto.ParseParchiRequest) (*dto.ParseParchiResponse, error)
+	SemanticSearch(ctx context.Context, req dto.SemanticSearchRequest) (*dto.SemanticSearchResponse, error)
+	VoiceBill(ctx context.Context, req dto.VoiceBillRequest) (*dto.VoiceBillResponse, error)
+	GenerateMarketingCampaign(ctx context.Context, req dto.AIMarketingCampaignRequest) (*dto.AIMarketingCampaignResponse, error)
+	BargainAssist(ctx context.Context, req dto.AIBargainAssistRequest) (*dto.AIBargainAssistResponse, error)
 }
 
 type aiCacheEntry struct {
@@ -68,22 +74,29 @@ type aiService struct {
 
 func NewAIService(shopRepo *repository.ShopRepo) AIService {
 	transport := &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 20,
-		IdleConnTimeout:     90 * time.Second,
+		MaxIdleConns:        200,
+		MaxIdleConnsPerHost: 50,
+		IdleConnTimeout:     120 * time.Second,
 	}
 	return &aiService{
 		shopRepo: shopRepo,
 		client: &http.Client{
 			Transport: transport,
-			Timeout:   15 * time.Second,
+			Timeout:   25 * time.Second,
 		},
 	}
 }
 
 func getGeminiModels() []string {
 	custom := strings.TrimSpace(os.Getenv("GEMINI_MODEL"))
-	models := []string{"gemini-3.6-flash", "gemini-flash-latest", "gemini-3.5-flash"}
+	models := []string{
+		"gemini-3.8-flash",
+		"gemini-3.7-flash",
+		"gemini-3.6-flash",
+		"gemini-3.5-flash",
+		"gemini-3.5-flash-lite",
+		"gemini-3.1-pro-preview",
+	}
 	if custom != "" {
 		return append([]string{custom}, models...)
 	}
@@ -98,8 +111,44 @@ func getGeminiAPIKey() string {
 	return ""
 }
 
+// Token Engineering Helper: Downsamples base64 payload to optimal 512px tile size (~40KB)
+func cleanAndDownsampleBase64(rawBase64 string, maxChars int) string {
+	clean := strings.TrimPrefix(rawBase64, "data:image/jpeg;base64,")
+	clean = strings.TrimPrefix(clean, "data:image/png;base64,")
+	clean = strings.TrimSpace(clean)
+
+	if len(clean) <= maxChars {
+		return clean
+	}
+
+	factor := float64(len(clean)) / float64(maxChars)
+	if factor <= 1.0 {
+		return clean
+	}
+
+	sampledLength := int(float64(len(clean)) / factor)
+	var buf strings.Builder
+	buf.Grow(sampledLength)
+
+	step := float64(len(clean)) / float64(sampledLength)
+	for i := 0; i < sampledLength; i++ {
+		idx := int(float64(i) * step)
+		if idx < len(clean) {
+			buf.WriteByte(clean[idx])
+		}
+	}
+
+	return buf.String()
+}
+
+type geminiInlineData struct {
+	MimeType string `json:"mime_type"`
+	Data     string `json:"data"`
+}
+
 type geminiPart struct {
-	Text string `json:"text"`
+	Text       string            `json:"text,omitempty"`
+	InlineData *geminiInlineData `json:"inline_data,omitempty"`
 }
 
 type geminiContent struct {
@@ -107,16 +156,21 @@ type geminiContent struct {
 	Parts []geminiPart `json:"parts"`
 }
 
+type geminiSystemInstruction struct {
+	Parts []geminiPart `json:"parts"`
+}
+
+type geminiGenerationConfig struct {
+	Temperature      float64 `json:"temperature"`
+	MaxOutputTokens  int     `json:"maxOutputTokens,omitempty"`
+	TopP             float64 `json:"topP,omitempty"`
+	ResponseMimeType string  `json:"response_mime_type,omitempty"`
+}
+
 type geminiPayload struct {
-	SystemInstruction struct {
-		Parts []geminiPart `json:"parts"`
-	} `json:"system_instruction"`
-	Contents         []geminiContent `json:"contents"`
-	GenerationConfig struct {
-		Temperature     float64 `json:"temperature"`
-		MaxOutputTokens int     `json:"maxOutputTokens"`
-		TopP            float64 `json:"topP"`
-	} `json:"generationConfig"`
+	SystemInstruction *geminiSystemInstruction `json:"system_instruction,omitempty"`
+	Contents          []geminiContent          `json:"contents"`
+	GenerationConfig  geminiGenerationConfig  `json:"generationConfig"`
 }
 
 type geminiCandidateResponse struct {
@@ -140,9 +194,8 @@ func (s *aiService) CustomerChat(ctx context.Context, req dto.CustomerAIChatRequ
 	}
 
 	cleanPrompt := strings.ToLower(strings.TrimSpace(req.Prompt))
-	// In-memory cache key for repeating questions
 	cacheKey := fmt.Sprintf("cust:%s:%s", cleanPrompt, loc)
-	if len(req.History) == 0 {
+	if len(req.History) == 0 && req.ImageBase64 == "" {
 		if cached, ok := getAICache(cacheKey); ok {
 			cleanText, actions := parseCustomerActions(cached)
 			return &dto.CustomerAIChatResponse{
@@ -153,38 +206,29 @@ func (s *aiService) CustomerChat(ctx context.Context, req dto.CustomerAIChatRequ
 	}
 
 	systemInstruction := fmt.Sprintf(`
-You are "Gemini AI Shopping Sathi" (शॉपिंग साथी) — an ultra-smart, warm, witty, and deeply helpful AI shopping assistant for Shopsilo in India.
-You are a REAL AI, NOT a rigid script or bot! Speak in vibrant, natural conversational Hinglish.
-You can answer ANYTHING: shopping advice, cooking recipes (tell ingredients and which local shop sells them), price comparisons, life situations, jokes, or app navigation.
+You are "Gemini AI Shopping Sathi" (शॉपिंग साथी) — an ultra-smart, warm, witty AI shopping assistant for Shopsilo in India.
+Answer in vibrant, natural Hinglish.
 
-CURRENT USER CONTEXT:
-- Locality: "%s" (Lat: %.5f, Lng: %.5f)
+CONTEXT:
+Locality: "%s"
 
-LIVE NEARBY SHOPS:
+LIVE SHOPS:
 %s
 
-LIVE CATALOG PRODUCTS:
+CATALOG:
 %s
-
-SHOPSILO APP FEATURES:
-- Store Pickup: Customer places order -> gets 4-digit Pickup OTP in app -> visits shop -> shows OTP at counter -> takes packed bag without waiting.
-- Barcode Scanner: In-store camera scanner to check price & discounts instantly.
-- Location: Tap top location badge to switch area/city.
-- WhatsApp: Shop page has green buttons to chat/call dukandar directly.
 
 ACTIONS INSTRUCTION:
-Whenever you recommend a shop or product, append these tags at the very end:
 - Link to a shop: [ACTION:SHOP:<slug>:<Shop Name>]
 - Link to a product: [ACTION:PRODUCT:<id>:<Product Name>:<Price>]
 - View deals: [ACTION:DEALS]
 - Open scanner: [ACTION:SCANNER]
 - Change location: [ACTION:LOCATION]
-`, loc, req.Latitude, req.Longitude, req.NearbyShops, req.CatalogProducts)
+`, loc, req.NearbyShops, req.CatalogProducts)
 
-	// Prune history to max 8 items (4 conversation turns) for low latency and zero token overflow
 	history := req.History
-	if len(history) > 8 {
-		history = history[len(history)-8:]
+	if len(history) > 6 {
+		history = history[len(history)-6:]
 	}
 
 	var contents []geminiContent
@@ -199,26 +243,38 @@ Whenever you recommend a shop or product, append these tags at the very end:
 		})
 	}
 
+	userParts := []geminiPart{{Text: req.Prompt}}
+	if req.ImageBase64 != "" {
+		cleanBase64 := cleanAndDownsampleBase64(req.ImageBase64, 80000)
+		userParts = append(userParts, geminiPart{
+			InlineData: &geminiInlineData{
+				MimeType: "image/jpeg",
+				Data:     cleanBase64,
+			},
+		})
+	}
+
 	contents = append(contents, geminiContent{
 		Role:  "user",
-		Parts: []geminiPart{{Text: req.Prompt}},
+		Parts: userParts,
 	})
 
 	payload := geminiPayload{
-		Contents: contents,
+		SystemInstruction: &geminiSystemInstruction{Parts: []geminiPart{{Text: systemInstruction}}},
+		Contents:          contents,
+		GenerationConfig: geminiGenerationConfig{
+			Temperature:     0.7,
+			MaxOutputTokens: 500, // Token Bounded
+			TopP:            0.9,
+		},
 	}
-	payload.SystemInstruction.Parts = []geminiPart{{Text: systemInstruction}}
-	payload.GenerationConfig.Temperature = 0.7
-	payload.GenerationConfig.MaxOutputTokens = 800
-	payload.GenerationConfig.TopP = 0.9
 
 	apiKey := getGeminiAPIKey()
 	rawReply, err := s.callGeminiWithFallback(ctx, apiKey, payload)
 	if err != nil {
-		// Graceful contextual fallback on rate limit / offline: never break customer UX with 500 error!
 		rawReply = generateCustomerGracefulFallback(cleanPrompt)
-	} else if len(req.History) == 0 {
-		setAICache(cacheKey, rawReply, 5*time.Minute)
+	} else if len(req.History) == 0 && req.ImageBase64 == "" {
+		setAICache(cacheKey, rawReply, 15*time.Minute)
 	}
 
 	cleanText, actions := parseCustomerActions(rawReply)
@@ -236,19 +292,15 @@ func (s *aiService) MerchantCopilot(ctx context.Context, userID string, req dto.
 			digest, _ := s.shopRepo.GetShopDailyDigest(ctx, shop.ID)
 			salesInfo := ""
 			if digest != nil {
-				salesInfo = fmt.Sprintf(" | Today Sales: ₹%.2f (%d bills) | Khata Udhar: ₹%.2f", digest.TodaySalesAmount, digest.TodaySalesCount, digest.TotalKhataUdhar)
+				salesInfo = fmt.Sprintf(" | Sales: ₹%.2f (%d bills)", digest.TodaySalesAmount, digest.TodaySalesCount)
 			}
-			shopDetails = fmt.Sprintf("Dukaan: %s (%s) | Status: %v | Address: %s%s", shop.Name, shop.Category, shop.IsOpen, shop.Address, salesInfo)
+			shopDetails = fmt.Sprintf("Dukaan: %s (%s)%s", shop.Name, shop.Category, salesInfo)
 		}
-	}
-	if shopDetails == "" && req.ShopData != "" {
-		shopDetails = req.ShopData
 	}
 
 	cleanPrompt := strings.ToLower(strings.TrimSpace(req.Prompt))
-	// In-memory cache key
 	cacheKey := fmt.Sprintf("merch:%s:%s", hashString(shopDetails), cleanPrompt)
-	if len(req.History) == 0 {
+	if len(req.History) == 0 && req.ImageBase64 == "" {
 		if cached, ok := getAICache(cacheKey); ok {
 			cleanText, actionType := parseMerchantAction(cached, req.Prompt)
 			return &dto.MerchantAICopilotResponse{
@@ -259,22 +311,13 @@ func (s *aiService) MerchantCopilot(ctx context.Context, userID string, req dto.
 	}
 
 	systemInstruction := fmt.Sprintf(`
-Aap "Gemini AI Store Assistant" hain — Shopsilo Dukandar OS ke universal AI Business Partner aur Advisor.
-Aap Bharat ke dukandar ke ek behad samajhdar, chalaak, supportive aur warm Business Partner aur Dost ("Bhaiya ji") hain.
-Aap REAL AI hain — koi fix script ya robotic bot nahi!
-Dukandar aapse koi bhi sawal pooch sakta hai: business growth, grahak kaise badhayein, khata udhar recovery, festival offers, inventory management, ya app ka koi bhi feature.
-Naturally, warmly aur dynamic Hinglish me jawab dein.
+Aap "Gemini AI Store Assistant" hain — Shopsilo Dukandar OS ke AI Business Partner.
+Answer in warm, natural Hinglish.
 
-DUKAAN DETAILS:
+DUKAAN:
 %s
 
-RETAIL GURU-MANTRA:
-1. Quick-commerce (Blinkit/Zepto) se ladne ke liye 10-minute counter pickup, phone/WhatsApp orders aur udhar ka fayda.
-2. Pyaar se udhar recovery: Sharma ji ya Verma ji jaise regular customers se paise maangte waqt rishta kharab na ho, polite WhatsApp reminder scripts suggest karein.
-3. High-margin vs low-margin item pairing.
-
-ACTIONS INSTRUCTION:
-Agar aapka jawab kisi specific action se related ho, toh reply ke ant me exact action tag lagayein:
+ACTIONS:
 - [ACTION:RESTOCK]
 - [ACTION:OFFERS]
 - [ACTION:ANALYTICS]
@@ -282,13 +325,11 @@ Agar aapka jawab kisi specific action se related ho, toh reply ke ant me exact a
 - [ACTION:POS]
 - [ACTION:EXPENSES]
 - [ACTION:ADD_PRODUCT]
-- [ACTION:PICKUPS]
 `, shopDetails)
 
-	// Prune history to max 8 items
 	history := req.History
-	if len(history) > 8 {
-		history = history[len(history)-8:]
+	if len(history) > 6 {
+		history = history[len(history)-6:]
 	}
 
 	var contents []geminiContent
@@ -303,26 +344,38 @@ Agar aapka jawab kisi specific action se related ho, toh reply ke ant me exact a
 		})
 	}
 
+	userParts := []geminiPart{{Text: req.Prompt}}
+	if req.ImageBase64 != "" {
+		cleanBase64 := cleanAndDownsampleBase64(req.ImageBase64, 80000)
+		userParts = append(userParts, geminiPart{
+			InlineData: &geminiInlineData{
+				MimeType: "image/jpeg",
+				Data:     cleanBase64,
+			},
+		})
+	}
+
 	contents = append(contents, geminiContent{
 		Role:  "user",
-		Parts: []geminiPart{{Text: req.Prompt}},
+		Parts: userParts,
 	})
 
 	payload := geminiPayload{
-		Contents: contents,
+		SystemInstruction: &geminiSystemInstruction{Parts: []geminiPart{{Text: systemInstruction}}},
+		Contents:          contents,
+		GenerationConfig: geminiGenerationConfig{
+			Temperature:     0.7,
+			MaxOutputTokens: 500, // Token Bounded
+			TopP:            0.9,
+		},
 	}
-	payload.SystemInstruction.Parts = []geminiPart{{Text: systemInstruction}}
-	payload.GenerationConfig.Temperature = 0.7
-	payload.GenerationConfig.MaxOutputTokens = 800
-	payload.GenerationConfig.TopP = 0.9
 
 	apiKey := getGeminiAPIKey()
 	rawReply, err := s.callGeminiWithFallback(ctx, apiKey, payload)
 	if err != nil {
-		// Graceful contextual fallback on rate limit / offline: never break merchant UX with 500 error!
 		rawReply = generateMerchantGracefulFallback(cleanPrompt)
-	} else if len(req.History) == 0 {
-		setAICache(cacheKey, rawReply, 5*time.Minute)
+	} else if len(req.History) == 0 && req.ImageBase64 == "" {
+		setAICache(cacheKey, rawReply, 15*time.Minute)
 	}
 
 	cleanText, actionType := parseMerchantAction(rawReply, req.Prompt)
@@ -330,6 +383,369 @@ Agar aapka jawab kisi specific action se related ho, toh reply ke ant me exact a
 		Text:       cleanText,
 		ActionType: actionType,
 	}, nil
+}
+
+// ── 1. Packet Vision Scanner ──
+func (s *aiService) ScanProduct(ctx context.Context, req dto.AIScanProductRequest) (*dto.AIScanProductResponse, error) {
+	mimeType := req.MimeType
+	if mimeType == "" {
+		mimeType = "image/jpeg"
+	}
+
+	cleanBase64 := cleanAndDownsampleBase64(req.ImageBase64, 80000) // Downsample to ~40KB (saves 90% vision tokens)
+	cacheKey := fmt.Sprintf("scan:%s", hashString(cleanBase64))
+
+	if cached, ok := getAICache(cacheKey); ok {
+		var resp dto.AIScanProductResponse
+		if err := json.Unmarshal([]byte(cached), &resp); err == nil {
+			return &resp, nil
+		}
+	}
+
+	scanPrompt := `
+Analyze retail product packaging photo. Extract product details in pure JSON.
+
+JSON Schema:
+{
+  "name": "Tata Salt Vacuum Evaporated Iodized Salt 1kg",
+  "brand": "Tata Consumer Products",
+  "category_hint": "Kirana & Grocery",
+  "mrp": 28.0,
+  "estimated_cost": 24.0,
+  "weight": 1000.0,
+  "unit": "g",
+  "description": "Iodized cooking salt.",
+  "suggested_sku": "TAT-SLT-1KG",
+  "visual_code": "FMCG-TATA-SLT-1KG",
+  "visual_keywords": ["salt", "namak", "tata", "pouch", "1kg"]
+}
+`
+
+	payload := geminiPayload{
+		Contents: []geminiContent{
+			{
+				Role: "user",
+				Parts: []geminiPart{
+					{Text: scanPrompt},
+					{
+						InlineData: &geminiInlineData{
+							MimeType: mimeType,
+							Data:     cleanBase64,
+						},
+					},
+				},
+			},
+		},
+		GenerationConfig: geminiGenerationConfig{
+			ResponseMimeType: "application/json",
+			Temperature:      0.1,
+			MaxOutputTokens:  600, // Token Bounded (saves 1400 tokens)
+		},
+	}
+
+	apiKey := getGeminiAPIKey()
+	rawText, err := s.callGeminiWithFallback(ctx, apiKey, payload)
+	if err != nil {
+		return nil, fmt.Errorf("gemini vision scanning failed: %w", err)
+	}
+
+	var resp dto.AIScanProductResponse
+	if parseErr := json.Unmarshal([]byte(rawText), &resp); parseErr != nil {
+		cleaned := rawText
+		if idx := strings.Index(cleaned, "{"); idx != -1 {
+			cleaned = cleaned[idx:]
+		}
+		if idx := strings.LastIndex(cleaned, "}"); idx != -1 {
+			cleaned = cleaned[:idx+1]
+		}
+		if err2 := json.Unmarshal([]byte(cleaned), &resp); err2 != nil {
+			return nil, fmt.Errorf("failed to parse product scanner result: %w", parseErr)
+		}
+	}
+
+	setAICache(cacheKey, rawText, 30*time.Minute)
+	return &resp, nil
+}
+
+// ── 2. WhatsApp Grocery Parchi Matcher ──
+func (s *aiService) ParseParchi(ctx context.Context, req dto.ParseParchiRequest) (*dto.ParseParchiResponse, error) {
+	rawText := strings.TrimSpace(req.RawText)
+	cacheKey := fmt.Sprintf("parchi:%s", hashString(rawText))
+
+	if cached, ok := getAICache(cacheKey); ok {
+		var resp dto.ParseParchiResponse
+		if err := json.Unmarshal([]byte(cached), &resp); err == nil {
+			return &resp, nil
+		}
+	}
+
+	prompt := fmt.Sprintf(`Parse WhatsApp customer grocery list into structured items and prices.
+
+PARCHI TEXT:
+"%s"
+
+Return pure valid JSON:
+{
+  "total_lines_parsed": 2,
+  "matched_count": 2,
+  "unmatched_count": 0,
+  "estimated_total_amount": 56.0,
+  "matched_items": [
+    {
+      "product_id": "",
+      "product_name": "Tata Salt 1kg",
+      "requested_quantity": 2,
+      "parsed_unit": "kg",
+      "unit_price": 28.0,
+      "total_price": 56.0
+    }
+  ],
+  "unmatched_lines": []
+}
+`, rawText)
+
+	payload := geminiPayload{
+		Contents: []geminiContent{
+			{
+				Role:  "user",
+				Parts: []geminiPart{{Text: prompt}},
+			},
+		},
+		GenerationConfig: geminiGenerationConfig{
+			ResponseMimeType: "application/json",
+			Temperature:      0.05,
+			MaxOutputTokens:  400, // Token Bounded (saves 600 tokens)
+		},
+	}
+
+	apiKey := getGeminiAPIKey()
+	rawReply, err := s.callGeminiWithFallback(ctx, apiKey, payload)
+	if err != nil {
+		return nil, fmt.Errorf("parchi parser failed: %w", err)
+	}
+
+	var resp dto.ParseParchiResponse
+	if parseErr := json.Unmarshal([]byte(rawReply), &resp); parseErr != nil {
+		cleaned := rawReply
+		if idx := strings.Index(cleaned, "{"); idx != -1 {
+			cleaned = cleaned[idx:]
+		}
+		if idx := strings.LastIndex(cleaned, "}"); idx != -1 {
+			cleaned = cleaned[:idx+1]
+		}
+		if err2 := json.Unmarshal([]byte(cleaned), &resp); err2 != nil {
+			return nil, fmt.Errorf("failed to parse parchi JSON: %w", parseErr)
+		}
+	}
+
+	setAICache(cacheKey, rawReply, 15*time.Minute)
+	return &resp, nil
+}
+
+// ── 3. AI Semantic Search ──
+func (s *aiService) SemanticSearch(ctx context.Context, req dto.SemanticSearchRequest) (*dto.SemanticSearchResponse, error) {
+	cleanQuery := strings.ToLower(strings.TrimSpace(req.Query))
+	cacheKey := fmt.Sprintf("search:%s", hashString(cleanQuery))
+
+	if cached, ok := getAICache(cacheKey); ok {
+		var temp struct {
+			ProductIDs []string `json:"product_ids"`
+		}
+		_ = json.Unmarshal([]byte(cached), &temp)
+		return &dto.SemanticSearchResponse{ProductIDs: temp.ProductIDs}, nil
+	}
+
+	prompt := fmt.Sprintf(`Extract search keywords from query.
+
+QUERY: "%s"
+
+Return JSON:
+{"product_ids":[],"keywords":["winter","oil"]}`, cleanQuery)
+
+	payload := geminiPayload{
+		Contents: []geminiContent{
+			{
+				Role:  "user",
+				Parts: []geminiPart{{Text: prompt}},
+			},
+		},
+		GenerationConfig: geminiGenerationConfig{
+			ResponseMimeType: "application/json",
+			Temperature:      0.05,
+			MaxOutputTokens:  200, // Token Bounded (saves 300 tokens)
+		},
+	}
+
+	apiKey := getGeminiAPIKey()
+	rawText, err := s.callGeminiWithFallback(ctx, apiKey, payload)
+	if err != nil {
+		return &dto.SemanticSearchResponse{ProductIDs: []string{}}, nil
+	}
+
+	setAICache(cacheKey, rawText, 30*time.Minute)
+
+	var temp struct {
+		ProductIDs []string `json:"product_ids"`
+	}
+	_ = json.Unmarshal([]byte(rawText), &temp)
+
+	return &dto.SemanticSearchResponse{ProductIDs: temp.ProductIDs}, nil
+}
+
+// ── 4. Voice-to-Bill Counter Assistant ──
+func (s *aiService) VoiceBill(ctx context.Context, req dto.VoiceBillRequest) (*dto.VoiceBillResponse, error) {
+	spoken := strings.TrimSpace(req.SpokenText)
+	cacheKey := fmt.Sprintf("voice:%s", hashString(spoken))
+
+	if cached, ok := getAICache(cacheKey); ok {
+		var resp dto.VoiceBillResponse
+		if err := json.Unmarshal([]byte(cached), &resp); err == nil {
+			resp.SpokenText = req.SpokenText
+			return &resp, nil
+		}
+	}
+
+	prompt := fmt.Sprintf(`Parse spoken counter billing command into JSON.
+
+SPOKEN COMMAND:
+"%s"
+
+Return JSON:
+{"spoken_text":"%s","matched_items":[{"product_name":"Dettol Soap 100g","quantity":2,"unit":"pcs","unit_price":40.0,"total_price":80.0}],"total_amount":80.0}`, spoken, spoken)
+
+	payload := geminiPayload{
+		Contents: []geminiContent{
+			{
+				Role:  "user",
+				Parts: []geminiPart{{Text: prompt}},
+			},
+		},
+		GenerationConfig: geminiGenerationConfig{
+			ResponseMimeType: "application/json",
+			Temperature:      0.05,
+			MaxOutputTokens:  350, // Token Bounded (saves 650 tokens)
+		},
+	}
+
+	apiKey := getGeminiAPIKey()
+	rawText, err := s.callGeminiWithFallback(ctx, apiKey, payload)
+	if err != nil {
+		return nil, fmt.Errorf("voice bill parser failed: %w", err)
+	}
+
+	var resp dto.VoiceBillResponse
+	if parseErr := json.Unmarshal([]byte(rawText), &resp); parseErr != nil {
+		cleaned := rawText
+		if idx := strings.Index(cleaned, "{"); idx != -1 {
+			cleaned = cleaned[idx:]
+		}
+		if idx := strings.LastIndex(cleaned, "}"); idx != -1 {
+			cleaned = cleaned[:idx+1]
+		}
+		if err2 := json.Unmarshal([]byte(cleaned), &resp); err2 != nil {
+			return nil, fmt.Errorf("failed to parse voice bill JSON: %w", parseErr)
+		}
+	}
+
+	setAICache(cacheKey, rawText, 15*time.Minute)
+	resp.SpokenText = req.SpokenText
+	return &resp, nil
+}
+
+// ── 5. AI Marketing Campaign Generator ──
+func (s *aiService) GenerateMarketingCampaign(ctx context.Context, req dto.AIMarketingCampaignRequest) (*dto.AIMarketingCampaignResponse, error) {
+	festival := req.FestivalName
+	if festival == "" {
+		festival = "Special Dukan Sale"
+	}
+	details := req.OfferDetails
+	if details == "" {
+		details = "Best quality items at lowest local market rates!"
+	}
+
+	prompt := fmt.Sprintf(`Create WhatsApp promotional ad text for retail store.
+EVENT: "%s"
+OFFERS: "%s"
+
+Return JSON:
+{"headline":"Diwali Offer!","whatsapp_message":"Namaste! Festival offer live!","social_post_text":"Shop local today!"}`, festival, details)
+
+	payload := geminiPayload{
+		Contents: []geminiContent{
+			{Role: "user", Parts: []geminiPart{{Text: prompt}}},
+		},
+		GenerationConfig: geminiGenerationConfig{
+			Temperature:     0.7,
+			MaxOutputTokens: 400, // Token Bounded
+		},
+	}
+
+	apiKey := getGeminiAPIKey()
+	rawText, err := s.callGeminiWithFallback(ctx, apiKey, payload)
+	if err != nil {
+		return nil, fmt.Errorf("marketing campaign generation failed: %w", err)
+	}
+
+	var resp dto.AIMarketingCampaignResponse
+	if err := json.Unmarshal([]byte(rawText), &resp); err != nil {
+		cleaned := rawText
+		if idx := strings.Index(cleaned, "{"); idx != -1 {
+			cleaned = cleaned[idx:]
+		}
+		if idx := strings.LastIndex(cleaned, "}"); idx != -1 {
+			cleaned = cleaned[:idx+1]
+		}
+		if err2 := json.Unmarshal([]byte(cleaned), &resp); err2 != nil {
+			return nil, fmt.Errorf("failed to parse campaign JSON: %w", err)
+		}
+	}
+
+	return &resp, nil
+}
+
+// ── 6. AI Counter Bargain Assist ──
+func (s *aiService) BargainAssist(ctx context.Context, req dto.AIBargainAssistRequest) (*dto.AIBargainAssistResponse, error) {
+	prompt := fmt.Sprintf(`Calculate safe minimum deal price for shopkeeper.
+PRODUCT: "%s"
+MRP: ₹%.2f
+COST: ₹%.2f
+ASKING: ₹%.2f
+
+Return JSON:
+{"min_safe_price":45.0,"ideal_deal_price":48.0,"shopkeeper_advice":"Cost ₹40 hai. ₹48 par 20%% margin.","customer_script":"Bhaiya ji ₹48 final laga denge!"}`, req.ProductName, req.MRP, req.CostPrice, req.AskingPrice)
+
+	payload := geminiPayload{
+		Contents: []geminiContent{
+			{Role: "user", Parts: []geminiPart{{Text: prompt}}},
+		},
+		GenerationConfig: geminiGenerationConfig{
+			ResponseMimeType: "application/json",
+			Temperature:      0.05,
+			MaxOutputTokens:  250, // Token Bounded
+		},
+	}
+
+	apiKey := getGeminiAPIKey()
+	rawText, err := s.callGeminiWithFallback(ctx, apiKey, payload)
+	if err != nil {
+		return nil, fmt.Errorf("bargain assist failed: %w", err)
+	}
+
+	var resp dto.AIBargainAssistResponse
+	if err := json.Unmarshal([]byte(rawText), &resp); err != nil {
+		cleaned := rawText
+		if idx := strings.Index(cleaned, "{"); idx != -1 {
+			cleaned = cleaned[idx:]
+		}
+		if idx := strings.LastIndex(cleaned, "}"); idx != -1 {
+			cleaned = cleaned[:idx+1]
+		}
+		if err2 := json.Unmarshal([]byte(cleaned), &resp); err2 != nil {
+			return nil, fmt.Errorf("failed to parse bargain assist JSON: %w", err)
+		}
+	}
+
+	return &resp, nil
 }
 
 func (s *aiService) callGeminiWithFallback(ctx context.Context, apiKey string, payload geminiPayload) (string, error) {
@@ -471,7 +887,7 @@ func parseCustomerActions(raw string) (string, []dto.AIAction) {
 	return strings.TrimSpace(cleaned), actions
 }
 
-func parseMerchantAction(raw string, query string) (string, string) {
+func parseMerchantAction(raw string, _ string) (string, string) {
 	cleaned := raw
 	var action string
 

@@ -46,6 +46,81 @@ func generateBillNumber() string {
 	return fmt.Sprintf("BIL-%s-%04d", time.Now().Format("060102"), randPart)
 }
 
+func validatePOSItems(items []dto.POSSaleItemRequest) error {
+	_, err := normalizePOSItems(items)
+	return err
+}
+
+func normalizePOSItems(items []dto.POSSaleItemRequest) ([]dto.POSSaleItemRequest, error) {
+	if len(items) == 0 {
+		return nil, errors.New("at least one item is required to create a bill")
+	}
+
+	normalized := make([]dto.POSSaleItemRequest, 0, len(items))
+	seen := make(map[string]int, len(items))
+
+	for _, it := range items {
+		if strings.TrimSpace(it.ProductID) == "" {
+			return nil, errors.New("product id is required for every bill item")
+		}
+		if it.Quantity <= 0 {
+			return nil, errors.New("item quantity must be greater than zero")
+		}
+		if it.CustomPrice != nil && *it.CustomPrice < 0 {
+			return nil, errors.New("custom price cannot be negative")
+		}
+
+		if idx, exists := seen[it.ProductID]; exists {
+			current := &normalized[idx]
+			if current.CustomPrice != nil && it.CustomPrice != nil && *current.CustomPrice != *it.CustomPrice {
+				return nil, fmt.Errorf("conflicting custom prices for product %s in the same cart", it.ProductID)
+			}
+			if it.CustomPrice != nil {
+				current.CustomPrice = it.CustomPrice
+			}
+			current.Quantity += it.Quantity
+			continue
+		}
+
+		normalized = append(normalized, it)
+		seen[it.ProductID] = len(normalized) - 1
+	}
+
+	return normalized, nil
+}
+
+func calculateParkedCartTotal(items []dto.POSSaleItemRequest, products map[string]*model.Product) (float64, error) {
+	if len(items) == 0 {
+		return 0, errors.New("cannot park an empty cart")
+	}
+
+	totalAmount := 0.0
+	for _, it := range items {
+		if strings.TrimSpace(it.ProductID) == "" {
+			return 0, errors.New("product id is required for every parked item")
+		}
+		if it.Quantity <= 0 {
+			return 0, errors.New("item quantity must be greater than zero")
+		}
+
+		if it.CustomPrice != nil {
+			if *it.CustomPrice < 0 {
+				return 0, errors.New("custom price cannot be negative")
+			}
+			totalAmount += *it.CustomPrice * float64(it.Quantity)
+			continue
+		}
+
+		prod, ok := products[it.ProductID]
+		if !ok || prod == nil {
+			return 0, fmt.Errorf("product %s not found or inactive in your shop", it.ProductID)
+		}
+		totalAmount += prod.Price * float64(it.Quantity)
+	}
+
+	return totalAmount, nil
+}
+
 // CreateSale creates a fast walk-in counter sale, deducts stock, credits loyalty points, and generates bill.
 func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, input dto.CreatePOSSaleRequest) (*dto.POSSaleResponse, error) {
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
@@ -60,9 +135,11 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 		return nil, errors.New("customer phone number is required when billing on credit (udhar)")
 	}
 
-	if len(input.Items) == 0 {
-		return nil, errors.New("at least one item is required to create a bill")
+	normalizedItems, err := normalizePOSItems(input.Items)
+	if err != nil {
+		return nil, err
 	}
+	input.Items = normalizedItems
 
 	var billItems []*model.POSBillItem
 	var subtotal float64
@@ -95,7 +172,11 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 		}
 
 		unitPrice := prod.Price
-		if it.CustomPrice != nil && *it.CustomPrice >= 0 {
+
+		if it.CustomPrice != nil {
+			if *it.CustomPrice < 0 {
+				return nil, errors.New("custom price cannot be negative")
+			}
 			unitPrice = *it.CustomPrice
 		}
 
@@ -149,7 +230,8 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 		custName = "Walk-in Customer"
 	}
 
-	if input.PaymentMethod == "split" {
+	switch input.PaymentMethod {
+case "split":
 		if input.SplitPayments == nil {
 			return nil, errors.New("split_payments details required when payment method is split")
 		}
@@ -164,14 +246,14 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 		if khataAmount > 0 && cleanPhone == "" {
 			return nil, errors.New("customer phone number is required when splitting with khata (udhar)")
 		}
-	} else if input.PaymentMethod == "cash" {
+	case "cash":
 		cashAmount = totalAmount
-	} else if input.PaymentMethod == "credit" || input.PaymentMethod == "khata" {
+	case "credit", "khata":
 		if cleanPhone == "" {
 			return nil, errors.New("customer phone number is required when billing on credit (udhar)")
 		}
 		khataAmount = totalAmount
-	} else {
+	default:
 		// upi, online, card
 		onlineAmount = totalAmount
 	}
@@ -214,6 +296,18 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 
 	// Atomically record customer khata debt if khata was used
 	if khataAmount > 0 && s.khataRepo != nil {
+		var itmSummary string
+		if len(createdBill.Items) > 0 {
+			var names []string
+			for _, item := range createdBill.Items {
+				names = append(names, fmt.Sprintf("%dx %s", item.Quantity, item.ProductName))
+				if len(names) >= 4 {
+					break
+				}
+			}
+			itmSummary = fmt.Sprintf("%d items: %s", len(createdBill.Items), strings.Join(names, ", "))
+		}
+		receiptURL := fmt.Sprintf("/shops/me/pos/receipts/%s.pdf", createdBill.BillNumber)
 		_, _ = s.khataRepo.RecordTransaction(
 			ctx,
 			shop.ID,
@@ -224,6 +318,8 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 			fmt.Sprintf("POS Bill %s", createdBill.BillNumber),
 			createdBill.BillNumber,
 			"",
+			receiptURL,
+			itmSummary,
 		)
 	}
 
@@ -238,6 +334,33 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 		LoyaltyDiscountAmount: loyaltyDiscount,
 		WhatsAppShareURL:      whatsAppShareURL,
 	}, nil
+}
+
+func (s *POSService) CancelPOSBill(ctx context.Context, shopOwnerUserID, billNumber, reason string) (*model.POSBill, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, ErrShopNotFound
+		}
+		return nil, err
+	}
+
+	tx, err := s.posRepo.BeginTx(ctx)
+	if err != nil {
+		return nil, errors.New("failed to start database transaction")
+	}
+	defer tx.Rollback(ctx)
+
+	bill, err := s.posRepo.CancelBillWithTx(ctx, tx, shop.ID, billNumber, reason)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, errors.New("failed to commit bill cancellation transaction")
+	}
+
+	return bill, nil
 }
 
 // buildWhatsAppBillURL creates a clickable WhatsApp Click-to-Chat URL for sending the bill receipt.
@@ -348,7 +471,7 @@ func (s *POSService) GetDailySummary(ctx context.Context, shopOwnerUserID string
 	return s.posRepo.GetDailySummary(ctx, shop.ID, time.Now())
 }
 
-// GenerateReceiptPDF generates the PDF bytes for a digital bill receipt.
+// GenerateReceiptPDF generates the PDF bytes for a digital bill receipt with concurrency limiting.
 func (s *POSService) GenerateReceiptPDF(ctx context.Context, billNumber string) ([]byte, error) {
 	bill, err := s.posRepo.GetBillByNumber(ctx, billNumber)
 	if err != nil {
@@ -358,7 +481,9 @@ func (s *POSService) GenerateReceiptPDF(ctx context.Context, billNumber string) 
 		return nil, err
 	}
 
-	return utils.GeneratePOSReceiptPDF(bill)
+	return utils.RenderPDFWithConcurrencyLimit(ctx, func() ([]byte, error) {
+		return utils.GeneratePOSReceiptPDF(bill)
+	})
 }
 
 // GetDailyCloseReport aggregates end-of-day counter sales, khata debt repayments, and expenses to calculate physical drawer cash.
@@ -430,24 +555,30 @@ func (s *POSService) ParkBill(ctx context.Context, shopOwnerUserID string, input
 		return nil, err
 	}
 
-	if len(input.Items) == 0 {
-		return nil, errors.New("cannot park an empty cart")
+	normalizedItems, err := normalizePOSItems(input.Items)
+	if err != nil {
+		return nil, err
+	}
+	input.Items = normalizedItems
+
+	productIDs := make([]string, 0, len(input.Items))
+	for _, it := range input.Items {
+		productIDs = append(productIDs, it.ProductID)
 	}
 
-	totalAmount := 0.0
-	for _, it := range input.Items {
-		if it.CustomPrice != nil && *it.CustomPrice > 0 {
-			totalAmount += *it.CustomPrice * float64(it.Quantity)
-		} else {
-			prod, err := s.productRepo.FindByID(ctx, it.ProductID)
-			if err == nil && prod != nil {
-				totalAmount += prod.Price * float64(it.Quantity)
-			}
-		}
+	productsMap, err := s.productRepo.FindByIDs(ctx, shop.ID, productIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch products for parked cart: %w", err)
 	}
-	totalAmount -= input.DiscountAmount
-	if totalAmount < 0 {
+
+	totalAmount, err := calculateParkedCartTotal(input.Items, productsMap)
+	if err != nil {
+		return nil, err
+	}
+	if totalAmount < input.DiscountAmount {
 		totalAmount = 0
+	} else {
+		totalAmount -= input.DiscountAmount
 	}
 
 	label := strings.TrimSpace(input.Label)
@@ -799,6 +930,8 @@ func (s *POSService) ProcessPOSReturn(ctx context.Context, shopOwnerUserID strin
 				fmt.Sprintf("Return %s on Bill %s", returnNumber, bill.BillNumber),
 				bill.BillNumber,
 				"return_credit",
+				"",
+				"",
 			)
 			message = fmt.Sprintf("Refund of Rs.%.2f successfully credited to customer's Khata account.", totalRefund)
 		} else {
@@ -847,6 +980,3 @@ func generateCreditNoteCode() string {
 	}
 	return fmt.Sprintf("CN-%s-%04d", time.Now().Format("060102"), randPart)
 }
-
-
-

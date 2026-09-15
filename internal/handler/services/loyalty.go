@@ -111,7 +111,125 @@ func (s *LoyaltyService) CreateOffer(ctx context.Context, shopOwnerUserID string
 		ExpiresAt:         expiresAt,
 	}
 
-	return s.loyaltyRepo.CreateOffer(ctx, offer)
+	created, err := s.loyaltyRepo.CreateOffer(ctx, offer)
+	if err != nil {
+		return nil, err
+	}
+
+	// Record Audit Track for Creation
+	_ = s.loyaltyRepo.RecordOfferAudit(ctx, &dto.OfferAuditRecord{
+		OfferID:         created.ID,
+		ShopID:          shop.ID,
+		Action:          "CREATED",
+		NewTitle:        created.Title,
+		NewDiscountText: created.DiscountText,
+		NewDescription:  created.Description,
+		ChangedByUserID: shopOwnerUserID,
+	})
+
+	return created, nil
+}
+
+func (s *LoyaltyService) UpdateOffer(ctx context.Context, shopOwnerUserID string, offerID string, input dto.UpdateOfferRequest) (*model.StoreOffer, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, ErrShopNotFound
+		}
+		return nil, err
+	}
+
+	existing, err := s.loyaltyRepo.GetOfferByID(ctx, offerID)
+	if err != nil {
+		return nil, errors.New("offer not found")
+	}
+
+	if existing.ShopID != shop.ID {
+		return nil, errors.New("unauthorized to update this offer")
+	}
+
+	var expiresAt *time.Time
+	if input.ExpiresInDays > 0 {
+		exp := time.Now().AddDate(0, 0, input.ExpiresInDays)
+		expiresAt = &exp
+	} else {
+		expiresAt = existing.ExpiresAt
+	}
+
+	isActive := existing.IsActive
+	if input.IsActive != nil {
+		isActive = *input.IsActive
+	}
+
+	updated, err := s.loyaltyRepo.UpdateOffer(ctx, offerID, input.Title, input.Description, input.DiscountText, input.MinPointsRequired, isActive, expiresAt)
+	if err != nil {
+		return nil, err
+	}
+
+	// Record Audit Track
+	_ = s.loyaltyRepo.RecordOfferAudit(ctx, &dto.OfferAuditRecord{
+		OfferID:              offerID,
+		ShopID:               shop.ID,
+		Action:               "UPDATED",
+		PreviousTitle:        existing.Title,
+		PreviousDiscountText: existing.DiscountText,
+		PreviousDescription:  existing.Description,
+		NewTitle:             updated.Title,
+		NewDiscountText:      updated.DiscountText,
+		NewDescription:       updated.Description,
+		ChangedByUserID:      shopOwnerUserID,
+	})
+
+	return updated, nil
+}
+
+func (s *LoyaltyService) DeleteOffer(ctx context.Context, shopOwnerUserID string, offerID string) error {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return ErrShopNotFound
+		}
+		return err
+	}
+
+	existing, err := s.loyaltyRepo.GetOfferByID(ctx, offerID)
+	if err != nil {
+		return errors.New("offer not found")
+	}
+
+	if existing.ShopID != shop.ID {
+		return errors.New("unauthorized to delete this offer")
+	}
+
+	err = s.loyaltyRepo.DeleteOffer(ctx, offerID)
+	if err != nil {
+		return err
+	}
+
+	// Record Audit Track
+	_ = s.loyaltyRepo.RecordOfferAudit(ctx, &dto.OfferAuditRecord{
+		OfferID:              offerID,
+		ShopID:               shop.ID,
+		Action:               "DELETED",
+		PreviousTitle:        existing.Title,
+		PreviousDiscountText: existing.DiscountText,
+		PreviousDescription:  existing.Description,
+		ChangedByUserID:      shopOwnerUserID,
+	})
+
+	return nil
+}
+
+func (s *LoyaltyService) GetOfferHistory(ctx context.Context, shopOwnerUserID string) ([]*dto.OfferAuditRecord, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, ErrShopNotFound
+		}
+		return nil, err
+	}
+
+	return s.loyaltyRepo.GetOfferAuditHistory(ctx, shop.ID)
 }
 
 // ListShopOffers lists active store offers and marks whether customer has unlocked VIP deals.

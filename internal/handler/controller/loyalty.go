@@ -108,6 +108,92 @@ func (c *LoyaltyController) CreateOffer(w http.ResponseWriter, r *http.Request) 
 	reuse.Created(w, "In-store offer created successfully", offer)
 }
 
+// UpdateOffer updates an existing offer and records audit track (Protected - Shop)
+func (c *LoyaltyController) UpdateOffer(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	offerID := chi.URLParam(r, "id")
+	if offerID == "" {
+		reuse.Error(w, http.StatusBadRequest, "offer id is required")
+		return
+	}
+
+	var input dto.UpdateOfferRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := reuse.ValidateStruct(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	offer, err := c.service.UpdateOffer(r.Context(), claims.UserID, offerID, input)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
+			return
+		}
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Offer updated successfully and recorded in audit track", offer)
+}
+
+// DeleteOffer deactivates an offer and records audit track (Protected - Shop)
+func (c *LoyaltyController) DeleteOffer(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	offerID := chi.URLParam(r, "id")
+	if offerID == "" {
+		reuse.Error(w, http.StatusBadRequest, "offer id is required")
+		return
+	}
+
+	err := c.service.DeleteOffer(r.Context(), claims.UserID, offerID)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
+			return
+		}
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Offer deleted successfully and recorded in audit track", nil)
+}
+
+// GetOfferHistory retrieves the audit track/history for all offers (Protected - Shop)
+func (c *LoyaltyController) GetOfferHistory(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	history, err := c.service.GetOfferHistory(r.Context(), claims.UserID)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Offer audit history retrieved successfully", history)
+}
+
 // ListOffers returns all active in-store offers for a shop, indicating VIP unlocks (Public/Customer)
 func (c *LoyaltyController) ListOffers(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
@@ -146,7 +232,6 @@ func (c *LoyaltyController) ListAllOffers(w http.ResponseWriter, r *http.Request
 
 	reuse.Success(w, "Active deals retrieved successfully", offers)
 }
-
 
 // GetUserLoyalty returns the customer's current points and VIP tier status (Protected - Customer)
 func (c *LoyaltyController) GetUserLoyalty(w http.ResponseWriter, r *http.Request) {

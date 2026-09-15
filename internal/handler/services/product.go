@@ -3,8 +3,10 @@ package services
 
 import (
 	"context"
+	"encoding/csv"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"math/rand"
 	"net/url"
@@ -12,10 +14,10 @@ import (
 	"shopMe/internal/handler/model"
 	"shopMe/internal/handler/repository"
 	"shopMe/internal/reuse"
+	"strconv"
 	"strings"
 	"time"
 )
-
 
 type ProductService struct {
 	productRepo  *repository.ProductRepo
@@ -35,6 +37,20 @@ func NewProductService(
 	}
 }
 
+// resolveCategoryID accepts both the persisted UUID and the frontend-owned slug.
+// This keeps the category catalog decoupled from the product form while preserving the DB relation.
+func (s *ProductService) resolveCategoryID(ctx context.Context, value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if category, err := s.categoryRepo.FindByID(ctx, trimmed); err == nil {
+		return category.ID, nil
+	}
+	category, err := s.categoryRepo.FindBySlug(ctx, strings.ToLower(trimmed))
+	if err != nil {
+		return "", ErrInvalidCategory
+	}
+	return category.ID, nil
+}
+
 func (s *ProductService) CreateProduct(ctx context.Context, userID string, input dto.CreateProductRequest) (*model.Product, error) {
 	// 1. Verify user owns a shop
 	shop, err := s.shopRepo.FindByUserID(ctx, userID)
@@ -43,8 +59,9 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 	}
 
 	// 2. Validate category
-	if _, err := s.categoryRepo.FindByID(ctx, input.CategoryID); err != nil {
-		return nil, ErrInvalidCategory
+	categoryID, err := s.resolveCategoryID(ctx, input.CategoryID)
+	if err != nil {
+		return nil, err
 	}
 
 	// 3. Enforce max 4 images (Cost & Storage efficiency rule)
@@ -75,7 +92,7 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 		Price:             input.Price,
 		CostPrice:         input.CostPrice,
 		ComparePrice:      input.ComparePrice,
-		CategoryID:        input.CategoryID,
+		CategoryID:        categoryID,
 		Images:            input.Images,
 		Weight:            input.Weight,
 		IsActive:          true,
@@ -161,10 +178,11 @@ func (s *ProductService) UpdateProduct(ctx context.Context, userID, productID st
 		existing.ComparePrice = *input.ComparePrice
 	}
 	if input.CategoryID != nil {
-		if _, err := s.categoryRepo.FindByID(ctx, *input.CategoryID); err != nil {
-			return nil, ErrInvalidCategory
+		categoryID, err := s.resolveCategoryID(ctx, *input.CategoryID)
+		if err != nil {
+			return nil, err
 		}
-		existing.CategoryID = *input.CategoryID
+		existing.CategoryID = categoryID
 	}
 	if input.Weight != nil {
 		existing.Weight = *input.Weight
@@ -180,6 +198,12 @@ func (s *ProductService) UpdateProduct(ctx context.Context, userID, productID st
 	}
 	if input.CostPrice != nil {
 		existing.CostPrice = *input.CostPrice
+	}
+	if input.FloorPrice != nil {
+		existing.FloorPrice = *input.FloorPrice
+	}
+	if input.AllowBargain != nil {
+		existing.AllowBargain = *input.AllowBargain
 	}
 	if input.Attributes != nil {
 		existing.Attributes = *input.Attributes
@@ -245,10 +269,9 @@ func (s *ProductService) DeleteProduct(ctx context.Context, userID, productID st
 		return err
 	}
 
-	// 4. Automatically delete all product images from R2 to avoid storage costs
-	for _, img := range existing.Images {
-		_ = reuse.DeleteImage(img)
-	}
+	// Note: We intentionally do NOT delete the images from Cloudflare R2 here.
+	// Because the product is only soft-deleted (is_active = false) so that past
+	// POS sales, receipts, and Khata bills can still display the product image.
 
 	return nil
 }
@@ -459,18 +482,18 @@ func (s *ProductService) NegotiateBargainOffer(ctx context.Context, productID st
 		waURL := fmt.Sprintf("https://wa.me/%s?text=%s", shopWhatsApp, url.QueryEscape(waMsg))
 
 		return &dto.BargainNegotiationResponse{
-			Status:           "DEAL_ACCEPTED",
-			ProductID:        prod.ID,
-			ProductName:      prod.Name,
-			OriginalPrice:    prod.Price,
-			OfferedPrice:     req.OfferedPrice,
-			AgreedPrice:      prod.Price,
-			SavingsAmount:    0,
+			Status:            "DEAL_ACCEPTED",
+			ProductID:         prod.ID,
+			ProductName:       prod.Name,
+			OriginalPrice:     prod.Price,
+			OfferedPrice:      req.OfferedPrice,
+			AgreedPrice:       prod.Price,
+			SavingsAmount:     0,
 			SavingsPercentage: 0,
-			DealCode:         dealCode,
-			ExpiresAt:        &expiresAt,
-			Message:          fmt.Sprintf("Deal accepted! Order %s at standard price Rs.%.2f.", prod.Name, prod.Price),
-			WhatsAppOrderURL: waURL,
+			DealCode:          dealCode,
+			ExpiresAt:         &expiresAt,
+			Message:           fmt.Sprintf("Deal accepted! Order %s at standard price Rs.%.2f.", prod.Name, prod.Price),
+			WhatsAppOrderURL:  waURL,
 		}, nil
 	}
 
@@ -646,4 +669,121 @@ func generateDealCode() string {
 	return string(b)
 }
 
+// BulkImportProductsFromCSV parses CSV bytes and bulk imports products into shop catalog in batch.
+func (s *ProductService) BulkImportProductsFromCSV(ctx context.Context, userID string, csvReader io.Reader) (*dto.BulkImportResponse, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, userID)
+	if err != nil {
+		return nil, ErrShopNotFound
+	}
 
+	reader := csv.NewReader(csvReader)
+	reader.TrimLeadingSpace = true
+
+	records, err := reader.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("invalid CSV file format: %w", err)
+	}
+
+	if len(records) <= 1 {
+		return nil, errors.New("CSV file is empty or missing data rows")
+	}
+
+	// Identify header positions
+	header := records[0]
+	nameCol, skuCol, priceCol, costCol, stockCol, minStockCol, descCol := -1, -1, -1, -1, -1, -1, -1
+
+	for i, h := range header {
+		cleanH := strings.ToLower(strings.TrimSpace(h))
+		if strings.Contains(cleanH, "name") || strings.Contains(cleanH, "title") || strings.Contains(cleanH, "item") {
+			nameCol = i
+		} else if strings.Contains(cleanH, "sku") || strings.Contains(cleanH, "code") || strings.Contains(cleanH, "barcode") {
+			skuCol = i
+		} else if strings.Contains(cleanH, "price") || strings.Contains(cleanH, "mrp") || strings.Contains(cleanH, "rate") {
+			if strings.Contains(cleanH, "cost") || strings.Contains(cleanH, "buy") || strings.Contains(cleanH, "wholesale") {
+				costCol = i
+			} else if priceCol == -1 {
+				priceCol = i
+			}
+		} else if strings.Contains(cleanH, "cost") || strings.Contains(cleanH, "wholesale") {
+			costCol = i
+		} else if strings.Contains(cleanH, "stock") || strings.Contains(cleanH, "qty") || strings.Contains(cleanH, "quantity") {
+			stockCol = i
+		} else if strings.Contains(cleanH, "min") || strings.Contains(cleanH, "threshold") {
+			minStockCol = i
+		} else if strings.Contains(cleanH, "desc") || strings.Contains(cleanH, "details") {
+			descCol = i
+		}
+	}
+
+	if nameCol == -1 {
+		nameCol = 0
+	}
+	if priceCol == -1 {
+		priceCol = 1
+	}
+
+	var items []dto.BulkImportProductItem
+
+	for _, row := range records[1:] {
+		if len(row) == 0 {
+			continue
+		}
+
+		item := dto.BulkImportProductItem{}
+
+		if nameCol < len(row) {
+			item.Name = strings.TrimSpace(row[nameCol])
+		}
+		if skuCol != -1 && skuCol < len(row) {
+			item.SKU = strings.TrimSpace(row[skuCol])
+		}
+		if priceCol < len(row) {
+			pVal, _ := strconv.ParseFloat(strings.TrimSpace(row[priceCol]), 64)
+			item.Price = pVal
+		}
+		if costCol != -1 && costCol < len(row) {
+			cVal, _ := strconv.ParseFloat(strings.TrimSpace(row[costCol]), 64)
+			item.CostPrice = cVal
+		}
+		if stockCol != -1 && stockCol < len(row) {
+			sVal, _ := strconv.Atoi(strings.TrimSpace(row[stockCol]))
+			item.StockQuantity = sVal
+		} else {
+			item.StockQuantity = 10
+		}
+		if minStockCol != -1 && minStockCol < len(row) {
+			mVal, _ := strconv.Atoi(strings.TrimSpace(row[minStockCol]))
+			item.MinStock = mVal
+		}
+		if descCol != -1 && descCol < len(row) {
+			item.Description = strings.TrimSpace(row[descCol])
+		}
+
+		if item.Name != "" {
+			items = append(items, item)
+		}
+	}
+
+	return s.productRepo.BulkImportProducts(ctx, shop.ID, items)
+}
+
+// BulkImportProductsFromJSON bulk imports products provided via JSON array.
+func (s *ProductService) BulkImportProductsFromJSON(ctx context.Context, userID string, items []dto.BulkImportProductItem) (*dto.BulkImportResponse, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, userID)
+	if err != nil {
+		return nil, ErrShopNotFound
+	}
+	return s.productRepo.BulkImportProducts(ctx, shop.ID, items)
+}
+
+// GenerateCSVImportTemplate returns a ready-to-use sample CSV template for shopkeepers.
+func (s *ProductService) GenerateCSVImportTemplate() []byte {
+	template := "Name,SKU,Price,CostPrice,StockQuantity,MinStock,Description\n" +
+		"Aashirvaad Shuddh Chakki Atta 5kg,ATT-5KG,245.00,210.00,50,5,5kg Whole Wheat Flour Pack\n" +
+		"Fortune Sunlite Refined Oil 1L,OIL-1L,135.00,115.00,40,5,1 Liter Pouch\n" +
+		"Tata Salt Iodized 1kg,SALT-1KG,28.00,22.00,100,10,1kg Vacuum Evaporated Iodized Salt\n" +
+		"Dettol Original Soap 125g,DET-125G,55.00,45.00,60,8,Antiseptic Bathing Bar\n" +
+		"Maggi 2-Minute Masala Noodles 70g,MAG-70G,14.00,11.50,120,15,Instant Noodles Pack\n"
+
+	return []byte(template)
+}

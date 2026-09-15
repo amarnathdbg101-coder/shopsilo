@@ -135,7 +135,7 @@ func (r *ReservationRepo) CreateWithTx(ctx context.Context, tx pgx.Tx, res *mode
 
 func (r *ReservationRepo) FindByID(ctx context.Context, id string) (*model.Reservation, error) {
 	query := `
-		SELECT r.id, r.reservation_number, r.user_id, r.shop_id, r.product_id, r.quantity, r.pickup_code,
+		SELECT r.id, r.reservation_number, COALESCE(r.user_id::text, ''), r.shop_id, COALESCE(r.product_id::text, ''), r.quantity, r.pickup_code,
 		       r.status, r.expires_at, r.completed_at, COALESCE(r.notes, ''), r.created_at, r.updated_at,
 		       s.name AS shop_name, s.slug AS shop_slug, s.phone AS shop_phone, s.address AS shop_address, s.latitude, s.longitude,
 		       p.name AS product_name, p.slug AS product_slug, p.price AS product_price, p.images AS product_images
@@ -223,7 +223,7 @@ func (r *ReservationRepo) FindByUserID(ctx context.Context, userID string, filte
 	whereSQL := strings.Join(whereClauses, " AND ")
 
 	query := fmt.Sprintf(`
-		SELECT r.id, r.reservation_number, r.user_id, r.shop_id, r.product_id, r.quantity, r.pickup_code,
+		SELECT r.id, r.reservation_number, COALESCE(r.user_id::text, ''), r.shop_id, COALESCE(r.product_id::text, ''), r.quantity, r.pickup_code,
 		       r.status, r.expires_at, r.completed_at, COALESCE(r.notes, ''), r.created_at, r.updated_at,
 		       s.name AS shop_name, s.slug AS shop_slug, s.phone AS shop_phone, s.address AS shop_address, s.latitude, s.longitude,
 		       p.name AS product_name, p.slug AS product_slug, p.price AS product_price, p.images AS product_images,
@@ -329,7 +329,7 @@ func (r *ReservationRepo) FindByShopID(ctx context.Context, shopID string, filte
 	whereSQL := strings.Join(whereClauses, " AND ")
 
 	query := fmt.Sprintf(`
-		SELECT r.id, r.reservation_number, r.user_id, r.shop_id, r.product_id, r.quantity, r.pickup_code,
+		SELECT r.id, r.reservation_number, COALESCE(r.user_id::text, ''), r.shop_id, COALESCE(r.product_id::text, ''), r.quantity, r.pickup_code,
 		       r.status, r.expires_at, r.completed_at, COALESCE(r.notes, ''), r.created_at, r.updated_at,
 		       p.name AS product_name, p.slug AS product_slug, p.price AS product_price, p.images AS product_images,
 		       COUNT(*) OVER() AS total_count

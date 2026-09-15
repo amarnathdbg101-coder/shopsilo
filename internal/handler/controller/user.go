@@ -10,6 +10,7 @@ import (
 	"shopMe/internal/handler/services"
 	"shopMe/internal/middleware"
 	"shopMe/internal/reuse"
+	"shopMe/internal/utils"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -23,6 +24,67 @@ func NewUserController(service *services.UserService) *UserController {
 	return &UserController{
 		service: service,
 	}
+}
+
+func (c *UserController) SendRegistrationOTP(w http.ResponseWriter, r *http.Request) {
+	var input dto.SendPhoneOTPRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := reuse.ValidateStruct(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	res, err := c.service.SendRegistrationOTP(r.Context(), input)
+	if err != nil {
+		if errors.Is(err, services.ErrPhoneTaken) {
+			reuse.Error(w, http.StatusConflict, err.Error())
+			return
+		}
+		if errors.Is(err, services.ErrOTPCooldown) || errors.Is(err, services.ErrOTPHourlyLimitReached) {
+			reuse.Error(w, http.StatusTooManyRequests, err.Error())
+			return
+		}
+		if errors.Is(err, utils.ErrInvalidPhoneNumber) {
+			reuse.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, res.Message, res)
+}
+
+func (c *UserController) VerifyRegistrationOTP(w http.ResponseWriter, r *http.Request) {
+	var input dto.VerifyPhoneOTPRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := reuse.ValidateStruct(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	res, err := c.service.VerifyRegistrationOTP(r.Context(), input)
+	if err != nil {
+		if errors.Is(err, services.ErrOTPNotFoundOrExpired) ||
+			errors.Is(err, services.ErrInvalidOTP) ||
+			errors.Is(err, services.ErrOTPMaxAttemptsExceeded) ||
+			errors.Is(err, utils.ErrInvalidPhoneNumber) {
+			reuse.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, res.Message, res)
 }
 
 func (c *UserController) Register(w http.ResponseWriter, r *http.Request) {
@@ -39,8 +101,15 @@ func (c *UserController) Register(w http.ResponseWriter, r *http.Request) {
 
 	res, err := c.service.Register(r.Context(), input)
 	if err != nil {
-		if errors.Is(err, services.ErrEmailTaken) {
+		if errors.Is(err, services.ErrEmailTaken) || errors.Is(err, services.ErrPhoneTaken) {
 			reuse.Error(w, http.StatusConflict, err.Error())
+			return
+		}
+		if errors.Is(err, services.ErrInvalidVerificationToken) ||
+			errors.Is(err, services.ErrPhoneVerificationMismatch) ||
+			errors.Is(err, services.ErrTokenAlreadyUsed) ||
+			errors.Is(err, utils.ErrInvalidPhoneNumber) {
+			reuse.Error(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		reuse.Error(w, http.StatusInternalServerError, err.Error())
@@ -77,6 +146,47 @@ func (c *UserController) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reuse.Success(w, "Login successful", res)
+}
+
+func (c *UserController) GoogleLogin(w http.ResponseWriter, r *http.Request) {
+	var input dto.GoogleLoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := reuse.ValidateStruct(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	res, err := c.service.GoogleLogin(r.Context(), input)
+	if err != nil {
+		if errors.Is(err, services.ErrAccountInactive) {
+			reuse.Error(w, http.StatusForbidden, err.Error())
+			return
+		}
+		if errors.Is(err, services.ErrPhoneTaken) {
+			reuse.Error(w, http.StatusConflict, err.Error())
+			return
+		}
+		if errors.Is(err, services.ErrInvalidVerificationToken) ||
+			errors.Is(err, services.ErrPhoneVerificationMismatch) ||
+			errors.Is(err, services.ErrTokenAlreadyUsed) ||
+			errors.Is(err, utils.ErrInvalidPhoneNumber) {
+			reuse.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if res.RequiresPhone {
+		reuse.Success(w, "Phone verification required to complete Google registration", res)
+		return
+	}
+
+	reuse.Success(w, "Google login successful", res)
 }
 
 func (c *UserController) RefreshToken(w http.ResponseWriter, r *http.Request) {
