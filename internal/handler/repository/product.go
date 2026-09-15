@@ -1477,6 +1477,18 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 		return &dto.BulkImportResponse{TotalRows: 0, ImportedCount: 0, SkippedCount: 0, Errors: []string{}}, nil
 	}
 
+	// 1. Resolve a valid category_id for this shop
+	var defaultCategoryID string
+	err := r.db.QueryRow(ctx, `SELECT id FROM categories ORDER BY created_at ASC LIMIT 1`).Scan(&defaultCategoryID)
+	if err != nil || defaultCategoryID == "" {
+		_ = r.db.QueryRow(ctx, `
+			INSERT INTO categories (name, slug, description, is_active, created_at, updated_at)
+			VALUES ('General Store', 'general-store', 'Default Kirana and General Category', true, NOW(), NOW())
+			ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
+			RETURNING id
+		`).Scan(&defaultCategoryID)
+	}
+
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin bulk import transaction: %w", err)
@@ -1489,6 +1501,45 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 
 	rGenerator := rand.New(rand.NewSource(time.Now().UnixNano()))
 
+	// Batch lookup existing master images from product_media_vault for these SKUs
+	skuList := make([]string, 0, len(items))
+	for _, it := range items {
+		cleanS := strings.ToUpper(strings.TrimSpace(it.SKU))
+		if cleanS != "" {
+			skuList = append(skuList, cleanS)
+		}
+	}
+
+	vaultImages := make(map[string]string)
+	if len(skuList) > 0 {
+		vRows, vErr := tx.Query(ctx, `
+			SELECT UPPER(product_code), image_url 
+			FROM product_media_vault 
+			WHERE UPPER(product_code) = ANY($1) 
+			ORDER BY is_verified_master DESC, reference_count DESC
+		`, skuList)
+		if vErr == nil {
+			defer vRows.Close()
+			for vRows.Next() {
+				var pCode, imgURL string
+				if err := vRows.Scan(&pCode, &imgURL); err == nil {
+					if _, exists := vaultImages[pCode]; !exists {
+						vaultImages[pCode] = imgURL
+					}
+				}
+			}
+		}
+	}
+
+	insertQuery := `
+		INSERT INTO products (
+			shop_id, name, slug, description, sku, price, cost_price, compare_price,
+			category_id, images, weight, is_active, is_featured, tags, attributes, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9::jsonb, 0, true, false, '{}'::text[], '{}'::jsonb, NOW(), NOW())
+		RETURNING id
+	`
+
 	for idx, item := range items {
 		name := strings.TrimSpace(item.Name)
 		if name == "" {
@@ -1499,7 +1550,7 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 
 		if item.Price <= 0 {
 			skippedCount++
-			errMsgs = append(errMsgs, fmt.Sprintf("Row %d: Product price must be greater than 0", idx+1))
+			errMsgs = append(errMsgs, fmt.Sprintf("Row %d ('%s'): Price must be greater than 0", idx+1, name))
 			continue
 		}
 
@@ -1509,23 +1560,55 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 		}
 
 		slug := reuse.Slugify(name)
+		if slug == "" {
+			slug = fmt.Sprintf("prod-%d", rGenerator.Intn(900000)+10000)
+		}
 		slug = fmt.Sprintf("%s-%d", slug, rGenerator.Intn(900000)+10000)
 
-		// Insert product
-		insertQuery := `
-			INSERT INTO products (shop_id, name, slug, description, sku, price, cost_price, is_active, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, true, NOW(), NOW())
-			RETURNING id
-		`
+		catID := defaultCategoryID
+		if item.CategoryID != "" {
+			catID = item.CategoryID
+		}
+
+		imagesJSON := "[]"
+		if matchedImg, found := vaultImages[sku]; found && matchedImg != "" {
+			imagesJSON = fmt.Sprintf(`["%s"]`, matchedImg)
+		}
+
 		var productID string
-		err := tx.QueryRow(ctx, insertQuery, shopID, name, slug, strings.TrimSpace(item.Description), sku, item.Price, item.CostPrice).Scan(&productID)
+		err := tx.QueryRow(
+			ctx,
+			insertQuery,
+			shopID,
+			name,
+			slug,
+			strings.TrimSpace(item.Description),
+			sku,
+			item.Price,
+			item.CostPrice,
+			catID,
+			imagesJSON,
+		).Scan(&productID)
+
 		if err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 				// Retry with unique fallback SKU/Slug
 				altSKU := fmt.Sprintf("%s-%d", sku, rGenerator.Intn(900)+100)
 				altSlug := fmt.Sprintf("%s-alt-%d", slug, rGenerator.Intn(900)+100)
-				err = tx.QueryRow(ctx, insertQuery, shopID, name, altSlug, strings.TrimSpace(item.Description), altSKU, item.Price, item.CostPrice).Scan(&productID)
+				err = tx.QueryRow(
+					ctx,
+					insertQuery,
+					shopID,
+					name,
+					altSlug,
+					strings.TrimSpace(item.Description),
+					altSKU,
+					item.Price,
+					item.CostPrice,
+					catID,
+					imagesJSON,
+				).Scan(&productID)
 			}
 			if err != nil {
 				skippedCount++
