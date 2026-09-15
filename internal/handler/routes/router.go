@@ -19,7 +19,9 @@ import (
 func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	// User layer
 	userRepo := repository.NewUserRepo(db, logger)
+	phoneVerificationRepo := repository.NewPhoneVerificationRepo(db, logger)
 	userService := services.NewUserService(userRepo)
+	userService.SetPhoneVerificationRepo(phoneVerificationRepo)
 	uc := controller.NewUserController(userService)
 
 	// Moderation & Anti-Abuse layer
@@ -138,6 +140,8 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	// Public Auth routes (Rate limited to 10 attempts/min per IP to prevent brute force)
 	r.Route("/auth", func(r chi.Router) {
 		r.Use(middleware.AuthRateLimiter.Middleware())
+		r.Post("/send-otp", uc.SendRegistrationOTP)
+		r.Post("/verify-otp", uc.VerifyRegistrationOTP)
 		r.Post("/register", uc.Register)
 		r.Post("/login", uc.Login)
 		r.Post("/staff-login", staffc.StaffLogin)

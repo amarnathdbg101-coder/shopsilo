@@ -5,10 +5,19 @@ import "errors"
 
 var (
 	// User errors
-	ErrInvalidCredentials = errors.New("invalid email or password")
-	ErrAccountInactive    = errors.New("account is inactive or suspended")
-	ErrEmailTaken         = errors.New("email is already registered")
-	ErrInvalidResetToken  = errors.New("invalid or expired password reset token")
+	ErrInvalidCredentials        = errors.New("invalid email or password")
+	ErrAccountInactive           = errors.New("account is inactive or suspended")
+	ErrEmailTaken                = errors.New("email is already registered")
+	ErrPhoneTaken                = errors.New("phone number is already registered")
+	ErrInvalidResetToken         = errors.New("invalid or expired password reset token")
+	ErrOTPCooldown               = errors.New("please wait 60 seconds before requesting another otp")
+	ErrOTPHourlyLimitReached     = errors.New("maximum otp limit reached for this number, please try again in 1 hour")
+	ErrOTPNotFoundOrExpired      = errors.New("otp not found or expired, please request a new one")
+	ErrInvalidOTP                = errors.New("invalid otp")
+	ErrOTPMaxAttemptsExceeded    = errors.New("too many invalid attempts, this otp has been locked. please request a new otp")
+	ErrInvalidVerificationToken  = errors.New("invalid or expired phone verification token")
+	ErrPhoneVerificationMismatch = errors.New("phone number does not match verified token")
+	ErrTokenAlreadyUsed          = errors.New("phone verification token has already been used")
 
 	// Shop errors
 	ErrUserAlreadyHasShop     = errors.New("you already have a registered shop")

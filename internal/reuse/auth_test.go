@@ -126,3 +126,40 @@ func TestGenerateJwt(t *testing.T) {
 		t.Fatalf("unexpected claims in token: %+v", claims)
 	}
 }
+
+func TestPhoneVerificationToken(t *testing.T) {
+	secret := "verification-secret-test-key"
+	phone := "9876543210"
+	verificationID := "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
+
+	tokenStr, err := GeneratePhoneVerificationToken(phone, verificationID, secret)
+	if err != nil {
+		t.Fatalf("unexpected error generating verification token: %v", err)
+	}
+
+	claims, err := VerifyPhoneVerificationToken(tokenStr, secret)
+	if err != nil {
+		t.Fatalf("unexpected error verifying token: %v", err)
+	}
+	if claims.Phone != phone {
+		t.Fatalf("expected phone %s, got %s", phone, claims.Phone)
+	}
+	if claims.VerificationID != verificationID {
+		t.Fatalf("expected verificationID %s, got %s", verificationID, claims.VerificationID)
+	}
+	if claims.Purpose != "phone_registration" {
+		t.Fatalf("expected purpose phone_registration, got %s", claims.Purpose)
+	}
+
+	// Tampered secret should fail
+	_, err = VerifyPhoneVerificationToken(tokenStr, "wrong-secret")
+	if err == nil {
+		t.Fatalf("expected verification to fail with wrong secret")
+	}
+
+	// Tampered token string should fail
+	_, err = VerifyPhoneVerificationToken(tokenStr+"extra", secret)
+	if err == nil {
+		t.Fatalf("expected verification to fail with tampered token string")
+	}
+}

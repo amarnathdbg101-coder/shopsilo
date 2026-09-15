@@ -17,6 +17,7 @@ import (
 var (
 	ErrUserNotFound    = errors.New("user not found")
 	ErrDuplicateEmail  = errors.New("email already registered")
+	ErrDuplicatePhone  = errors.New("phone number already registered")
 )
 
 type UserRepo struct {
@@ -61,12 +62,45 @@ func (r *UserRepo) Create(ctx context.Context, u *model.User) (*model.User, erro
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" { // Unique violation
+			if strings.Contains(strings.ToLower(pgErr.ConstraintName), "phone") {
+				return nil, ErrDuplicatePhone
+			}
 			return nil, ErrDuplicateEmail
 		}
 		r.logger.Error("failed to create user", zap.Error(err), zap.String("email", u.Email))
 		return nil, err
 	}
 	return created, nil
+}
+
+func (r *UserRepo) FindByPhone(ctx context.Context, phone string) (*model.User, error) {
+	query := `
+		SELECT id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, created_at, updated_at
+		FROM users
+		WHERE phone = $1
+		LIMIT 1
+	`
+	u := &model.User{}
+	err := r.db.QueryRow(ctx, query, strings.TrimSpace(phone)).Scan(
+		&u.ID,
+		&u.Email,
+		&u.PasswordHash,
+		&u.FullName,
+		&u.Phone,
+		&u.AvatarURL,
+		&u.Role,
+		&u.IsActive,
+		&u.CreatedAt,
+		&u.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrUserNotFound
+		}
+		r.logger.Error("failed to find user by phone", zap.Error(err), zap.String("phone", phone))
+		return nil, err
+	}
+	return u, nil
 }
 
 func (r *UserRepo) FindByEmail(ctx context.Context, email string) (*model.User, error) {
