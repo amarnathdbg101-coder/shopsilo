@@ -21,39 +21,21 @@ import (
 )
 
 type ProductService struct {
-	productRepo    *repository.ProductRepo
-	shopRepo       *repository.ShopRepo
-	categoryRepo   *repository.CategoryRepo
-	mediaVaultRepo *repository.MediaVaultRepo
+	productRepo  *repository.ProductRepo
+	shopRepo     *repository.ShopRepo
+	categoryRepo *repository.CategoryRepo
 }
 
 func NewProductService(
 	productRepo *repository.ProductRepo,
 	shopRepo *repository.ShopRepo,
 	categoryRepo *repository.CategoryRepo,
-	mediaVaultRepo ...*repository.MediaVaultRepo,
 ) *ProductService {
-	svc := &ProductService{
+	return &ProductService{
 		productRepo:  productRepo,
 		shopRepo:     shopRepo,
 		categoryRepo: categoryRepo,
 	}
-	if len(mediaVaultRepo) > 0 {
-		svc.mediaVaultRepo = mediaVaultRepo[0]
-	}
-	return svc
-}
-
-func (s *ProductService) SetMediaVaultRepo(repo *repository.MediaVaultRepo) {
-	s.mediaVaultRepo = repo
-}
-
-// SuggestMasterImages searches global vault for verified catalog images matching barcode/SKU or name
-func (s *ProductService) SuggestMasterImages(ctx context.Context, code string, name string) ([]model.ProductMediaVaultItem, error) {
-	if s.mediaVaultRepo == nil {
-		return []model.ProductMediaVaultItem{}, nil
-	}
-	return s.mediaVaultRepo.SuggestImages(ctx, code, name)
 }
 
 // resolveCategoryID accepts both the persisted UUID and the frontend-owned slug.
@@ -86,18 +68,7 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 	sku := strings.TrimSpace(strings.ToUpper(input.SKU))
 	images := input.Images
 
-	// 3. Auto-inherit master image from vault if images array is empty and SKU is provided
-	if len(images) == 0 && sku != "" && s.mediaVaultRepo != nil {
-		if vaultItems, vErr := s.mediaVaultRepo.FindByProductCode(ctx, sku); vErr == nil && len(vaultItems) > 0 {
-			for _, vi := range vaultItems {
-				if vi.ImageURL != "" && len(images) < 4 {
-					images = append(images, vi.ImageURL)
-				}
-			}
-		}
-	}
-
-	// 4. Enforce max 4 images (Cost & Storage efficiency rule)
+	// 3. Enforce max 4 images (Cost & Storage efficiency rule)
 	if len(images) > 4 {
 		return nil, ErrTooManyProductImages
 	}
@@ -268,18 +239,10 @@ func (s *ProductService) UpdateProduct(ctx context.Context, userID, productID st
 			newImagesMap[img] = true
 		}
 
-		// Multi-Tenant Safe Cleanup: Delete images only if no other product/shop in the platform references them
+		// Delete images that were removed in the update to save R2 storage
 		for _, oldImg := range existing.Images {
 			if !newImagesMap[oldImg] {
-				canPurge := true
-				if s.mediaVaultRepo != nil {
-					if activeCount, err := s.mediaVaultRepo.GetActiveUsageCount(ctx, oldImg); err == nil && activeCount > 1 {
-						canPurge = false
-					}
-				}
-				if canPurge {
-					_ = reuse.DeleteImage(oldImg)
-				}
+				_ = reuse.DeleteImage(oldImg)
 			}
 		}
 
