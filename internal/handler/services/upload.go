@@ -2,45 +2,31 @@
 package services
 
 import (
-	"crypto/sha256"
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
-	"shopMe/internal/handler/model"
 	"shopMe/internal/handler/repository"
 	"shopMe/internal/reuse"
-	"strings"
 	"sync"
 )
 type UploadService struct {
-	userRepo       *repository.UserRepo
-	shopRepo       *repository.ShopRepo
-	modRepo        *repository.ModerationRepo
-	mediaVaultRepo *repository.MediaVaultRepo
+	userRepo *repository.UserRepo
+	shopRepo *repository.ShopRepo
+	modRepo  *repository.ModerationRepo
 }
 
 func NewUploadService(
 	userRepo *repository.UserRepo, 
 	shopRepo *repository.ShopRepo, 
 	modRepo *repository.ModerationRepo,
-	mediaVaultRepo ...*repository.MediaVaultRepo,
 ) *UploadService {
-	svc := &UploadService{
+	return &UploadService{
 		userRepo: userRepo,
 		shopRepo: shopRepo,
 		modRepo:  modRepo,
 	}
-	if len(mediaVaultRepo) > 0 {
-		svc.mediaVaultRepo = mediaVaultRepo[0]
-	}
-	return svc
-}
-
-func (s *UploadService) SetMediaVaultRepo(repo *repository.MediaVaultRepo) {
-	s.mediaVaultRepo = repo
 }
 
 // validateImageSafety checks if the image matches any banned perceptual hashes
@@ -214,13 +200,12 @@ func (s *UploadService) UploadShopImages(
 	return newLogoURL, newBanners, nil
 }
 
-// UploadProductImages uploads up to 4 images for a product with automatic SHA-256 content deduplication
+// UploadProductImages uploads up to 4 images for a product
 func (s *UploadService) UploadProductImages(
 	ctx context.Context,
 	userID string,
 	files []multipart.File,
 	headers []*multipart.FileHeader,
-	productCodes ...string,
 ) ([]string, error) {
 	shop, err := s.shopRepo.FindByUserID(ctx, userID)
 	if err != nil {
@@ -231,14 +216,6 @@ func (s *UploadService) UploadProductImages(
 		return nil, ErrTooManyProductImages
 	}
 
-	var productCode string
-	if len(productCodes) > 0 {
-		productCode = strings.TrimSpace(productCodes[0])
-	}
-	if productCode == "" {
-		productCode = fmt.Sprintf("SHOP-%s", shop.ID[:8])
-	}
-
 	// Validate safety of all product images before uploading
 	for _, f := range files {
 		if err := s.validateImageSafety(ctx, f); err != nil {
@@ -247,10 +224,9 @@ func (s *UploadService) UploadProductImages(
 	}
 
 	type uploadResult struct {
-		index     int
-		url       string
-		isDedupe  bool
-		err       error
+		index int
+		url   string
+		err   error
 	}
 
 	resChan := make(chan uploadResult, len(files))
@@ -262,53 +238,12 @@ func (s *UploadService) UploadProductImages(
 		wg.Add(1)
 		go func(idx int, file multipart.File, header *multipart.FileHeader) {
 			defer wg.Done()
-
-			// 1. Calculate SHA-256 content hash of the raw image bytes
-			var fileBytes []byte
-			var contentHash string
-			rawBytes, readErr := io.ReadAll(file)
-			if readErr == nil && len(rawBytes) > 0 {
-				hashSum := sha256.Sum256(rawBytes)
-				contentHash = hex.EncodeToString(hashSum[:])
-				fileBytes = rawBytes
-				// Reset seek for downstream compression / upload
-				_, _ = file.Seek(0, io.SeekStart)
-			}
-
-			// 2. Check if identical image already exists in global media vault (Zero duplicate upload)
-			if s.mediaVaultRepo != nil && contentHash != "" {
-				existing, dbErr := s.mediaVaultRepo.FindByContentHash(ctx, contentHash)
-				if dbErr == nil && existing != nil && existing.ImageURL != "" {
-					_ = s.mediaVaultRepo.IncrementReferenceCount(ctx, existing.ImageURL)
-					resChan <- uploadResult{index: idx, url: existing.ImageURL, isDedupe: true, err: nil}
-					return
-				}
-			}
-
-			// 3. Not deduplicated: Upload image to Cloudflare R2 / Storage
 			url, uploadErr := reuse.UploadImage(file, header, folder)
 			if uploadErr != nil {
-				resChan <- uploadResult{index: idx, url: "", isDedupe: false, err: uploadErr}
+				resChan <- uploadResult{index: idx, url: "", err: uploadErr}
 				return
 			}
-
-			// 4. Register newly uploaded image into global product_media_vault
-			if s.mediaVaultRepo != nil && contentHash != "" && url != "" {
-				vaultItem := &model.ProductMediaVaultItem{
-					ProductCode:      productCode,
-					ContentHash:      contentHash,
-					ImageURL:         url,
-					OriginalFilename: header.Filename,
-					MimeType:         header.Header.Get("Content-Type"),
-					FileSizeBytes:    int64(len(fileBytes)),
-					UploaderShopID:   &shop.ID,
-					IsVerifiedMaster: false,
-					ReferenceCount:   1,
-				}
-				_ = s.mediaVaultRepo.UpsertVaultAsset(ctx, vaultItem)
-			}
-
-			resChan <- uploadResult{index: idx, url: url, isDedupe: false, err: nil}
+			resChan <- uploadResult{index: idx, url: url, err: nil}
 		}(i, f, headers[i])
 	}
 
@@ -317,7 +252,6 @@ func (s *UploadService) UploadProductImages(
 
 	uploadedURLs := make([]string, len(files))
 	var uploadErr error
-	var newlyUploadedURLs []string
 
 	for res := range resChan {
 		if res.err != nil && uploadErr == nil {
@@ -325,15 +259,12 @@ func (s *UploadService) UploadProductImages(
 		}
 		if res.url != "" {
 			uploadedURLs[res.index] = res.url
-			if !res.isDedupe {
-				newlyUploadedURLs = append(newlyUploadedURLs, res.url)
-			}
 		}
 	}
 
 	if uploadErr != nil {
-		// Rollback only freshly uploaded images from this batch
-		for _, u := range newlyUploadedURLs {
+		// Rollback uploaded images from this batch
+		for _, u := range uploadedURLs {
 			if u != "" {
 				_ = reuse.DeleteImage(u)
 			}

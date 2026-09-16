@@ -43,16 +43,13 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	categoryService := services.NewCategoryService(categoryRepo)
 	catc := controller.NewCategoryController(categoryService)
 
-	// Media Vault layer (Smart deduplication & global master catalog images)
-	mediaVaultRepo := repository.NewMediaVaultRepo(db)
-
 	// Product layer
 	productRepo := repository.NewProductRepo(db, logger)
-	productService := services.NewProductService(productRepo, shopRepo, categoryRepo, mediaVaultRepo)
+	productService := services.NewProductService(productRepo, shopRepo, categoryRepo)
 	pc := controller.NewProductController(productService, shopService)
 
-	// Upload layer (Cloudflare R2 cost-efficient image management with SHA-256 deduplication)
-	uploadService := services.NewUploadService(userRepo, shopRepo, modRepo, mediaVaultRepo)
+	// Upload layer (Cloudflare R2 image management)
+	uploadService := services.NewUploadService(userRepo, shopRepo, modRepo)
 	upc := controller.NewUploadController(uploadService)
 
 	// Reservation layer (In-Store item hold & counter pickup verification)
@@ -179,7 +176,6 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	r.Get("/products/{id}", pc.GetByID)
 	r.Get("/products/slug/{slug}", pc.GetBySlug)
 	r.Get("/products/scan/{code}", loyc.ScanProduct)
-	r.Get("/products/media/suggest", pc.SuggestMasterImages)
 	r.Post("/products/{id}/notify-me", invc.SubscribeStockAlert)
 	r.Post("/products/{id}/make-offer", pc.MakeOffer)
 	r.Get("/receipts/{bill_number}", posc.ViewPublicReceiptPDF)
@@ -234,7 +230,6 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Post("/shops/me/products/{id}/markdown", pc.ApplyClearanceMarkdown)
 		r.Post("/shops/me/products/bulk-import", pc.BulkImport)
 		r.Get("/shops/me/products/import-template.csv", pc.DownloadImportTemplate)
-		r.Get("/shops/me/products/media/suggest", pc.SuggestMasterImages)
 
 		// Shop Inventory & Wholesale Restock
 		r.Post("/shops/me/inventory/adjust", invc.AdjustStock)

@@ -36,11 +36,10 @@ func main() {
 	// Context for background concurrent workers
 	appCtx, stopApp := context.WithCancel(context.Background())
 	defer stopApp()
-	// Background Concurrency Worker: Periodically expires stale holds and releases reserved inventory
+	// Background Concurrency Workers
 	go worker.StartReservationCleaner(appCtx, db, logger)
-
-	// Background Concurrency Worker 2: Nightly Automated Database Backup to Cloudflare R2 (Runs every 24h)
 	go worker.StartBackupWorker(appCtx, db, logger)
+	go worker.StartOutboxWorker(appCtx, db, logger)
 
 	server := servers.NewServer(utils.MustLoad().Port, router)
 
