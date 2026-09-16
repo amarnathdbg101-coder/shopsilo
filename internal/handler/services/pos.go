@@ -188,6 +188,21 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 			}
 		}
 
+		// 🛡️ Strict Loss Prevention Guardrail
+		// If merchant enters a selling price below floor_price (or below cost_price if no floor price set),
+		// reject bill creation and return a clear, protective error message preventing business loss.
+		minAllowedPrice := prod.FloorPrice
+		if minAllowedPrice <= 0 && prod.CostPrice > 0 {
+			minAllowedPrice = prod.CostPrice
+		}
+		if minAllowedPrice > 0 && unitPrice < minAllowedPrice {
+			lossPerUnit := prod.CostPrice - unitPrice
+			if lossPerUnit < 0 {
+				lossPerUnit = minAllowedPrice - unitPrice
+			}
+			return nil, fmt.Errorf("loss prevention alert: cannot sell '%s' at Rs.%.2f. Minimum allowed floor price is Rs.%.2f (Cost: Rs.%.2f). Selling below floor causes a loss of Rs.%.2f per unit; bill generation blocked", prod.Name, unitPrice, minAllowedPrice, prod.CostPrice, lossPerUnit)
+		}
+
 		lineTotal := unitPrice * float64(it.Quantity)
 		lineCost := prod.CostPrice * float64(it.Quantity)
 
