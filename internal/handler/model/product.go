@@ -36,12 +36,14 @@ type Product struct {
     UnitProfit      float64   `json:"unit_profit,omitempty"`
     ProfitMarginPct float64   `json:"profit_margin_pct,omitempty"`
     ComparePrice    float64   `json:"compare_price,omitempty"`
+    MRP             float64   `json:"mrp,omitempty"`
     CategoryID      string    `json:"category_id"`
     Category        *Category `json:"category,omitempty"`
     Images          []string  `json:"images"`
     Weight          float64   `json:"weight"`
     IsActive        bool      `json:"is_active"`
     IsFeatured      bool      `json:"is_featured"`
+    IsPricePublic   bool      `json:"is_price_public"`
     Tags            []string  `json:"tags"`
     Attributes      map[string]interface{} `json:"attributes,omitempty"` // Brand, Model, Size, Color, Gender, Season, etc.
     Inventory       *Inventory `json:"inventory,omitempty"`

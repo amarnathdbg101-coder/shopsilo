@@ -1,41 +1,21 @@
 package migration
 
 import (
-	"embed"
-	"errors"
 	"fmt"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
-	"github.com/golang-migrate/migrate/v4/source/iofs"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 )
 
-//go:embed *.sql
-var MigrationFiles embed.FS
-
-// RunAutoMigrations automatically applies all pending SQL migrations using the database connection URL.
 func RunAutoMigrations(dbURL string) error {
-	sourceDriver, err := iofs.New(MigrationFiles, ".")
+	m, err := migrate.New("file://internal/migration", dbURL)
 	if err != nil {
-		return fmt.Errorf("failed to create iofs source driver: %w", err)
+		return fmt.Errorf("failed to create migration driver: %w", err)
 	}
 
-	m, err := migrate.NewWithSourceInstance("iofs", sourceDriver, dbURL)
-	if err != nil {
-		return fmt.Errorf("failed to initialize migrate instance: %w", err)
-	}
-	defer m.Close()
-
-	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		var dirtyErr migrate.ErrDirty
-		if errors.As(err, &dirtyErr) {
-			_ = m.Force(dirtyErr.Version - 1)
-			if retryErr := m.Up(); retryErr != nil && !errors.Is(retryErr, migrate.ErrNoChange) {
-				return fmt.Errorf("migration up retry failed: %w", retryErr)
-			}
-			return nil
-		}
-		return fmt.Errorf("migration up failed: %w", err)
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		return fmt.Errorf("failed to run up migrations: %w", err)
 	}
 
 	return nil

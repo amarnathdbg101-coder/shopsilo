@@ -16,6 +16,7 @@ type CreateProductRequest struct {
 	FloorPrice    float64  `json:"floor_price,omitempty" validate:"omitempty,gte=0"`
 	AllowBargain  *bool    `json:"allow_bargain,omitempty"`
 	ComparePrice  float64  `json:"compare_price,omitempty" validate:"omitempty,gte=0"`
+	MRP           float64  `json:"mrp,omitempty" validate:"omitempty,gte=0"`
 	CategoryID    string   `json:"category_id" validate:"required"`
 	StockQuantity     int                    `json:"stock_quantity" validate:"gte=0"`
 	MinStock          *int                   `json:"min_stock,omitempty" validate:"omitempty,gte=0"` // Shop owner configured minimum stock threshold (default 1)
@@ -24,6 +25,7 @@ type CreateProductRequest struct {
 	Weight            float64                `json:"weight,omitempty" validate:"omitempty,gte=0"`
 	IsActive          bool                   `json:"is_active"`
 	IsFeatured        bool                   `json:"is_featured"`
+	IsPricePublic     *bool                  `json:"is_price_public,omitempty"`
 	Tags              []string               `json:"tags,omitempty"`
 	Attributes        map[string]interface{} `json:"attributes,omitempty"` // Brand, Model, Size, Color, Gender, Season, etc.
 }
@@ -37,6 +39,7 @@ type UpdateProductRequest struct {
 	FloorPrice        *float64                `json:"floor_price,omitempty" validate:"omitempty,gte=0"`
 	AllowBargain      *bool                   `json:"allow_bargain,omitempty"`
 	ComparePrice      *float64                `json:"compare_price,omitempty" validate:"omitempty,gte=0"`
+	MRP               *float64                `json:"mrp,omitempty" validate:"omitempty,gte=0"`
 	CategoryID        *string                 `json:"category_id,omitempty"`
 	StockQuantity     *int                    `json:"stock_quantity,omitempty" validate:"omitempty,gte=0"`
 	MinStock          *int                    `json:"min_stock,omitempty" validate:"omitempty,gte=0"`
@@ -45,6 +48,7 @@ type UpdateProductRequest struct {
 	Weight            *float64                `json:"weight,omitempty" validate:"omitempty,gte=0"`
 	IsActive          *bool                   `json:"is_active,omitempty"`
 	IsFeatured        *bool                   `json:"is_featured,omitempty"`
+	IsPricePublic     *bool                   `json:"is_price_public,omitempty"`
 	Tags              *[]string               `json:"tags,omitempty"`
 	Attributes        *map[string]interface{} `json:"attributes,omitempty"` // Dynamic JSONB attributes
 }
