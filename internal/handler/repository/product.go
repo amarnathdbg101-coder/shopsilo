@@ -187,7 +187,7 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*model.Product, 
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
 		       COALESCE(p.category_id::text, ''), COALESCE(p.images, '[]'::jsonb), COALESCE(p.weight, 0), p.is_active, p.is_featured, COALESCE(p.tags, '{}'), COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1),
-		       COALESCE(p.floor_price, 0), COALESCE(p.allow_bargain, true)
+		       COALESCE(p.floor_price, 0), COALESCE(p.allow_bargain, true), COALESCE(p.is_price_public, true)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
 		WHERE p.id = $1 AND p.is_active = true
