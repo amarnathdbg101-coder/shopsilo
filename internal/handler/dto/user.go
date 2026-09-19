@@ -33,7 +33,7 @@ type UserRegisterRequest struct {
 	Email             string `json:"email" validate:"required,email"`
 	Password          string `json:"password" validate:"required,min=6,max=72"`
 	Phone             string `json:"phone" validate:"omitempty,min=10,max=20"`
-	VerificationToken string `json:"verification_token" validate:"required"`
+	VerificationToken string `json:"verification_token,omitempty"`
 }
 
 type RegisterResponse struct {
