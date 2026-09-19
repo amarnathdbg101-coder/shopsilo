@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS products (
     images JSONB DEFAULT '[]'::jsonb,
     tags TEXT[] DEFAULT '{}',
     attributes JSONB DEFAULT '{}'::jsonb,
-    allow_bargain BOOLEAN DEFAULT true,
+    allow_bargain BOOLEAN DEFAULT false,
     is_active BOOLEAN DEFAULT true,
     is_featured BOOLEAN DEFAULT false,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

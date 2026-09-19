@@ -39,7 +39,7 @@ type MerchantAICopilotResponse struct {
 	ActionType string `json:"action_type,omitempty"`
 }
 
-// ── Packet Vision Scanner DTOs ──
+// AIScane Packet Vision Scanner DTOs ──
 type AIScanProductRequest struct {
 	ImageBase64 string `json:"image_base64" validate:"required"`
 	MimeType    string `json:"mime_type,omitempty"`

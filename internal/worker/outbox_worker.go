@@ -36,12 +36,12 @@ func StartOutboxWorker(ctx context.Context, db *pgxpool.Pool, logger *zap.Logger
 			logger.Info("outbox worker stopped cleanly")
 			return
 		case <-ticker.C:
-			processOutboxEvents(ctx, db, wsHub, logger)
+			processOutboxEvents(ctx, db, wsHub)
 		}
 	}
 }
 
-func processOutboxEvents(ctx context.Context, db *pgxpool.Pool, wsHub *services.WebSocketHub, logger *zap.Logger) {
+func processOutboxEvents(ctx context.Context, db *pgxpool.Pool, wsHub *services.WebSocketHub) {
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 

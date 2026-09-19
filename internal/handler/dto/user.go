@@ -32,7 +32,7 @@ type UserRegisterRequest struct {
 	FullName          string `json:"full_name" validate:"required,min=2,max=100"`
 	Email             string `json:"email" validate:"required,email"`
 	Password          string `json:"password" validate:"required,min=6,max=72"`
-	Phone             string `json:"phone" validate:"required,min=10,max=20"`
+	Phone             string `json:"phone" validate:"omitempty,min=10,max=20"`
 	VerificationToken string `json:"verification_token" validate:"required"`
 }
 

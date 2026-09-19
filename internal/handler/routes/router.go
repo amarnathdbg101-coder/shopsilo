@@ -28,7 +28,6 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	modRepo := repository.NewModerationRepo(db, logger)
 	modService := services.NewModerationService(modRepo, nil, userRepo) // shopRepo injected below
 	modc := controller.NewModerationController(modService)
-
 	// Shop layer
 	shopRepo := repository.NewShopRepo(db, logger)
 	shopService := services.NewShopService(shopRepo, userRepo, modRepo)
