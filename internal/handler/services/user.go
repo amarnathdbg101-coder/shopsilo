@@ -193,42 +193,50 @@ func (s *UserService) VerifyRegistrationOTP(ctx context.Context, input dto.Verif
 func (s *UserService) Register(ctx context.Context, input dto.UserRegisterRequest) (*dto.RegisterResponse, error) {
 	email := strings.ToLower(strings.TrimSpace(input.Email))
 
-	// 1. Normalize and validate Indian mobile phone
-	cleanPhone, err := utils.NormalizeIndianPhone(input.Phone)
-	if err != nil {
-		return nil, utils.ErrInvalidPhoneNumber
-	}
+	// 1. Normalize and validate Indian mobile phone (if provided)
+	cleanPhone := ""
+	if strings.TrimSpace(input.Phone) != "" {
+		var err error
+		cleanPhone, err = utils.NormalizeIndianPhone(input.Phone)
+		if err != nil {
+			return nil, utils.ErrInvalidPhoneNumber
+		}
 
-	// 2. Validate cryptographic verification token
-	jwtSecret := utils.MustLoad().Jwt
-	claims, err := reuse.VerifyPhoneVerificationToken(input.VerificationToken, jwtSecret)
-	if err != nil {
-		return nil, ErrInvalidVerificationToken
-	}
-
-	// 3. Security Loophole Prevention: Phone binding check
-	if claims.Phone != cleanPhone {
-		return nil, ErrPhoneVerificationMismatch
-	}
-
-	// 4. Security Loophole Prevention: Atomic single-use consumption
-	if s.otpRepo != nil {
-		consumed, err := s.otpRepo.ConsumeVerification(ctx, claims.VerificationID, cleanPhone)
-		if err != nil || !consumed {
-			return nil, ErrTokenAlreadyUsed
+		// Check if phone already registered
+		if s.repo != nil {
+			existingPhoneUser, err := s.repo.FindByPhone(ctx, cleanPhone)
+			if err == nil && existingPhoneUser != nil {
+				return nil, ErrPhoneTaken
+			}
 		}
 	}
 
-	// 5. Check if email already exists
-	existingUser, err := s.repo.FindByEmail(ctx, email)
-	if err == nil && existingUser != nil {
-		return nil, ErrEmailTaken
+	// 2. Optional verification token validation (only validated if non-empty token passed)
+	if strings.TrimSpace(input.VerificationToken) != "" {
+		jwtSecret := utils.MustLoad().Jwt
+		claims, err := reuse.VerifyPhoneVerificationToken(input.VerificationToken, jwtSecret)
+		if err != nil {
+			return nil, ErrInvalidVerificationToken
+		}
+
+		if cleanPhone != "" && claims.Phone != cleanPhone {
+			return nil, ErrPhoneVerificationMismatch
+		}
+
+		if s.otpRepo != nil {
+			consumed, err := s.otpRepo.ConsumeVerification(ctx, claims.VerificationID, cleanPhone)
+			if err != nil || !consumed {
+				return nil, ErrTokenAlreadyUsed
+			}
+		}
 	}
 
-	// 6. Check if phone already registered
-	existingPhoneUser, err := s.repo.FindByPhone(ctx, cleanPhone)
-	if err == nil && existingPhoneUser != nil {
-		return nil, ErrPhoneTaken
+	// 3. Check if email already exists
+	if s.repo != nil {
+		existingUser, err := s.repo.FindByEmail(ctx, email)
+		if err == nil && existingUser != nil {
+			return nil, ErrEmailTaken
+		}
 	}
 
 	hashedPassword, err := reuse.HashPassword(input.Password)
@@ -243,6 +251,10 @@ func (s *UserService) Register(ctx context.Context, input dto.UserRegisterReques
 		Phone:        cleanPhone,
 		Role:         "customer",
 		IsActive:     true,
+	}
+
+	if s.repo == nil {
+		return &dto.RegisterResponse{User: user}, nil
 	}
 
 	createdUser, err := s.repo.Create(ctx, user)
