@@ -1,11 +1,14 @@
 package migration
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func RunAutoMigrations(dbURL string) error {
@@ -19,4 +22,22 @@ func RunAutoMigrations(dbURL string) error {
 	}
 
 	return nil
+}
+
+// EnsureSchemaColumns runs fast, idempotent ALTER TABLE statements to guarantee all critical columns exist.
+func EnsureSchemaColumns(pool *pgxpool.Pool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	queries := []string{
+		"ALTER TABLE products ADD COLUMN IF NOT EXISTS floor_price DECIMAL(10, 2) DEFAULT 0;",
+		"ALTER TABLE products ADD COLUMN IF NOT EXISTS allow_bargain BOOLEAN DEFAULT false;",
+		"ALTER TABLE products ADD COLUMN IF NOT EXISTS is_price_public BOOLEAN DEFAULT true;",
+		"ALTER TABLE products ADD COLUMN IF NOT EXISTS cost_price DECIMAL(10, 2) DEFAULT 0;",
+		"ALTER TABLE products ADD COLUMN IF NOT EXISTS compare_price DECIMAL(10, 2) DEFAULT 0;",
+	}
+
+	for _, q := range queries {
+		_, _ = pool.Exec(ctx, q)
+	}
 }

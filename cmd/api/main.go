@@ -25,6 +25,7 @@ func main() {
 	defer db.Close()
 
 	// Automatically run database migrations to keep schema up-to-date in production (e.g. Render)
+	migration.EnsureSchemaColumns(db)
 	if err := migration.RunAutoMigrations(cfg.DBURL); err != nil {
 		logger.Warn("auto-migration notice", zap.Error(err))
 	} else {

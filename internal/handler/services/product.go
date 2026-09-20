@@ -87,6 +87,11 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 		minStock = *input.LowStockThreshold
 	}
 
+	allowBargain := false
+	if input.AllowBargain != nil {
+		allowBargain = *input.AllowBargain
+	}
+
 	product := &model.Product{
 		ShopID:            shop.ID,
 		Name:              strings.TrimSpace(input.Name),
@@ -96,6 +101,8 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 		Price:             input.Price,
 		CostPrice:         input.CostPrice,
 		ComparePrice:      input.ComparePrice,
+		FloorPrice:        input.FloorPrice,
+		AllowBargain:      allowBargain,
 		CategoryID:        categoryID,
 		Images:            images,
 		Weight:            input.Weight,

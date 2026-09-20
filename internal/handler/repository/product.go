@@ -80,9 +80,13 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 	}
 
 	query := `
-		INSERT INTO products (shop_id, name, slug, description, sku, price, cost_price, compare_price, category_id, images, weight, is_active, is_featured, tags, attributes, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
-		RETURNING id, shop_id, name, slug, COALESCE(description, ''), sku, price, COALESCE(cost_price, 0), COALESCE(compare_price, 0), category_id, images, COALESCE(weight, 0), is_active, is_featured, tags, COALESCE(attributes, '{}'::jsonb), created_at, updated_at
+		INSERT INTO products (
+			shop_id, name, slug, description, sku, price, cost_price, compare_price,
+			floor_price, allow_bargain, category_id, images, weight, is_active, is_featured, tags, attributes, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
+		RETURNING id, shop_id, name, slug, COALESCE(description, ''), sku, price, COALESCE(cost_price, 0), COALESCE(compare_price, 0),
+		          COALESCE(floor_price, 0), COALESCE(allow_bargain, false), category_id, images, COALESCE(weight, 0), is_active, is_featured, tags, COALESCE(attributes, '{}'::jsonb), created_at, updated_at
 	`
 	created := &model.Product{}
 	var imagesBytes, attributesBytes []byte
@@ -98,6 +102,8 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 		p.Price,
 		p.CostPrice,
 		p.ComparePrice,
+		p.FloorPrice,
+		p.AllowBargain,
 		p.CategoryID,
 		imagesJSON,
 		p.Weight,
@@ -115,6 +121,8 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 		&created.Price,
 		&created.CostPrice,
 		&created.ComparePrice,
+		&created.FloorPrice,
+		&created.AllowBargain,
 		&created.CategoryID,
 		&imagesBytes,
 		&created.Weight,
@@ -147,27 +155,25 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 		_ = json.Unmarshal(attributesBytes, &created.Attributes)
 	}
 
-	// Insert into inventory with shop-owner configured min stock (default: 1)
-	lowStock := 1
-	if p.LowStockThreshold > 0 {
-		lowStock = p.LowStockThreshold
-	} else if p.MinStock > 0 {
-		lowStock = p.MinStock
+	// 2. Initialize inventory record
+	lowStock := p.MinStock
+	if lowStock < 1 {
+		lowStock = 1
 	}
-
 	invQuery := `
 		INSERT INTO inventory (product_id, quantity, reserved_quantity, low_stock_threshold, updated_at)
 		VALUES ($1, $2, 0, $3, NOW())
 	`
-	if _, err := tx.Exec(ctx, invQuery, created.ID, initialStock, lowStock); err != nil {
+	if _, err = tx.Exec(ctx, invQuery, created.ID, initialStock, lowStock); err != nil {
 		r.logger.Error("failed to create inventory for product", zap.Error(err), zap.String("product_id", created.ID))
-		return nil, err
+		return nil, fmt.Errorf("failed to create inventory: %w", err)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("failed to commit product creation: %w", err)
+	if err = tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
+	created.StockQuantity = initialStock
 	created.Inventory = &model.Inventory{
 		ProductID:         created.ID,
 		Quantity:          initialStock,
