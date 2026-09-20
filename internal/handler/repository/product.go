@@ -74,20 +74,30 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 	if p.Images == nil {
 		imagesJSON = []byte("[]")
 	}
+
 	attributesJSON, _ := json.Marshal(p.Attributes)
 	if p.Attributes == nil {
 		attributesJSON = []byte("{}")
 	}
 
+	var catID *string
+	if strings.TrimSpace(p.CategoryID) != "" {
+		c := strings.TrimSpace(p.CategoryID)
+		catID = &c
+	}
+
 	query := `
 		INSERT INTO products (
 			shop_id, name, slug, description, sku, price, cost_price, compare_price,
-			floor_price, allow_bargain, category_id, images, weight, is_active, is_featured, tags, attributes, created_at, updated_at
+			category_id, images, weight, is_active, is_featured, tags, attributes, floor_price, allow_bargain, is_price_public
+		) VALUES (
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
 		RETURNING id, shop_id, name, slug, COALESCE(description, ''), sku, price, COALESCE(cost_price, 0), COALESCE(compare_price, 0),
-		          COALESCE(floor_price, 0), COALESCE(allow_bargain, false), category_id, images, COALESCE(weight, 0), is_active, is_featured, tags, COALESCE(attributes, '{}'::jsonb), created_at, updated_at
+		          COALESCE(category_id::text, ''), images, COALESCE(weight, 0), is_active, is_featured, tags, COALESCE(attributes, '{}'::jsonb), created_at, updated_at,
+		          COALESCE(floor_price, 0), COALESCE(allow_bargain, true), COALESCE(is_price_public, true)
 	`
+
 	created := &model.Product{}
 	var imagesBytes, attributesBytes []byte
 
@@ -102,15 +112,16 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 		p.Price,
 		p.CostPrice,
 		p.ComparePrice,
-		p.FloorPrice,
-		p.AllowBargain,
-		p.CategoryID,
+		catID,
 		imagesJSON,
 		p.Weight,
 		p.IsActive,
 		p.IsFeatured,
 		p.Tags,
 		attributesJSON,
+		p.FloorPrice,
+		p.AllowBargain,
+		p.IsPricePublic,
 	).Scan(
 		&created.ID,
 		&created.ShopID,
@@ -121,8 +132,6 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 		&created.Price,
 		&created.CostPrice,
 		&created.ComparePrice,
-		&created.FloorPrice,
-		&created.AllowBargain,
 		&created.CategoryID,
 		&imagesBytes,
 		&created.Weight,
@@ -132,6 +141,9 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 		&attributesBytes,
 		&created.CreatedAt,
 		&created.UpdatedAt,
+		&created.FloorPrice,
+		&created.AllowBargain,
+		&created.IsPricePublic,
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -150,39 +162,40 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 		_ = json.Unmarshal(imagesBytes, &created.Images)
 	}
 
-	created.Attributes = make(map[string]interface{})
-	if len(attributesBytes) > 0 {
-		_ = json.Unmarshal(attributesBytes, &created.Attributes)
-	}
-
-	// 2. Initialize inventory record
-	lowStock := p.MinStock
-	if lowStock < 1 {
-		lowStock = 1
-	}
 	invQuery := `
-		INSERT INTO inventory (product_id, quantity, reserved_quantity, low_stock_threshold, updated_at)
-		VALUES ($1, $2, 0, $3, NOW())
+		INSERT INTO inventory (product_id, quantity, reserved_quantity, low_stock_threshold)
+		VALUES ($1, $2, 0, $3)
+		RETURNING product_id, quantity, reserved_quantity, low_stock_threshold
 	`
-	if _, err = tx.Exec(ctx, invQuery, created.ID, initialStock, lowStock); err != nil {
+
+	lowThreshold := 1
+	if p.LowStockThreshold > 0 {
+		lowThreshold = p.LowStockThreshold
+	} else if p.MinStock > 0 {
+		lowThreshold = p.MinStock
+	}
+
+	inv := &model.Inventory{}
+	err = tx.QueryRow(ctx, invQuery, created.ID, initialStock, lowThreshold).Scan(
+		&inv.ProductID,
+		&inv.Quantity,
+		&inv.ReservedQuantity,
+		&inv.LowStockThreshold,
+	)
+	if err != nil {
 		r.logger.Error("failed to create inventory for product", zap.Error(err), zap.String("product_id", created.ID))
-		return nil, fmt.Errorf("failed to create inventory: %w", err)
+		return nil, err
 	}
 
-	if err = tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit product creation: %w", err)
 	}
 
-	created.StockQuantity = initialStock
-	created.Inventory = &model.Inventory{
-		ProductID:         created.ID,
-		Quantity:          initialStock,
-		ReservedQuantity:  0,
-		AvailableQuantity: initialStock,
-		LowStockThreshold: lowStock,
-	}
-	created.MinStock = lowStock
-	created.LowStockThreshold = lowStock
+	inv.AvailableQuantity = inv.Quantity - inv.ReservedQuantity
+	created.Inventory = inv
+	created.StockQuantity = inv.AvailableQuantity
+	created.MinStock = inv.LowStockThreshold
+	created.LowStockThreshold = inv.LowStockThreshold
 
 	computeProfit(created)
 	return created, nil
@@ -227,6 +240,7 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*model.Product, 
 		&inv.LowStockThreshold,
 		&p.FloorPrice,
 		&p.AllowBargain,
+		&p.IsPricePublic,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -253,7 +267,6 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*model.Product, 
 	return p, nil
 }
 
-// FindByIDs fetches multiple active products belonging to shopID in a single batch query with inventory JOIN.
 func (r *ProductRepo) FindByIDs(ctx context.Context, shopID string, ids []string) (map[string]*model.Product, error) {
 	if len(ids) == 0 {
 		return make(map[string]*model.Product), nil
@@ -263,7 +276,7 @@ func (r *ProductRepo) FindByIDs(ctx context.Context, shopID string, ids []string
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
 		       COALESCE(p.category_id::text, ''), COALESCE(p.images, '[]'::jsonb), COALESCE(p.weight, 0), p.is_active, p.is_featured, COALESCE(p.tags, '{}'), COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1),
-		       COALESCE(p.floor_price, 0), COALESCE(p.allow_bargain, true)
+		       COALESCE(p.floor_price, 0), COALESCE(p.allow_bargain, true), COALESCE(p.is_price_public, true)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
 		WHERE p.shop_id = $1 AND p.id = ANY($2) AND p.is_active = true
@@ -306,9 +319,10 @@ func (r *ProductRepo) FindByIDs(ctx context.Context, shopID string, ids []string
 			&inv.LowStockThreshold,
 			&p.FloorPrice,
 			&p.AllowBargain,
+			&p.IsPricePublic,
 		)
 		if err != nil {
-			r.logger.Error("failed to scan product batch row", zap.Error(err))
+			r.logger.Error("failed to scan product row", zap.Error(err))
 			return nil, err
 		}
 
@@ -322,12 +336,16 @@ func (r *ProductRepo) FindByIDs(ctx context.Context, shopID string, ids []string
 			_ = json.Unmarshal(attributesBytes, &p.Attributes)
 		}
 
-		inv.ProductID = p.ID
 		inv.AvailableQuantity = inv.Quantity - inv.ReservedQuantity
 		p.Inventory = inv
 
 		computeProfit(p)
 		productsMap[p.ID] = p
+	}
+
+	if err = rows.Err(); err != nil {
+		r.logger.Error("error iterating product rows", zap.Error(err))
+		return nil, err
 	}
 
 	return productsMap, nil
@@ -337,7 +355,8 @@ func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*model.Produ
 	query := `
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
 		       COALESCE(p.category_id::text, ''), COALESCE(p.images, '[]'::jsonb), COALESCE(p.weight, 0), p.is_active, p.is_featured, COALESCE(p.tags, '{}'), COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
-		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1)
+		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1),
+		       COALESCE(p.floor_price, 0), COALESCE(p.allow_bargain, true), COALESCE(p.is_price_public, true)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
 		WHERE p.slug = LOWER(TRIM($1)) AND p.is_active = true
@@ -369,6 +388,9 @@ func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*model.Produ
 		&inv.Quantity,
 		&inv.ReservedQuantity,
 		&inv.LowStockThreshold,
+		&p.FloorPrice,
+		&p.AllowBargain,
+		&p.IsPricePublic,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -395,12 +417,12 @@ func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*model.Produ
 	return p, nil
 }
 
-// FindBySKU looks up an active product in a shop by its SKU or barcode.
 func (r *ProductRepo) FindBySKU(ctx context.Context, shopID, sku string) (*model.Product, error) {
 	query := `
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
 		       COALESCE(p.category_id::text, ''), COALESCE(p.images, '[]'::jsonb), COALESCE(p.weight, 0), p.is_active, p.is_featured, COALESCE(p.tags, '{}'), COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
-		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1)
+		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1),
+		       COALESCE(p.floor_price, 0), COALESCE(p.allow_bargain, true), COALESCE(p.is_price_public, true)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
 		WHERE p.shop_id = $1 AND UPPER(TRIM(p.sku)) = UPPER(TRIM($2))
@@ -432,6 +454,9 @@ func (r *ProductRepo) FindBySKU(ctx context.Context, shopID, sku string) (*model
 		&inv.Quantity,
 		&inv.ReservedQuantity,
 		&inv.LowStockThreshold,
+		&p.FloorPrice,
+		&p.AllowBargain,
+		&p.IsPricePublic,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -759,9 +784,11 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 		UPDATE products
 		SET name = $1, slug = $2, description = $3, sku = $4, price = $5, cost_price = $6, compare_price = $7,
 		    category_id = $8, images = $9, weight = $10, is_active = $11, is_featured = $12, tags = $13, attributes = $14,
-		    floor_price = $15, allow_bargain = $16, updated_at = NOW()
-		WHERE id = $17 AND shop_id = $18
-		RETURNING id, shop_id, name, slug, COALESCE(description, ''), sku, price, COALESCE(cost_price, 0), COALESCE(compare_price, 0), COALESCE(category_id::text, ''), images, COALESCE(weight, 0), is_active, is_featured, tags, COALESCE(attributes, '{}'::jsonb), created_at, updated_at, COALESCE(floor_price, 0), COALESCE(allow_bargain, true)
+		    floor_price = $15, allow_bargain = $16, is_price_public = $17, updated_at = NOW()
+		WHERE id = $18 AND shop_id = $19
+		RETURNING id, shop_id, name, slug, COALESCE(description, ''), sku, price, COALESCE(cost_price, 0), COALESCE(compare_price, 0),
+		          COALESCE(category_id::text, ''), images, COALESCE(weight, 0), is_active, is_featured, tags, COALESCE(attributes, '{}'::jsonb), created_at, updated_at,
+		          COALESCE(floor_price, 0), COALESCE(allow_bargain, true), COALESCE(is_price_public, true)
 	`
 	updated := &model.Product{}
 	var imagesBytes, attributesBytes []byte
@@ -785,6 +812,7 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 		attributesJSON,
 		p.FloorPrice,
 		p.AllowBargain,
+		p.IsPricePublic,
 		p.ID,
 		p.ShopID,
 	).Scan(
@@ -808,6 +836,7 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 		&updated.UpdatedAt,
 		&updated.FloorPrice,
 		&updated.AllowBargain,
+		&updated.IsPricePublic,
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError
