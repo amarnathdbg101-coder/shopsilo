@@ -10,13 +10,20 @@ import (
 )
 
 func ConnectDB(database string) (*pgxpool.Pool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	config, err := pgxpool.ParseConfig(database)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse database config: %w", err)
 	}
+
+	log.Printf("attempting database connection: host=%s port=%d user=%s dbname=%s",
+		config.ConnConfig.Host,
+		config.ConnConfig.Port,
+		config.ConnConfig.User,
+		config.ConnConfig.Database,
+	)
 
 	// Production pool tuning for low latency & concurrency
 	config.MaxConns = 30
@@ -31,7 +38,7 @@ func ConnectDB(database string) (*pgxpool.Pool, error) {
 	}
 
 	if err := pool.Ping(ctx); err != nil {
-		return nil, fmt.Errorf("unable to ping database: %w", err)
+		return nil, fmt.Errorf("unable to ping database at host=%s: %w", config.ConnConfig.Host, err)
 	}
 
 	log.Println("database connection pool initialized successfully!")
