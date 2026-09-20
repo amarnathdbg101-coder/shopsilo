@@ -1,4 +1,4 @@
-// Package controller handler http work.
+﻿// Package controller handler http work.
 package controller
 
 import (
@@ -38,6 +38,11 @@ func (c *UserController) SendRegistrationOTP(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if c.service == nil {
+		reuse.Error(w, http.StatusBadRequest, "service uninitialized")
+		return
+	}
+
 	res, err := c.service.SendRegistrationOTP(r.Context(), input)
 	if err != nil {
 		if errors.Is(err, services.ErrPhoneTaken) {
@@ -71,6 +76,11 @@ func (c *UserController) VerifyRegistrationOTP(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	if c.service == nil {
+		reuse.Error(w, http.StatusBadRequest, "service uninitialized")
+		return
+	}
+
 	res, err := c.service.VerifyRegistrationOTP(r.Context(), input)
 	if err != nil {
 		if errors.Is(err, services.ErrOTPNotFoundOrExpired) ||
@@ -96,6 +106,11 @@ func (c *UserController) Register(w http.ResponseWriter, r *http.Request) {
 
 	if err := reuse.ValidateStruct(&input); err != nil {
 		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if c.service == nil {
+		reuse.Error(w, http.StatusBadRequest, "service uninitialized")
 		return
 	}
 
@@ -131,6 +146,11 @@ func (c *UserController) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if c.service == nil {
+		reuse.Error(w, http.StatusBadRequest, "service uninitialized")
+		return
+	}
+
 	res, err := c.service.Login(r.Context(), input)
 	if err != nil {
 		if errors.Is(err, services.ErrInvalidCredentials) {
@@ -157,6 +177,11 @@ func (c *UserController) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 
 	if err := reuse.ValidateStruct(&input); err != nil {
 		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if c.service == nil {
+		reuse.Error(w, http.StatusBadRequest, "service uninitialized")
 		return
 	}
 
@@ -201,6 +226,11 @@ func (c *UserController) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if c.service == nil {
+		reuse.Error(w, http.StatusBadRequest, "service uninitialized")
+		return
+	}
+
 	res, err := c.service.RefreshToken(r.Context(), input.RefreshToken)
 	if err != nil {
 		reuse.Error(w, http.StatusUnauthorized, err.Error())
@@ -219,6 +249,11 @@ func (c *UserController) ForgotPassword(w http.ResponseWriter, r *http.Request) 
 
 	if err := reuse.ValidateStruct(&input); err != nil {
 		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if c.service == nil {
+		reuse.Error(w, http.StatusBadRequest, "service uninitialized")
 		return
 	}
 
@@ -243,6 +278,11 @@ func (c *UserController) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if c.service == nil {
+		reuse.Error(w, http.StatusBadRequest, "service uninitialized")
+		return
+	}
+
 	err := c.service.ResetPassword(r.Context(), input)
 	if err != nil {
 		if errors.Is(err, services.ErrInvalidResetToken) {
@@ -260,6 +300,11 @@ func (c *UserController) GetProfile(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())
 	if claims == nil || claims.UserID == "" {
 		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	if c.service == nil {
+		reuse.Error(w, http.StatusBadRequest, "service uninitialized")
 		return
 	}
 
@@ -290,6 +335,11 @@ func (c *UserController) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if c.service == nil {
+		reuse.Error(w, http.StatusBadRequest, "service uninitialized")
+		return
+	}
+
 	res, err := c.service.UpdateProfile(r.Context(), claims.UserID, input)
 	if err != nil {
 		reuse.Error(w, http.StatusInternalServerError, err.Error())
@@ -305,6 +355,11 @@ func (c *UserController) AdminListUsers(w http.ResponseWriter, r *http.Request) 
 	search := r.URL.Query().Get("q")
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+
+	if c.service == nil {
+		reuse.Error(w, http.StatusBadRequest, "service uninitialized")
+		return
+	}
 
 	users, total, err := c.service.ListUsersForAdmin(r.Context(), role, search, page, limit)
 	if err != nil {
@@ -337,6 +392,11 @@ func (c *UserController) AdminUpdateUserStatus(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	if c.service == nil {
+		reuse.Error(w, http.StatusBadRequest, "service uninitialized")
+		return
+	}
+
 	user, err := c.service.UpdateUserStatusForAdmin(r.Context(), userID, input.IsActive, input.Role)
 	if err != nil {
 		if errors.Is(err, repository.ErrUserNotFound) {
@@ -349,6 +409,3 @@ func (c *UserController) AdminUpdateUserStatus(w http.ResponseWriter, r *http.Re
 
 	reuse.Success(w, "User updated successfully", user)
 }
-
-
-

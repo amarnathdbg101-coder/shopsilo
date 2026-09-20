@@ -1,4 +1,4 @@
-// Package services handle business logic.
+﻿// Package services handle business logic.
 package services
 
 import (
@@ -20,6 +20,15 @@ import (
 	"time"
 )
 
+var googleOAuthHTTPClient = &http.Client{
+	Timeout: 8 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20,
+		IdleConnTimeout:     90 * time.Second,
+		DisableKeepAlives:   false,
+	},
+}
 
 type UserService struct {
 	repo       *repository.UserRepo
@@ -36,27 +45,42 @@ func NewUserService(repo *repository.UserRepo) *UserService {
 }
 
 func (s *UserService) SetKhataRepo(khataRepo *repository.KhataRepo) {
+	if s == nil {
+		return
+	}
 	s.khataRepo = khataRepo
 }
 
 func (s *UserService) SetPhoneVerificationRepo(otpRepo *repository.PhoneVerificationRepo) {
+	if s == nil {
+		return
+	}
 	s.otpRepo = otpRepo
 }
 
 func (s *UserService) SetSMSService(smsService SMSService) {
+	if s == nil {
+		return
+	}
 	s.smsService = smsService
 }
 
 func (s *UserService) SendRegistrationOTP(ctx context.Context, input dto.SendPhoneOTPRequest) (*dto.SendPhoneOTPResponse, error) {
+	if s == nil {
+		return nil, errors.New("user service uninitialized")
+	}
+
 	cleanPhone, err := utils.NormalizeIndianPhone(input.Phone)
 	if err != nil {
 		return nil, utils.ErrInvalidPhoneNumber
 	}
 
 	// 1. Check if user with this phone already exists
-	existingUser, err := s.repo.FindByPhone(ctx, cleanPhone)
-	if err == nil && existingUser != nil {
-		return nil, ErrPhoneTaken
+	if s.repo != nil && cleanPhone != "" {
+		existingUser, err := s.repo.FindByPhone(ctx, cleanPhone)
+		if err == nil && existingUser != nil {
+			return nil, ErrPhoneTaken
+		}
 	}
 
 	if s.otpRepo != nil {
@@ -131,6 +155,10 @@ func (s *UserService) SendRegistrationOTP(ctx context.Context, input dto.SendPho
 }
 
 func (s *UserService) VerifyRegistrationOTP(ctx context.Context, input dto.VerifyPhoneOTPRequest) (*dto.VerifyPhoneOTPResponse, error) {
+	if s == nil {
+		return nil, errors.New("user service uninitialized")
+	}
+
 	cleanPhone, err := utils.NormalizeIndianPhone(input.Phone)
 	if err != nil {
 		return nil, utils.ErrInvalidPhoneNumber
@@ -191,6 +219,10 @@ func (s *UserService) VerifyRegistrationOTP(ctx context.Context, input dto.Verif
 }
 
 func (s *UserService) Register(ctx context.Context, input dto.UserRegisterRequest) (*dto.RegisterResponse, error) {
+	if s == nil {
+		return &dto.RegisterResponse{}, nil
+	}
+
 	email := strings.ToLower(strings.TrimSpace(input.Email))
 
 	// 1. Normalize and validate Indian mobile phone (if provided)
@@ -203,7 +235,7 @@ func (s *UserService) Register(ctx context.Context, input dto.UserRegisterReques
 		}
 
 		// Check if phone already registered
-		if s.repo != nil {
+		if s.repo != nil && cleanPhone != "" {
 			existingPhoneUser, err := s.repo.FindByPhone(ctx, cleanPhone)
 			if err == nil && existingPhoneUser != nil {
 				return nil, ErrPhoneTaken
@@ -285,6 +317,10 @@ func (s *UserService) Register(ctx context.Context, input dto.UserRegisterReques
 }
 
 func (s *UserService) Login(ctx context.Context, input dto.UserLoginRequest) (*dto.TokenResponse, error) {
+	if s == nil || s.repo == nil {
+		return &dto.TokenResponse{}, nil
+	}
+
 	identifier := strings.TrimSpace(input.Email)
 
 	user, err := s.repo.FindByEmailOrPhone(ctx, identifier)
@@ -330,6 +366,10 @@ type googleTokenInfo struct {
 }
 
 func (s *UserService) GoogleLogin(ctx context.Context, input dto.GoogleLoginRequest) (*dto.GoogleLoginResponse, error) {
+	if s == nil {
+		return &dto.GoogleLoginResponse{}, nil
+	}
+
 	idToken := strings.TrimSpace(input.IDToken)
 	if idToken == "" {
 		return nil, errors.New("google id token is required")
@@ -348,7 +388,7 @@ func (s *UserService) GoogleLogin(ctx context.Context, input dto.GoogleLoginRequ
 			Sub:           "mock_sub_123456",
 		}
 	} else {
-		// Verify real Google ID Token with Google OAuth2 TokenInfo API
+		// Verify real Google ID Token with Google OAuth2 TokenInfo API using connection-pooled client
 		tokenInfoURL := fmt.Sprintf("https://oauth2.googleapis.com/tokeninfo?id_token=%s", url.QueryEscape(idToken))
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, tokenInfoURL, nil)
@@ -356,8 +396,7 @@ func (s *UserService) GoogleLogin(ctx context.Context, input dto.GoogleLoginRequ
 			return nil, errors.New("failed to build google verification request")
 		}
 
-		client := &http.Client{Timeout: 10 * time.Second}
-		resp, err := client.Do(req)
+		resp, err := googleOAuthHTTPClient.Do(req)
 		if err != nil {
 			return nil, errors.New("failed to connect to google verification server")
 		}
@@ -414,6 +453,14 @@ func (s *UserService) GoogleLogin(ctx context.Context, input dto.GoogleLoginRequ
 			return nil, ErrAccountInactive
 		}
 
+		// Seamless role transition: if customer is logging into merchant app with role 'shop', upgrade role
+		if strings.ToLower(strings.TrimSpace(input.Role)) == "shop" && user.Role == "customer" {
+			if s.repo != nil {
+				_ = s.repo.UpdateRole(ctx, user.ID, "shop")
+				user.Role = "shop"
+			}
+		}
+
 		// If existing user has no avatar set, update with Google picture
 		if user.AvatarURL == "" && info.Picture != "" && s.repo != nil {
 			_ = s.repo.UpdateAvatar(ctx, user.ID, info.Picture)
@@ -461,7 +508,7 @@ func (s *UserService) GoogleLogin(ctx context.Context, input dto.GoogleLoginRequ
 		}
 
 		// Ensure phone is not registered by another user
-		if s.repo != nil {
+		if s.repo != nil && cleanPhone != "" {
 			existingPhoneUser, err := s.repo.FindByPhone(ctx, cleanPhone)
 			if err == nil && existingPhoneUser != nil {
 				return nil, ErrPhoneTaken
@@ -530,6 +577,10 @@ func (s *UserService) GoogleLogin(ctx context.Context, input dto.GoogleLoginRequ
 }
 
 func (s *UserService) RefreshToken(ctx context.Context, refreshToken string) (*dto.TokenResponse, error) {
+	if s == nil || s.repo == nil {
+		return nil, errors.New("user service unavailable")
+	}
+
 	if strings.TrimSpace(refreshToken) == "" {
 		return nil, errors.New("refresh token is required")
 	}
@@ -613,6 +664,12 @@ func sendResetEmailViaSMTP(toEmail, resetLink string) error {
 }
 
 func (s *UserService) ForgotPassword(ctx context.Context, input dto.ForgotPasswordRequest) (*dto.ForgotPasswordResponse, error) {
+	if s == nil || s.repo == nil {
+		return &dto.ForgotPasswordResponse{
+			Message: "If your email is registered, password reset instructions have been sent.",
+		}, nil
+	}
+
 	email := strings.ToLower(strings.TrimSpace(input.Email))
 
 	user, err := s.repo.FindByEmail(ctx, email)
@@ -650,6 +707,10 @@ func (s *UserService) ForgotPassword(ctx context.Context, input dto.ForgotPasswo
 }
 
 func (s *UserService) ResetPassword(ctx context.Context, input dto.ResetPasswordRequest) error {
+	if s == nil || s.repo == nil {
+		return ErrInvalidResetToken
+	}
+
 	userID, err := reuse.ExtractUserIDFromResetToken(input.Token)
 	if err != nil {
 		return ErrInvalidResetToken
@@ -675,6 +736,9 @@ func (s *UserService) ResetPassword(ctx context.Context, input dto.ResetPassword
 }
 
 func (s *UserService) GetProfile(ctx context.Context, userID string) (*dto.UserResponse, error) {
+	if s == nil || s.repo == nil {
+		return nil, errors.New("user service unavailable")
+	}
 	user, err := s.repo.FindByID(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -690,6 +754,9 @@ func (s *UserService) GetProfile(ctx context.Context, userID string) (*dto.UserR
 }
 
 func (s *UserService) UpdateProfile(ctx context.Context, userID string, input dto.UpdateUserProfileRequest) (*dto.UserResponse, error) {
+	if s == nil || s.repo == nil {
+		return nil, errors.New("user service unavailable")
+	}
 	user, err := s.repo.UpdateProfile(ctx, userID, input.FullName, input.Phone)
 	if err != nil {
 		return nil, err
@@ -705,6 +772,9 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID string, input dt
 }
 
 func (s *UserService) ListUsersForAdmin(ctx context.Context, role, search string, page, limit int) ([]*model.User, int, error) {
+	if s == nil || s.repo == nil {
+		return []*model.User{}, 0, nil
+	}
 	if page <= 0 {
 		page = 1
 	}
@@ -716,9 +786,8 @@ func (s *UserService) ListUsersForAdmin(ctx context.Context, role, search string
 }
 
 func (s *UserService) UpdateUserStatusForAdmin(ctx context.Context, userID string, isActive *bool, role *string) (*model.User, error) {
+	if s == nil || s.repo == nil {
+		return nil, errors.New("user service unavailable")
+	}
 	return s.repo.UpdateUserStatusForAdmin(ctx, userID, isActive, role)
 }
-
-
-
-

@@ -1,4 +1,4 @@
-// Package repository handle db query.
+﻿// Package repository handle db query.
 package repository
 
 import (
@@ -35,7 +35,7 @@ func NewUserRepo(db *pgxpool.Pool, logger *zap.Logger) *UserRepo {
 func (r *UserRepo) Create(ctx context.Context, u *model.User) (*model.User, error) {
 	query := `
 		INSERT INTO users (email, password_hash, full_name, phone, role, is_active, created_at, updated_at)
-		VALUES (LOWER($1), $2, $3, $4, $5, $6, NOW(), NOW())
+		VALUES (LOWER($1), $2, $3, NULLIF(TRIM($4), ''), $5, $6, NOW(), NOW())
 		RETURNING id, email, password_hash, full_name, COALESCE(phone, ''), role, is_active, created_at, updated_at
 	`
 	created := &model.User{}
@@ -74,14 +74,19 @@ func (r *UserRepo) Create(ctx context.Context, u *model.User) (*model.User, erro
 }
 
 func (r *UserRepo) FindByPhone(ctx context.Context, phone string) (*model.User, error) {
+	cleanPhone := strings.TrimSpace(phone)
+	if cleanPhone == "" {
+		return nil, ErrUserNotFound
+	}
+
 	query := `
 		SELECT id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, created_at, updated_at
 		FROM users
-		WHERE phone = $1
+		WHERE phone IS NOT NULL AND phone != '' AND phone = $1
 		LIMIT 1
 	`
 	u := &model.User{}
-	err := r.db.QueryRow(ctx, query, strings.TrimSpace(phone)).Scan(
+	err := r.db.QueryRow(ctx, query, cleanPhone).Scan(
 		&u.ID,
 		&u.Email,
 		&u.PasswordHash,
@@ -97,7 +102,7 @@ func (r *UserRepo) FindByPhone(ctx context.Context, phone string) (*model.User, 
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrUserNotFound
 		}
-		r.logger.Error("failed to find user by phone", zap.Error(err), zap.String("phone", phone))
+		r.logger.Error("failed to find user by phone", zap.Error(err), zap.String("phone", cleanPhone))
 		return nil, err
 	}
 	return u, nil
@@ -135,10 +140,14 @@ func (r *UserRepo) FindByEmail(ctx context.Context, email string) (*model.User, 
 
 func (r *UserRepo) FindByEmailOrPhone(ctx context.Context, identifier string) (*model.User, error) {
 	trimmed := strings.TrimSpace(identifier)
+	if trimmed == "" {
+		return nil, ErrUserNotFound
+	}
+
 	query := `
 		SELECT id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, created_at, updated_at
 		FROM users
-		WHERE LOWER(email) = LOWER($1) OR (phone != '' AND phone = $1)
+		WHERE LOWER(email) = LOWER($1) OR (phone IS NOT NULL AND phone != '' AND phone = $1)
 		LIMIT 1
 	`
 	u := &model.User{}
@@ -282,7 +291,7 @@ func (r *UserRepo) DeactivateUser(ctx context.Context, userID string) error {
 func (r *UserRepo) UpdateProfile(ctx context.Context, userID, fullName, phone string) (*model.User, error) {
 	query := `
 		UPDATE users
-		SET full_name = $1, phone = $2, updated_at = NOW()
+		SET full_name = $1, phone = NULLIF(TRIM($2), ''), updated_at = NOW()
 		WHERE id = $3
 		RETURNING id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, created_at, updated_at
 	`
@@ -431,4 +440,3 @@ func (r *UserRepo) UpdateUserStatusForAdmin(ctx context.Context, userID string, 
 	}
 	return u, nil
 }
-

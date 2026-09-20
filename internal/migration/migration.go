@@ -35,6 +35,13 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"ALTER TABLE products ADD COLUMN IF NOT EXISTS is_price_public BOOLEAN DEFAULT true;",
 		"ALTER TABLE products ADD COLUMN IF NOT EXISTS cost_price DECIMAL(10, 2) DEFAULT 0;",
 		"ALTER TABLE products ADD COLUMN IF NOT EXISTS compare_price DECIMAL(10, 2) DEFAULT 0;",
+		"ALTER TABLE users ALTER COLUMN phone DROP NOT NULL;",
+		"UPDATE users SET phone = NULL WHERE phone = '';",
+		"ALTER TABLE users DROP CONSTRAINT IF EXISTS users_phone_key;",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone_unique ON users(phone) WHERE phone IS NOT NULL AND phone != '';",
+		"ALTER TABLE shops ALTER COLUMN phone DROP NOT NULL;",
+		"ALTER TABLE shops ALTER COLUMN pincode DROP NOT NULL;",
+		"ALTER TABLE shops ALTER COLUMN city DROP NOT NULL;",
 	}
 
 	for _, q := range queries {
