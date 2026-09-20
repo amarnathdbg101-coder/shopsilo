@@ -2,6 +2,7 @@
 package controller
 
 import (
+	"io"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -134,15 +135,22 @@ func (c *ShopController) ToggleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var input dto.ToggleShopStatusRequest
+	var input struct {
+		IsOpen *bool `json:"is_open"`
+	}
+	targetIsOpen := false
 	hasExplicitInput := false
-	if r.Body != nil && r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&input); err == nil {
-			hasExplicitInput = true
+
+	if r.Body != nil {
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err == nil && len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, &input); err == nil && input.IsOpen != nil {
+				targetIsOpen = *input.IsOpen
+				hasExplicitInput = true
+			}
 		}
 	}
 
-	targetIsOpen := input.IsOpen
 	if !hasExplicitInput {
 		// Auto-toggle: retrieve current shop and invert is_open
 		currentShop, err := c.service.GetMyShop(r.Context(), claims.UserID)
