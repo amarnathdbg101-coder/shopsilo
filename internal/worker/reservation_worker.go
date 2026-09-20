@@ -16,8 +16,7 @@ func StartReservationCleaner(ctx context.Context, db *pgxpool.Pool, logger *zap.
 		}
 	}()
 
-	// Run every 30 minutes instead of every 2 minutes so Neon compute can auto-suspend after 5 min of idle time
-	ticker := time.NewTicker(30 * time.Minute)
+	ticker := time.NewTicker(2 * time.Minute)
 	defer ticker.Stop()
 
 	resRepo := repository.NewReservationRepo(db, logger)

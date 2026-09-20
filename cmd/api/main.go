@@ -34,13 +34,10 @@ func main() {
 
 	router := routes.RouteSetup(db, logger)
 
-	// Bind event-driven outbox dispatch trigger
-	utils.SetOutboxTrigger(worker.TriggerOutboxDispatch)
-
 	// Context for background concurrent workers
 	appCtx, stopApp := context.WithCancel(context.Background())
 	defer stopApp()
-	// Background Concurrency Workers (Serverless scale-to-zero & zero-polling optimized)
+	// Background Concurrency Workers
 	go worker.StartReservationCleaner(appCtx, db, logger)
 	go worker.StartBackupWorker(appCtx, db, logger)
 	go worker.StartOutboxWorker(appCtx, db, logger)
