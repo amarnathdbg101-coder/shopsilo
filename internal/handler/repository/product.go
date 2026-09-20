@@ -1471,22 +1471,93 @@ func (r *ProductRepo) FindActiveProductsByTokens(ctx context.Context, shopID str
 	return products, nil
 }
 
-// BulkImportProducts executes a high-speed batch insert transaction for importing 500+ products in seconds.
-func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, items []dto.BulkImportProductItem) (*dto.BulkImportResponse, error) {
+// BulkImportProducts executes a high-speed batch insert and upsert transaction for importing products efficiently and reliably.
+func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, items []dto.BulkImportProductItem, updateExisting bool) (*dto.BulkImportResponse, error) {
 	if len(items) == 0 {
-		return &dto.BulkImportResponse{TotalRows: 0, ImportedCount: 0, SkippedCount: 0, Errors: []string{}}, nil
+		return &dto.BulkImportResponse{TotalRows: 0, ImportedCount: 0, UpdatedCount: 0, SkippedCount: 0, Errors: []string{}}, nil
 	}
 
-	// 1. Resolve a valid category_id for this shop
+	// 1. Resolve and cache all categories
+	categoryMap := make(map[string]string) // cleanName/slug -> categoryID
 	var defaultCategoryID string
-	err := r.db.QueryRow(ctx, `SELECT id FROM categories ORDER BY created_at ASC LIMIT 1`).Scan(&defaultCategoryID)
-	if err != nil || defaultCategoryID == "" {
+
+	rows, err := r.db.Query(ctx, `SELECT id, LOWER(TRIM(name)), LOWER(TRIM(slug)) FROM categories WHERE is_active = true`)
+	if err == nil {
+		for rows.Next() {
+			var id, name, slug string
+			if err := rows.Scan(&id, &name, &slug); err == nil {
+				categoryMap[name] = id
+				categoryMap[slug] = id
+				if defaultCategoryID == "" {
+					defaultCategoryID = id
+				}
+			}
+		}
+		rows.Close()
+	}
+
+	// Ensure a default category exists
+	if defaultCategoryID == "" {
 		_ = r.db.QueryRow(ctx, `
 			INSERT INTO categories (name, slug, description, is_active, created_at, updated_at)
 			VALUES ('General Store', 'general-store', 'Default Kirana and General Category', true, NOW(), NOW())
 			ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
 			RETURNING id
 		`).Scan(&defaultCategoryID)
+		categoryMap["general store"] = defaultCategoryID
+		categoryMap["general-store"] = defaultCategoryID
+	}
+
+	// Helper to resolve or auto-create category
+	resolveCategory := func(catName string) string {
+		clean := strings.ToLower(strings.TrimSpace(catName))
+		if clean == "" {
+			return defaultCategoryID
+		}
+		if id, found := categoryMap[clean]; found && id != "" {
+			return id
+		}
+		slug := reuse.Slugify(clean)
+		if id, found := categoryMap[slug]; found && id != "" {
+			return id
+		}
+		if slug == "" {
+			slug = fmt.Sprintf("cat-%d", time.Now().UnixNano()%1000000)
+		}
+
+		var newID string
+		err := r.db.QueryRow(ctx, `
+			INSERT INTO categories (name, slug, description, is_active, created_at, updated_at)
+			VALUES ($1, $2, 'Auto-created from bulk import', true, NOW(), NOW())
+			ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
+			RETURNING id
+		`, strings.TrimSpace(catName), slug).Scan(&newID)
+		if err == nil && newID != "" {
+			categoryMap[clean] = newID
+			categoryMap[slug] = newID
+			return newID
+		}
+		return defaultCategoryID
+	}
+
+	// 2. Fetch existing products for this shop for fast conflict & upsert detection
+	existingSKUs := make(map[string]string)  // lower(sku) -> productID
+	existingNames := make(map[string]string) // lower(name) -> productID
+
+	pRows, err := r.db.Query(ctx, `SELECT id, COALESCE(LOWER(TRIM(sku)), ''), LOWER(TRIM(name)) FROM products WHERE shop_id = $1`, shopID)
+	if err == nil {
+		for pRows.Next() {
+			var pID, sku, name string
+			if err := pRows.Scan(&pID, &sku, &name); err == nil {
+				if sku != "" {
+					existingSKUs[sku] = pID
+				}
+				if name != "" {
+					existingNames[name] = pID
+				}
+			}
+		}
+		pRows.Close()
 	}
 
 	tx, err := r.db.Begin(ctx)
@@ -1496,6 +1567,7 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 	defer tx.Rollback(ctx)
 
 	var importedCount int
+	var updatedCount int
 	var skippedCount int
 	var errMsgs []string
 
@@ -1506,7 +1578,7 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 			shop_id, name, slug, description, sku, price, cost_price, compare_price,
 			category_id, images, weight, is_active, is_featured, tags, attributes, created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, '[]'::jsonb, 0, true, false, '{}'::text[], '{}'::jsonb, NOW(), NOW())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '[]'::jsonb, 0, true, false, '{}'::text[], '{}'::jsonb, NOW(), NOW())
 		RETURNING id
 	`
 
@@ -1514,19 +1586,99 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 		name := strings.TrimSpace(item.Name)
 		if name == "" {
 			skippedCount++
-			errMsgs = append(errMsgs, fmt.Sprintf("Row %d: Product name is empty", idx+1))
+			errMsgs = append(errMsgs, fmt.Sprintf("Row %d: Product name is empty (skipped)", idx+1))
 			continue
 		}
 
 		if item.Price <= 0 {
 			skippedCount++
-			errMsgs = append(errMsgs, fmt.Sprintf("Row %d ('%s'): Price must be greater than 0", idx+1, name))
+			errMsgs = append(errMsgs, fmt.Sprintf("Row %d ('%s'): Price must be greater than 0 (skipped)", idx+1, name))
 			continue
 		}
 
 		sku := strings.TrimSpace(strings.ToUpper(item.SKU))
+		if sku == "" && item.Barcode != "" {
+			sku = strings.TrimSpace(strings.ToUpper(item.Barcode))
+		}
+
+		// Resolve category
+		catID := defaultCategoryID
+		if item.CategoryID != "" {
+			catID = item.CategoryID
+		} else if item.CategoryName != "" {
+			catID = resolveCategory(item.CategoryName)
+		}
+
+		cleanSKULower := strings.ToLower(sku)
+		cleanNameLower := strings.ToLower(name)
+
+		// Check if product exists
+		var existingProductID string
+		if cleanSKULower != "" {
+			if pID, found := existingSKUs[cleanSKULower]; found {
+				existingProductID = pID
+			}
+		}
+		if existingProductID == "" {
+			if pID, found := existingNames[cleanNameLower]; found {
+				existingProductID = pID
+			}
+		}
+
+		// Stock & Min Stock normalization
+		stock := item.StockQuantity
+		if stock < 0 {
+			stock = 0
+		}
+		minStock := item.MinStock
+		if minStock <= 0 {
+			minStock = 5
+		}
+
+		// CASE 1: Product already exists
+		if existingProductID != "" {
+			if updateExisting {
+				// Update existing product price, cost, description, and inventory
+				updateQuery := `
+					UPDATE products
+					SET price = $1,
+					    cost_price = CASE WHEN $2 > 0 THEN $2 ELSE cost_price END,
+					    compare_price = CASE WHEN $3 > 0 THEN $3 ELSE compare_price END,
+					    category_id = COALESCE($4, category_id),
+					    description = CASE WHEN $5 <> '' THEN $5 ELSE description END,
+					    updated_at = NOW()
+					WHERE id = $6 AND shop_id = $7
+				`
+				_, updateErr := tx.Exec(ctx, updateQuery, item.Price, item.CostPrice, item.ComparePrice, catID, strings.TrimSpace(item.Description), existingProductID, shopID)
+				if updateErr != nil {
+					skippedCount++
+					errMsgs = append(errMsgs, fmt.Sprintf("Row %d ('%s'): Update failed: %v", idx+1, name, updateErr))
+					continue
+				}
+
+				// Update inventory stock
+				invQuery := `
+					INSERT INTO inventory (product_id, quantity, reserved_quantity, low_stock_threshold, updated_at)
+					VALUES ($1, $2, 0, $3, NOW())
+					ON CONFLICT (product_id) DO UPDATE
+					SET quantity = EXCLUDED.quantity, low_stock_threshold = EXCLUDED.low_stock_threshold, updated_at = NOW()
+				`
+				_, _ = tx.Exec(ctx, invQuery, existingProductID, stock, minStock)
+
+				updatedCount++
+				continue
+			} else {
+				// Skip duplicate
+				skippedCount++
+				errMsgs = append(errMsgs, fmt.Sprintf("Row %d ('%s'): Product with SKU '%s' already exists (skipped)", idx+1, name, sku))
+				continue
+			}
+		}
+
+		// CASE 2: Insert new product
 		if sku == "" {
-			sku = fmt.Sprintf("SKU-%d-%d", time.Now().Unix()%10000, rGenerator.Intn(9000)+1000)
+			sku = fmt.Sprintf("SKU-%d-%04d", time.Now().Unix()%100000, rGenerator.Intn(10000))
+			cleanSKULower = strings.ToLower(sku)
 		}
 
 		slug := reuse.Slugify(name)
@@ -1534,11 +1686,6 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 			slug = fmt.Sprintf("prod-%d", rGenerator.Intn(900000)+10000)
 		}
 		slug = fmt.Sprintf("%s-%d", slug, rGenerator.Intn(900000)+10000)
-
-		catID := defaultCategoryID
-		if item.CategoryID != "" {
-			catID = item.CategoryID
-		}
 
 		var productID string
 		err := tx.QueryRow(
@@ -1551,13 +1698,13 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 			sku,
 			item.Price,
 			item.CostPrice,
+			item.ComparePrice,
 			catID,
 		).Scan(&productID)
 
 		if err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-				// Retry with unique fallback SKU/Slug
 				altSKU := fmt.Sprintf("%s-%d", sku, rGenerator.Intn(900)+100)
 				altSlug := fmt.Sprintf("%s-alt-%d", slug, rGenerator.Intn(900)+100)
 				err = tx.QueryRow(
@@ -1570,32 +1717,31 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 					altSKU,
 					item.Price,
 					item.CostPrice,
+					item.ComparePrice,
 					catID,
 				).Scan(&productID)
+				sku = altSKU
+				cleanSKULower = strings.ToLower(altSKU)
 			}
 			if err != nil {
 				skippedCount++
-				errMsgs = append(errMsgs, fmt.Sprintf("Row %d ('%s'): %v", idx+1, name, err))
+				errMsgs = append(errMsgs, fmt.Sprintf("Row %d ('%s'): Insert failed: %v", idx+1, name, err))
 				continue
 			}
 		}
 
-		// Insert inventory
-		stock := item.StockQuantity
-		if stock < 0 {
-			stock = 0
-		}
-		minStock := item.MinStock
-		if minStock <= 0 {
-			minStock = 5
-		}
-
+		// Insert inventory for new product
 		invQuery := `
 			INSERT INTO inventory (product_id, quantity, reserved_quantity, low_stock_threshold, updated_at)
 			VALUES ($1, $2, 0, $3, NOW())
-			ON CONFLICT (product_id) DO UPDATE SET quantity = EXCLUDED.quantity, low_stock_threshold = EXCLUDED.low_stock_threshold
+			ON CONFLICT (product_id) DO UPDATE
+			SET quantity = EXCLUDED.quantity, low_stock_threshold = EXCLUDED.low_stock_threshold, updated_at = NOW()
 		`
 		_, _ = tx.Exec(ctx, invQuery, productID, stock, minStock)
+
+		// Cache in lookup maps for subsequent rows in the same batch
+		existingSKUs[cleanSKULower] = productID
+		existingNames[cleanNameLower] = productID
 
 		importedCount++
 	}
@@ -1607,9 +1753,8 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 	return &dto.BulkImportResponse{
 		TotalRows:     len(items),
 		ImportedCount: importedCount,
+		UpdatedCount:  updatedCount,
 		SkippedCount:  skippedCount,
 		Errors:        errMsgs,
 	}, nil
 }
-
-

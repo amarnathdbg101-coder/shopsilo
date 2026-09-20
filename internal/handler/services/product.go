@@ -674,7 +674,7 @@ func generateDealCode() string {
 }
 
 // BulkImportProductsFromCSV parses CSV bytes and bulk imports products into shop catalog in batch.
-func (s *ProductService) BulkImportProductsFromCSV(ctx context.Context, userID string, csvReader io.Reader) (*dto.BulkImportResponse, error) {
+func (s *ProductService) BulkImportProductsFromCSV(ctx context.Context, userID string, csvReader io.Reader, updateExisting bool) (*dto.BulkImportResponse, error) {
 	shop, err := s.shopRepo.FindByUserID(ctx, userID)
 	if err != nil {
 		return nil, ErrShopNotFound
@@ -718,27 +718,33 @@ func (s *ProductService) BulkImportProductsFromCSV(ctx context.Context, userID s
 
 	// Identify header positions
 	header := records[0]
-	nameCol, skuCol, priceCol, costCol, stockCol, minStockCol, descCol := -1, -1, -1, -1, -1, -1, -1
+	nameCol, skuCol, priceCol, costCol, compareCol, stockCol, minStockCol, catCol, unitCol, descCol := -1, -1, -1, -1, -1, -1, -1, -1, -1, -1
 
 	for i, h := range header {
 		cleanH := strings.ToLower(strings.TrimSpace(h))
-		if strings.Contains(cleanH, "name") || strings.Contains(cleanH, "title") || strings.Contains(cleanH, "item") {
+		if strings.Contains(cleanH, "name") || strings.Contains(cleanH, "title") || strings.Contains(cleanH, "item") || strings.Contains(cleanH, "saman") {
 			nameCol = i
-		} else if strings.Contains(cleanH, "sku") || strings.Contains(cleanH, "code") || strings.Contains(cleanH, "barcode") {
+		} else if strings.Contains(cleanH, "sku") || strings.Contains(cleanH, "code") || strings.Contains(cleanH, "barcode") || strings.Contains(cleanH, "upc") || strings.Contains(cleanH, "ean") {
 			skuCol = i
-		} else if strings.Contains(cleanH, "price") || strings.Contains(cleanH, "mrp") || strings.Contains(cleanH, "rate") {
-			if strings.Contains(cleanH, "cost") || strings.Contains(cleanH, "buy") || strings.Contains(cleanH, "wholesale") {
+		} else if strings.Contains(cleanH, "mrp") || strings.Contains(cleanH, "compare") || strings.Contains(cleanH, "original") {
+			compareCol = i
+		} else if strings.Contains(cleanH, "price") || strings.Contains(cleanH, "rate") || strings.Contains(cleanH, "selling") {
+			if strings.Contains(cleanH, "cost") || strings.Contains(cleanH, "buy") || strings.Contains(cleanH, "wholesale") || strings.Contains(cleanH, "purchase") {
 				costCol = i
 			} else if priceCol == -1 {
 				priceCol = i
 			}
-		} else if strings.Contains(cleanH, "cost") || strings.Contains(cleanH, "wholesale") {
+		} else if strings.Contains(cleanH, "cost") || strings.Contains(cleanH, "wholesale") || strings.Contains(cleanH, "buy") || strings.Contains(cleanH, "purchase") {
 			costCol = i
-		} else if strings.Contains(cleanH, "stock") || strings.Contains(cleanH, "qty") || strings.Contains(cleanH, "quantity") {
+		} else if strings.Contains(cleanH, "stock") || strings.Contains(cleanH, "qty") || strings.Contains(cleanH, "quantity") || strings.Contains(cleanH, "units") {
 			stockCol = i
-		} else if strings.Contains(cleanH, "min") || strings.Contains(cleanH, "threshold") {
+		} else if strings.Contains(cleanH, "min") || strings.Contains(cleanH, "threshold") || strings.Contains(cleanH, "alert") {
 			minStockCol = i
-		} else if strings.Contains(cleanH, "desc") || strings.Contains(cleanH, "details") {
+		} else if strings.Contains(cleanH, "category") || strings.Contains(cleanH, "cat") || strings.Contains(cleanH, "group") || strings.Contains(cleanH, "type") {
+			catCol = i
+		} else if strings.Contains(cleanH, "unit") || strings.Contains(cleanH, "uom") || strings.Contains(cleanH, "pack") {
+			unitCol = i
+		} else if strings.Contains(cleanH, "desc") || strings.Contains(cleanH, "detail") {
 			descCol = i
 		}
 	}
@@ -755,8 +761,19 @@ func (s *ProductService) BulkImportProductsFromCSV(ctx context.Context, userID s
 		v = strings.ReplaceAll(v, "₹", "")
 		v = strings.ReplaceAll(v, "Rs.", "")
 		v = strings.ReplaceAll(v, "Rs", "")
+		v = strings.ReplaceAll(v, "INR", "")
 		v = strings.ReplaceAll(v, ",", "")
 		return strings.TrimSpace(v)
+	}
+
+	cleanSKU := func(val string) string {
+		s := strings.TrimSpace(val)
+		if strings.Contains(s, "E+") || strings.Contains(s, "e+") {
+			if f, err := strconv.ParseFloat(s, 64); err == nil {
+				return fmt.Sprintf("%.0f", f)
+			}
+		}
+		return s
 	}
 
 	var items []dto.BulkImportProductItem
@@ -772,12 +789,12 @@ func (s *ProductService) BulkImportProductsFromCSV(ctx context.Context, userID s
 			item.Name = strings.TrimSpace(row[nameCol])
 		}
 		if skuCol != -1 && skuCol < len(row) {
-			item.SKU = strings.TrimSpace(row[skuCol])
+			item.SKU = cleanSKU(row[skuCol])
 		}
 		if priceCol < len(row) {
 			pVal, _ := strconv.ParseFloat(cleanNumber(row[priceCol]), 64)
 			if pVal <= 0 {
-				pVal = 10.0 // Default reasonable price if 0 or unparsed
+				pVal = 10.0 // Default price
 			}
 			item.Price = pVal
 		} else {
@@ -786,6 +803,10 @@ func (s *ProductService) BulkImportProductsFromCSV(ctx context.Context, userID s
 		if costCol != -1 && costCol < len(row) {
 			cVal, _ := strconv.ParseFloat(cleanNumber(row[costCol]), 64)
 			item.CostPrice = cVal
+		}
+		if compareCol != -1 && compareCol < len(row) {
+			cmpVal, _ := strconv.ParseFloat(cleanNumber(row[compareCol]), 64)
+			item.ComparePrice = cmpVal
 		}
 		if stockCol != -1 && stockCol < len(row) {
 			sVal, _ := strconv.Atoi(cleanNumber(row[stockCol]))
@@ -797,6 +818,12 @@ func (s *ProductService) BulkImportProductsFromCSV(ctx context.Context, userID s
 			mVal, _ := strconv.Atoi(cleanNumber(row[minStockCol]))
 			item.MinStock = mVal
 		}
+		if catCol != -1 && catCol < len(row) {
+			item.CategoryName = strings.TrimSpace(row[catCol])
+		}
+		if unitCol != -1 && unitCol < len(row) {
+			item.Unit = strings.TrimSpace(row[unitCol])
+		}
 		if descCol != -1 && descCol < len(row) {
 			item.Description = strings.TrimSpace(row[descCol])
 		}
@@ -806,17 +833,19 @@ func (s *ProductService) BulkImportProductsFromCSV(ctx context.Context, userID s
 		}
 	}
 
-	return s.productRepo.BulkImportProducts(ctx, shop.ID, items)
+	return s.productRepo.BulkImportProducts(ctx, shop.ID, items, updateExisting)
 }
 
 // BulkImportProductsFromJSON bulk imports products provided via JSON array.
-func (s *ProductService) BulkImportProductsFromJSON(ctx context.Context, userID string, items []dto.BulkImportProductItem) (*dto.BulkImportResponse, error) {
+func (s *ProductService) BulkImportProductsFromJSON(ctx context.Context, userID string, items []dto.BulkImportProductItem, updateExisting bool) (*dto.BulkImportResponse, error) {
 	shop, err := s.shopRepo.FindByUserID(ctx, userID)
 	if err != nil {
 		return nil, ErrShopNotFound
 	}
-	return s.productRepo.BulkImportProducts(ctx, shop.ID, items)
+	return s.productRepo.BulkImportProducts(ctx, shop.ID, items, updateExisting)
 }
+
+
 
 // GenerateCSVImportTemplate returns a ready-to-use sample CSV template for shopkeepers.
 func (s *ProductService) GenerateCSVImportTemplate() []byte {

@@ -2,16 +2,20 @@
 package controller
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"strconv"
+	"strings"
+
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/repository"
 	"shopMe/internal/handler/services"
 	"shopMe/internal/middleware"
 	"shopMe/internal/reuse"
-	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -512,26 +516,65 @@ func (c *ProductController) BulkImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	updateExisting := r.URL.Query().Get("update_existing") == "true" ||
+		r.URL.Query().Get("upsert") == "true" ||
+		r.FormValue("update_existing") == "true"
+
 	contentType := r.Header.Get("Content-Type")
 
 	// 1. Handle multipart CSV file upload
 	if strings.Contains(contentType, "multipart/form-data") {
-		if err := r.ParseMultipartForm(10 * 1024 * 1024); err != nil { // 10MB limit
+		if err := r.ParseMultipartForm(15 * 1024 * 1024); err != nil { // 15MB limit
 			reuse.Error(w, http.StatusBadRequest, "failed to parse multipart form")
 			return
 		}
 
-		file, _, err := r.FormFile("file")
-		if err != nil {
-			file, _, err = r.FormFile("csv")
+		var file io.ReadCloser
+		for _, key := range []string{"file", "csv", "data", "upload", "spreadsheet"} {
+			if f, _, err := r.FormFile(key); err == nil && f != nil {
+				file = f
+				break
+			}
 		}
-		if err != nil {
-			reuse.Error(w, http.StatusBadRequest, "CSV file is required under field 'file' or 'csv'")
+
+		if file != nil {
+			defer file.Close()
+			res, err := c.productService.BulkImportProductsFromCSV(r.Context(), claims.UserID, file, updateExisting)
+			if err != nil {
+				if errors.Is(err, services.ErrShopNotFound) {
+					reuse.Error(w, http.StatusNotFound, "you must register a shop first")
+					return
+				}
+				reuse.Error(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			reuse.Created(w, "Bulk product CSV import completed successfully", res)
 			return
 		}
-		defer file.Close()
+	}
 
-		res, err := c.productService.BulkImportProductsFromCSV(r.Context(), claims.UserID, file)
+	// 2. Read Request Body
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		reuse.Error(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
+	defer r.Body.Close()
+
+	trimmed := bytes.TrimSpace(bodyBytes)
+	if len(trimmed) == 0 {
+		reuse.Error(w, http.StatusBadRequest, "request body cannot be empty")
+		return
+	}
+
+	// 3. Check if body is raw CSV text (Content-Type: text/csv or begins with plain CSV text)
+	isRawCSV := strings.Contains(contentType, "text/csv") ||
+		strings.Contains(contentType, "text/plain") ||
+		(trimmed[0] != '{' && trimmed[0] != '[') ||
+		bytes.HasPrefix(trimmed, []byte{0xEF, 0xBB, 0xBF})
+
+	if isRawCSV {
+		res, err := c.productService.BulkImportProductsFromCSV(r.Context(), claims.UserID, bytes.NewReader(bodyBytes), updateExisting)
 		if err != nil {
 			if errors.Is(err, services.ErrShopNotFound) {
 				reuse.Error(w, http.StatusNotFound, "you must register a shop first")
@@ -540,24 +583,26 @@ func (c *ProductController) BulkImport(w http.ResponseWriter, r *http.Request) {
 			reuse.Error(w, http.StatusBadRequest, err.Error())
 			return
 		}
-
 		reuse.Created(w, "Bulk product CSV import completed successfully", res)
 		return
 	}
 
-	// 2. Handle JSON array body import
-	var items []dto.BulkImportProductItem
-	if err := json.NewDecoder(r.Body).Decode(&items); err != nil {
-		reuse.Error(w, http.StatusBadRequest, "invalid request body (expected CSV file or JSON array)")
+	// 4. Handle Flexible JSON body (supports numbers as strings, flexible wrappers, etc.)
+	items, shouldUpdate, err := parseFlexibleBulkImportJSON(bodyBytes)
+	if err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request: "+err.Error())
 		return
+	}
+	if shouldUpdate {
+		updateExisting = true
 	}
 
 	if len(items) == 0 {
-		reuse.Error(w, http.StatusBadRequest, "at least one product item is required for bulk import")
+		reuse.Error(w, http.StatusBadRequest, "no valid product rows found in request")
 		return
 	}
 
-	res, err := c.productService.BulkImportProductsFromJSON(r.Context(), claims.UserID, items)
+	res, err := c.productService.BulkImportProductsFromJSON(r.Context(), claims.UserID, items, updateExisting)
 	if err != nil {
 		if errors.Is(err, services.ErrShopNotFound) {
 			reuse.Error(w, http.StatusNotFound, "you must register a shop first")
@@ -567,7 +612,131 @@ func (c *ProductController) BulkImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reuse.Created(w, "Bulk product JSON import completed successfully", res)
+	reuse.Created(w, "Bulk product import completed successfully", res)
+}
+
+// parseFlexibleBulkImportJSON handles parsing dynamic JSON structures and coerces types cleanly.
+func parseFlexibleBulkImportJSON(data []byte) ([]dto.BulkImportProductItem, bool, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+
+	var rawData interface{}
+	if err := decoder.Decode(&rawData); err != nil {
+		return nil, false, err
+	}
+
+	var itemsList []interface{}
+	var updateExisting bool = false
+
+	switch v := rawData.(type) {
+	case []interface{}:
+		itemsList = v
+	case map[string]interface{}:
+		if ue, ok := v["update_existing"].(bool); ok {
+			updateExisting = ue
+		}
+		if items, ok := v["items"].([]interface{}); ok {
+			itemsList = items
+		} else if prods, ok := v["products"].([]interface{}); ok {
+			itemsList = prods
+		} else if d, ok := v["data"].([]interface{}); ok {
+			itemsList = d
+		}
+	}
+
+	if len(itemsList) == 0 {
+		return nil, false, errors.New("expected array of products or { items: [...] }")
+	}
+
+	result := make([]dto.BulkImportProductItem, 0, len(itemsList))
+	for _, raw := range itemsList {
+		m, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		item := dto.BulkImportProductItem{
+			Name:          getMapString(m, "name", "title", "product_name", "item_name", "saman"),
+			SKU:           getMapString(m, "sku", "code", "item_code", "product_code"),
+			Barcode:       getMapString(m, "barcode", "ean", "upc"),
+			Price:         getMapFloat(m, "price", "rate", "selling_price", "saleprice"),
+			CostPrice:     getMapFloat(m, "cost_price", "cost", "purchase_price", "buy_price", "wholesale_price"),
+			ComparePrice:  getMapFloat(m, "compare_price", "mrp", "original_price", "list_price"),
+			StockQuantity: getMapInt(m, "stock_quantity", "stock", "quantity", "qty", "inventory"),
+			MinStock:      getMapInt(m, "min_stock", "min_quantity", "threshold", "alert_stock"),
+			CategoryName:  getMapString(m, "category_name", "category", "cat", "department"),
+			CategoryID:    getMapString(m, "category_id"),
+			Unit:          getMapString(m, "unit", "uom", "pack"),
+			Description:   getMapString(m, "description", "desc", "details"),
+		}
+
+		if item.Name != "" || item.Price > 0 {
+			result = append(result, item)
+		}
+	}
+
+	return result, updateExisting, nil
+}
+
+func getMapString(m map[string]interface{}, keys ...string) string {
+	for _, k := range keys {
+		if val, exists := m[k]; exists && val != nil {
+			str := strings.TrimSpace(fmt.Sprintf("%v", val))
+			if str != "" && str != "<nil>" {
+				return str
+			}
+		}
+	}
+	return ""
+}
+
+func getMapFloat(m map[string]interface{}, keys ...string) float64 {
+	for _, k := range keys {
+		if val, exists := m[k]; exists && val != nil {
+			switch v := val.(type) {
+			case float64:
+				return v
+			case json.Number:
+				if f, err := v.Float64(); err == nil {
+					return f
+				}
+			case string:
+				cleaned := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(v, "₹", ""), ",", ""))
+				cleaned = strings.TrimPrefix(cleaned, "Rs.")
+				cleaned = strings.TrimPrefix(cleaned, "Rs")
+				if f, err := strconv.ParseFloat(cleaned, 64); err == nil {
+					return f
+				}
+			}
+		}
+	}
+	return 0
+}
+
+func getMapInt(m map[string]interface{}, keys ...string) int {
+	for _, k := range keys {
+		if val, exists := m[k]; exists && val != nil {
+			switch v := val.(type) {
+			case int:
+				return v
+			case float64:
+				return int(v)
+			case json.Number:
+				if i, err := v.Int64(); err == nil {
+					return int(i)
+				}
+			case string:
+				cleaned := strings.TrimSpace(strings.ReplaceAll(v, ",", ""))
+				if i, err := strconv.Atoi(cleaned); err == nil {
+					return i
+				}
+				if f, err := strconv.ParseFloat(cleaned, 64); err == nil {
+					return int(f)
+				}
+			}
+		}
+	}
+	return 0
 }
 
 // DownloadImportTemplate serves a ready-to-use sample CSV import template file (Protected / Public)

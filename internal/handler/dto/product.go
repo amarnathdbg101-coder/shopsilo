@@ -173,8 +173,10 @@ type POSBargainAssistResponse struct {
 type BulkImportProductItem struct {
 	Name          string  `json:"name"`
 	SKU           string  `json:"sku"`
+	Barcode       string  `json:"barcode,omitempty"`
 	Price         float64 `json:"price"`
 	CostPrice     float64 `json:"cost_price,omitempty"`
+	ComparePrice  float64 `json:"compare_price,omitempty"`
 	StockQuantity int     `json:"stock_quantity"`
 	MinStock      int     `json:"min_stock,omitempty"`
 	CategoryName  string  `json:"category_name,omitempty"`
@@ -183,10 +185,16 @@ type BulkImportProductItem struct {
 	Description   string  `json:"description,omitempty"`
 }
 
+type BulkImportRequest struct {
+	Items          []BulkImportProductItem `json:"items"`
+	UpdateExisting bool                    `json:"update_existing"`
+}
+
 type BulkImportResponse struct {
 	TotalRows     int      `json:"total_rows"`
 	ImportedCount int      `json:"imported_count"`
+	UpdatedCount  int      `json:"updated_count"`
 	SkippedCount  int      `json:"skipped_count"`
-	Errors        []string `json:"errors"`
+	Errors        []string `json:"errors,omitempty"`
 }
 

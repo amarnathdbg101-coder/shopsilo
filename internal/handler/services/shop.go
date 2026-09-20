@@ -445,7 +445,7 @@ func (s *ShopService) GenerateShopQRCode(ctx context.Context, slug string) ([]by
 	}
 
 	// In production, this can point to the frontend web app or deep-link app URL
-	targetURL := fmt.Sprintf("https://shopme.app/shops/%s", shop.Slug)
+	targetURL := fmt.Sprintf("https://shopsilo.in/shop/%s", shop.Slug)
 	return utils.GenerateQRCodePNG(targetURL, 300)
 }
 
@@ -459,7 +459,7 @@ func (s *ShopService) GenerateMyShopQRCode(ctx context.Context, userID string) (
 		return nil, err
 	}
 
-	targetURL := fmt.Sprintf("https://shopme.app/shops/%s", shop.Slug)
+	targetURL := fmt.Sprintf("https://shopsilo.in/shop/%s", shop.Slug)
 	return utils.GenerateQRCodePNG(targetURL, 300)
 }
 
