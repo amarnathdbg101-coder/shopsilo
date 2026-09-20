@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -24,6 +26,13 @@ func ConnectDB(database string) (*pgxpool.Pool, error) {
 		config.ConnConfig.User,
 		config.ConnConfig.Database,
 	)
+
+	// Supabase Pooler (Port 6543 / PgBouncer) Compatibility:
+	// PgBouncer in transaction mode does not support session-level prepared statements.
+	// Using QueryExecModeExec prevents "prepared statement already exists" errors under high load.
+	if strings.Contains(database, "6543") || strings.Contains(database, "pooler") {
+		config.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+	}
 
 	// Production pool tuning for low latency & concurrency
 	config.MaxConns = 30
