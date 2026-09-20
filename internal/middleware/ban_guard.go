@@ -68,7 +68,7 @@ func checkBannedCached(ctx context.Context, modRepo *repository.ModerationRepo, 
 	}
 	banCache[key] = banCacheEntry{
 		banned:    banned,
-		expiresAt: now.Add(60 * time.Second),
+		expiresAt: now.Add(15 * time.Minute),
 	}
 	banCacheMu.Unlock()
 
