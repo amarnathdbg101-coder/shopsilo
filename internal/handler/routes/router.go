@@ -153,6 +153,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 
 	// Public Browsing routes (customers & visitors)
 	r.Get("/catalog/home-feed", sc.GetHomeFeed) // Consolidated customer explore feed
+	r.Get("/home-feed", sc.GetHomeFeed)         // Frontend alias
 	r.Post("/ai/customer-chat", aic.CustomerChat)
 	r.Post("/ai/scan-product", aic.ScanProduct)
 	r.Post("/ai/parse-parchi", aic.ParseParchi)
@@ -357,3 +358,4 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 
 	return r
 }
+
