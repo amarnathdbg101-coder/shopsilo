@@ -4,13 +4,13 @@ package dto
 import "shopMe/internal/handler/model"
 
 type CreateShopRequest struct {
-	Name           string    `json:"name" validate:"required,min=2,max=150"`
-	Slug           string    `json:"slug,omitempty" validate:"omitempty,min=2,max=160"`
+	Name           string    `json:"name" validate:"required,min=1,max=150"`
+	Slug           string    `json:"slug,omitempty" validate:"omitempty,min=1,max=160"`
 	Description    string    `json:"description,omitempty" validate:"omitempty,max=500"`
-	Category       string    `json:"category" validate:"required,min=2,max=100"`
+	Category       string    `json:"category" validate:"required,min=1,max=100"`
 	Phone          string    `json:"phone,omitempty" validate:"omitempty,max=20"`
 	WhatsAppNumber string    `json:"whatsapp_number,omitempty" validate:"omitempty,max=20"`
-	Address        string    `json:"address" validate:"required,min=5,max=255"`
+	Address        string    `json:"address" validate:"required,min=1,max=255"`
 	City           string    `json:"city,omitempty" validate:"omitempty,max=100"`
 	Pincode        string    `json:"pincode,omitempty" validate:"omitempty,max=20"`
 	Latitude       *float64  `json:"latitude,omitempty" validate:"omitempty,latitude"`
@@ -25,13 +25,13 @@ type CreateShopRequest struct {
 }
 
 type UpdateShopRequest struct {
-	Name           *string   `json:"name,omitempty" validate:"omitempty,min=2,max=150"`
-	Slug           *string   `json:"slug,omitempty" validate:"omitempty,min=2,max=160"`
+	Name           *string   `json:"name,omitempty" validate:"omitempty,min=1,max=150"`
+	Slug           *string   `json:"slug,omitempty" validate:"omitempty,min=1,max=160"`
 	Description    *string   `json:"description,omitempty" validate:"omitempty,max=500"`
-	Category       *string   `json:"category,omitempty" validate:"omitempty,min=2,max=100"`
+	Category       *string   `json:"category,omitempty" validate:"omitempty,min=1,max=100"`
 	Phone          *string   `json:"phone,omitempty" validate:"omitempty,max=20"`
 	WhatsAppNumber *string   `json:"whatsapp_number,omitempty" validate:"omitempty,max=20"`
-	Address        *string   `json:"address,omitempty" validate:"omitempty,min=5,max=255"`
+	Address        *string   `json:"address,omitempty" validate:"omitempty,min=1,max=255"`
 	City           *string   `json:"city,omitempty" validate:"omitempty,max=100"`
 	Pincode        *string   `json:"pincode,omitempty" validate:"omitempty,max=20"`
 	Latitude       *float64  `json:"latitude,omitempty" validate:"omitempty,latitude"`

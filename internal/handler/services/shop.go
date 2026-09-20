@@ -629,3 +629,4 @@ func (s *ShopService) GetHomeFeed(ctx context.Context, lat, lng *float64, city s
 	return resp, nil
 }
 
+
