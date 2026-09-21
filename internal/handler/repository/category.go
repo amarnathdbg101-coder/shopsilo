@@ -46,7 +46,7 @@ func NewCategoryRepo(db *pgxpool.Pool, logger *zap.Logger) *CategoryRepo {
 func (r *CategoryRepo) FindAll(ctx context.Context) ([]*model.Category, error) {
 	now := time.Now()
 	catCacheMu.RLock()
-	if cachedCategories != nil && now.Before(catCacheExpires) {
+	if len(cachedCategories) > 0 && now.Before(catCacheExpires) {
 		result := make([]*model.Category, len(cachedCategories))
 		copy(result, cachedCategories)
 		catCacheMu.RUnlock()
