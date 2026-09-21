@@ -102,9 +102,10 @@ func (r *ShopRepo) BeginTx(ctx context.Context) (pgx.Tx, error) {
 }
 
 func (r *ShopRepo) CreateWithTx(ctx context.Context, tx pgx.Tx, s *model.Shop) (*model.Shop, error) {
-	bannersJSON, _ := json.Marshal(s.Banners)
-	if s.Banners == nil {
-		bannersJSON = []byte("[]")
+	bannersBytes, _ := json.Marshal(s.Banners)
+	bannersStr := string(bannersBytes)
+	if s.Banners == nil || len(s.Banners) == 0 {
+		bannersStr = "[]"
 	}
 
 	openingTime := s.OpeningTime
@@ -138,7 +139,7 @@ func (r *ShopRepo) CreateWithTx(ctx context.Context, tx pgx.Tx, s *model.Shop) (
 		          created_at, updated_at
 	`
 	created := &model.Shop{}
-	var bannersBytes []byte
+	var bannersScanned []byte
 
 	err := tx.QueryRow(
 		ctx,
@@ -157,7 +158,7 @@ func (r *ShopRepo) CreateWithTx(ctx context.Context, tx pgx.Tx, s *model.Shop) (
 		strings.TrimSpace(s.WhatsAppNumber),
 		strings.TrimSpace(s.UPIID),
 		strings.TrimSpace(s.LogoURL),
-		bannersJSON,
+		bannersStr,
 		strings.TrimSpace(s.Timing),
 		openingTime,
 		closingTime,
@@ -184,7 +185,7 @@ func (r *ShopRepo) CreateWithTx(ctx context.Context, tx pgx.Tx, s *model.Shop) (
 		&created.WhatsAppNumber,
 		&created.UPIID,
 		&created.LogoURL,
-		&bannersBytes,
+		&bannersScanned,
 		&created.Timing,
 		&created.OpeningTime,
 		&created.ClosingTime,
@@ -213,8 +214,8 @@ func (r *ShopRepo) CreateWithTx(ctx context.Context, tx pgx.Tx, s *model.Shop) (
 	}
 
 	created.Banners = []string{}
-	if len(bannersBytes) > 0 {
-		_ = json.Unmarshal(bannersBytes, &created.Banners)
+	if len(bannersScanned) > 0 {
+		_ = json.Unmarshal(bannersScanned, &created.Banners)
 	}
 
 	computeShopOpenStatus(created)
@@ -235,7 +236,7 @@ func (r *ShopRepo) FindByUserID(ctx context.Context, userID string) (*model.Shop
 		LIMIT 1
 	`
 	s := &model.Shop{}
-	var bannersBytes []byte
+	var bannersScanned []byte
 
 	err := r.db.QueryRow(ctx, query, userID).Scan(
 		&s.ID,
@@ -253,7 +254,7 @@ func (r *ShopRepo) FindByUserID(ctx context.Context, userID string) (*model.Shop
 		&s.WhatsAppNumber,
 		&s.UPIID,
 		&s.LogoURL,
-		&bannersBytes,
+		&bannersScanned,
 		&s.Timing,
 		&s.OpeningTime,
 		&s.ClosingTime,
@@ -278,8 +279,8 @@ func (r *ShopRepo) FindByUserID(ctx context.Context, userID string) (*model.Shop
 	}
 
 	s.Banners = []string{}
-	if len(bannersBytes) > 0 {
-		_ = json.Unmarshal(bannersBytes, &s.Banners)
+	if len(bannersScanned) > 0 {
+		_ = json.Unmarshal(bannersScanned, &s.Banners)
 	}
 
 	computeShopOpenStatus(s)
@@ -300,7 +301,7 @@ func (r *ShopRepo) FindByID(ctx context.Context, id string) (*model.Shop, error)
 		LIMIT 1
 	`
 	s := &model.Shop{}
-	var bannersBytes []byte
+	var bannersScanned []byte
 
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&s.ID,
@@ -318,7 +319,7 @@ func (r *ShopRepo) FindByID(ctx context.Context, id string) (*model.Shop, error)
 		&s.WhatsAppNumber,
 		&s.UPIID,
 		&s.LogoURL,
-		&bannersBytes,
+		&bannersScanned,
 		&s.Timing,
 		&s.OpeningTime,
 		&s.ClosingTime,
@@ -343,8 +344,8 @@ func (r *ShopRepo) FindByID(ctx context.Context, id string) (*model.Shop, error)
 	}
 
 	s.Banners = []string{}
-	if len(bannersBytes) > 0 {
-		_ = json.Unmarshal(bannersBytes, &s.Banners)
+	if len(bannersScanned) > 0 {
+		_ = json.Unmarshal(bannersScanned, &s.Banners)
 	}
 
 	computeShopOpenStatus(s)
@@ -365,7 +366,7 @@ func (r *ShopRepo) FindBySlug(ctx context.Context, slug string) (*model.Shop, er
 		LIMIT 1
 	`
 	s := &model.Shop{}
-	var bannersBytes []byte
+	var bannersScanned []byte
 
 	err := r.db.QueryRow(ctx, query, slug).Scan(
 		&s.ID,
@@ -383,7 +384,7 @@ func (r *ShopRepo) FindBySlug(ctx context.Context, slug string) (*model.Shop, er
 		&s.WhatsAppNumber,
 		&s.UPIID,
 		&s.LogoURL,
-		&bannersBytes,
+		&bannersScanned,
 		&s.Timing,
 		&s.OpeningTime,
 		&s.ClosingTime,
@@ -408,8 +409,8 @@ func (r *ShopRepo) FindBySlug(ctx context.Context, slug string) (*model.Shop, er
 	}
 
 	s.Banners = []string{}
-	if len(bannersBytes) > 0 {
-		_ = json.Unmarshal(bannersBytes, &s.Banners)
+	if len(bannersScanned) > 0 {
+		_ = json.Unmarshal(bannersScanned, &s.Banners)
 	}
 
 	computeShopOpenStatus(s)
@@ -591,7 +592,7 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 
 	for rows.Next() {
 		s := &model.Shop{}
-		var bannersBytes []byte
+		var bannersScanned []byte
 		var distKm *float64
 
 		err := rows.Scan(
@@ -610,7 +611,7 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 			&s.WhatsAppNumber,
 			&s.UPIID,
 			&s.LogoURL,
-			&bannersBytes,
+			&bannersScanned,
 			&s.Timing,
 			&s.OpeningTime,
 			&s.ClosingTime,
@@ -634,8 +635,8 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 
 		s.DistanceKm = distKm
 		s.Banners = []string{}
-		if len(bannersBytes) > 0 {
-			_ = json.Unmarshal(bannersBytes, &s.Banners)
+		if len(bannersScanned) > 0 {
+			_ = json.Unmarshal(bannersScanned, &s.Banners)
 		}
 
 		computeShopOpenStatus(s)
@@ -646,9 +647,10 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 }
 
 func (r *ShopRepo) Update(ctx context.Context, s *model.Shop) (*model.Shop, error) {
-	bannersJSON, _ := json.Marshal(s.Banners)
-	if s.Banners == nil {
-		bannersJSON = []byte("[]")
+	bannersBytes, _ := json.Marshal(s.Banners)
+	bannersStr := string(bannersBytes)
+	if s.Banners == nil || len(s.Banners) == 0 {
+		bannersStr = "[]"
 	}
 
 	query := `
@@ -670,7 +672,7 @@ func (r *ShopRepo) Update(ctx context.Context, s *model.Shop) (*model.Shop, erro
 		          created_at, updated_at
 	`
 	updated := &model.Shop{}
-	var bannersBytes []byte
+	var bannersScanned []byte
 
 	err := r.db.QueryRow(
 		ctx,
@@ -688,7 +690,7 @@ func (r *ShopRepo) Update(ctx context.Context, s *model.Shop) (*model.Shop, erro
 		strings.TrimSpace(s.WhatsAppNumber),
 		strings.TrimSpace(s.UPIID),
 		strings.TrimSpace(s.LogoURL),
-		bannersJSON,
+		bannersStr,
 		strings.TrimSpace(s.Timing),
 		strings.TrimSpace(s.OpeningTime),
 		strings.TrimSpace(s.ClosingTime),
@@ -712,7 +714,7 @@ func (r *ShopRepo) Update(ctx context.Context, s *model.Shop) (*model.Shop, erro
 		&updated.WhatsAppNumber,
 		&updated.UPIID,
 		&updated.LogoURL,
-		&bannersBytes,
+		&bannersScanned,
 		&updated.Timing,
 		&updated.OpeningTime,
 		&updated.ClosingTime,
@@ -741,8 +743,8 @@ func (r *ShopRepo) Update(ctx context.Context, s *model.Shop) (*model.Shop, erro
 	}
 
 	updated.Banners = []string{}
-	if len(bannersBytes) > 0 {
-		_ = json.Unmarshal(bannersBytes, &updated.Banners)
+	if len(bannersScanned) > 0 {
+		_ = json.Unmarshal(bannersScanned, &updated.Banners)
 	}
 
 	computeShopOpenStatus(updated)
@@ -763,7 +765,7 @@ func (r *ShopRepo) ToggleStatus(ctx context.Context, userID string, isOpen bool)
 		          created_at, updated_at
 	`
 	updated := &model.Shop{}
-	var bannersBytes []byte
+	var bannersScanned []byte
 
 	err := r.db.QueryRow(ctx, query, isOpen, userID).Scan(
 		&updated.ID,
@@ -781,7 +783,7 @@ func (r *ShopRepo) ToggleStatus(ctx context.Context, userID string, isOpen bool)
 		&updated.WhatsAppNumber,
 		&updated.UPIID,
 		&updated.LogoURL,
-		&bannersBytes,
+		&bannersScanned,
 		&updated.Timing,
 		&updated.OpeningTime,
 		&updated.ClosingTime,
@@ -806,8 +808,8 @@ func (r *ShopRepo) ToggleStatus(ctx context.Context, userID string, isOpen bool)
 	}
 
 	updated.Banners = []string{}
-	if len(bannersBytes) > 0 {
-		_ = json.Unmarshal(bannersBytes, &updated.Banners)
+	if len(bannersScanned) > 0 {
+		_ = json.Unmarshal(bannersScanned, &updated.Banners)
 	}
 
 	computeShopOpenStatus(updated)
