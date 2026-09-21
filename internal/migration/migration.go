@@ -26,7 +26,7 @@ func RunAutoMigrations(dbURL string) error {
 
 // EnsureSchemaColumns runs fast, idempotent ALTER TABLE statements to guarantee all critical columns exist.
 func EnsureSchemaColumns(pool *pgxpool.Pool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	queries := []string{
@@ -46,6 +46,28 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"ALTER TABLE shops ALTER COLUMN phone DROP NOT NULL;",
 		"ALTER TABLE shops ALTER COLUMN pincode DROP NOT NULL;",
 		"ALTER TABLE shops ALTER COLUMN city DROP NOT NULL;",
+		`INSERT INTO categories (name, slug, description, icon, is_active) VALUES
+		('Kirana & Grocery', 'kirana-grocery', 'Daily essentials, rice, flour, oil, pulses and spices', '🛒', true),
+		('Dairy & Breakfast', 'dairy-breakfast', 'Milk, curd, butter, paneer, eggs and bread', '🥛', true),
+		('Snacks & Beverages', 'snacks-beverages', 'Biscuits, namkeen, cold drinks, tea and coffee', '🍪', true),
+		('Fruits & Vegetables', 'fruits-vegetables', 'Fresh local farm fruits and green vegetables', '🥦', true),
+		('Personal Care', 'personal-care', 'Soaps, shampoos, toothpaste, skincare and haircare', '🧼', true),
+		('Household Cleaning', 'household-cleaning', 'Detergents, floor cleaners, dishwash and mosquito repellents', '🧹', true),
+		('Clothing & Apparel', 'clothing-apparel', 'Menswear, womenswear, kids wear and innerwear', '👕', true),
+		('Footwear', 'footwear', 'Casual shoes, sandals, slippers and formal shoes', '👟', true),
+		('Electronics & Accessories', 'electronics-accessories', 'Mobile chargers, earphones, cables, bulbs and batteries', '⚡', true),
+		('Pharmacy & Healthcare', 'pharmacy-healthcare', 'Over-the-counter medicines, first aid, vitamins and supplements', '💊', true),
+		('Baby Care', 'baby-care', 'Diapers, wipes, baby food and baby skincare', '👶', true),
+		('Pet Care', 'pet-care', 'Dog food, cat food, pet shampoo and treats', '🐾', true),
+		('Stationery & Office', 'stationery-office', 'Notebooks, pens, registers, tapes and craft items', '📚', true),
+		('Pooja & Spiritual', 'pooja-spiritual', 'Agarbatti, diya, ghee, camphor and sacred items', '🪔', true),
+		('Hardware & Tools', 'hardware-tools', 'Locks, nails, hammers, adhesives and tools', '🔧', true),
+		('Home & Kitchen', 'home-kitchen', 'Cookware, utensils, storage containers and bottles', '🍳', true),
+		('Beauty & Cosmetics', 'beauty-cosmetics', 'Makeup, perfumes, nail polish and face creams', '💄', true),
+		('Sports & Fitness', 'sports-fitness', 'Cricket gear, footballs, gym bottles and badminton', '🏏', true),
+		('Toys & Games', 'toys-games', 'Board games, puzzles, soft toys and toy cars', '🧸', true),
+		('Bakery & Cakes', 'bakery-cakes', 'Fresh bread, cakes, pastries, cookies and patties', '🎂', true)
+		ON CONFLICT (slug) DO UPDATE SET is_active = true;`,
 	}
 
 	for _, q := range queries {
