@@ -403,11 +403,11 @@ func (r *POSRepo) ParkBill(ctx context.Context, shopID, label, customerPhone str
 
 	query := `
 		INSERT INTO pos_parked_bills (shop_id, label, customer_phone, cart_data, total_amount, created_at)
-		VALUES ($1, $2, $3, $4, $5, NOW())
+		VALUES ($1, $2, $3, $4::jsonb, $5, NOW())
 		RETURNING id, shop_id, COALESCE(label, ''), COALESCE(customer_phone, ''), total_amount, created_at
 	`
 	parked := &model.POSParkedBill{}
-	err = r.db.QueryRow(ctx, query, shopID, strings.TrimSpace(label), strings.TrimSpace(customerPhone), cartJSON, totalAmount).Scan(
+	err = r.db.QueryRow(ctx, query, shopID, strings.TrimSpace(label), strings.TrimSpace(customerPhone), string(cartJSON), totalAmount).Scan(
 		&parked.ID, &parked.ShopID, &parked.Label, &parked.CustomerPhone, &parked.TotalAmount, &parked.CreatedAt,
 	)
 	if err != nil {
@@ -763,7 +763,7 @@ func (r *POSRepo) ProcessPOSReturnWithTx(ctx context.Context, tx pgx.Tx, shopID 
 		`
 		returnInsertQuery := `
 			INSERT INTO product_returns (shop_id, product_id, quantity, refund_amount, reason, created_at)
-			VALUES ($1, $2, $3, $4, $5, NOW())
+			VALUES ($1, $2, $3, $4::jsonb, $5, NOW())
 		`
 		batch.Queue(restockQuery, retItem.Quantity, retItem.ProductID)
 		batch.Queue(returnInsertQuery, shopID, retItem.ProductID, retItem.Quantity, itemRefund, cleanReason)

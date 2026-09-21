@@ -128,7 +128,7 @@ func (r *ShopRepo) CreateWithTx(ctx context.Context, tx pgx.Tx, s *model.Shop) (
 			logo_url, banners, timing, opening_time, closing_time, weekly_off, is_open, is_active,
 			status, creation_ip, creation_user_agent, device_fingerprint, created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, NOW(), NOW())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, NOW(), NOW())
 		RETURNING id, user_id, name, slug, COALESCE(description, ''), COALESCE(category, ''), COALESCE(phone, ''), COALESCE(address, ''),
 		          latitude, longitude, COALESCE(city, ''), COALESCE(pincode, ''), COALESCE(whatsapp_number, ''),
 		          COALESCE(upi_id, ''), COALESCE(logo_url, ''), banners, COALESCE(timing, ''),
@@ -655,7 +655,7 @@ func (r *ShopRepo) Update(ctx context.Context, s *model.Shop) (*model.Shop, erro
 		UPDATE shops
 		SET name = $1, slug = $2, description = $3, category = $4, phone = $5, address = $6,
 		    latitude = $7, longitude = $8, city = $9, pincode = $10, whatsapp_number = $11,
-		    upi_id = $12, logo_url = $13, banners = $14, timing = $15,
+		    upi_id = $12, logo_url = $13, banners = $14::jsonb, timing = $15,
 		    opening_time = CASE WHEN $16 != '' THEN $16 ELSE opening_time END,
 		    closing_time = CASE WHEN $17 != '' THEN $17 ELSE closing_time END,
 		    weekly_off = CASE WHEN $18 != '' THEN $18 ELSE weekly_off END,

@@ -91,7 +91,7 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 			shop_id, name, slug, description, sku, price, cost_price, compare_price,
 			category_id, images, weight, is_active, is_featured, tags, attributes, floor_price, allow_bargain, is_price_public
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15::jsonb, $16, $17, $18
 		)
 		RETURNING id, shop_id, name, slug, COALESCE(description, ''), sku, price, COALESCE(cost_price, 0), COALESCE(compare_price, 0),
 		          COALESCE(category_id::text, ''), images, COALESCE(weight, 0), is_active, is_featured, tags, COALESCE(attributes, '{}'::jsonb), created_at, updated_at,
@@ -113,12 +113,12 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 		p.CostPrice,
 		p.ComparePrice,
 		catID,
-		imagesJSON,
+		string(imagesJSON),
 		p.Weight,
 		p.IsActive,
 		p.IsFeatured,
 		p.Tags,
-		attributesJSON,
+		string(attributesJSON),
 		p.FloorPrice,
 		p.AllowBargain,
 		p.IsPricePublic,
@@ -783,7 +783,7 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 	query := `
 		UPDATE products
 		SET name = $1, slug = $2, description = $3, sku = $4, price = $5, cost_price = $6, compare_price = $7,
-		    category_id = $8, images = $9, weight = $10, is_active = $11, is_featured = $12, tags = $13, attributes = $14,
+		    category_id = $8, images = $9::jsonb, weight = $10, is_active = $11, is_featured = $12, tags = $13, attributes = $14::jsonb,
 		    floor_price = $15, allow_bargain = $16, is_price_public = $17, updated_at = NOW()
 		WHERE id = $18 AND shop_id = $19
 		RETURNING id, shop_id, name, slug, COALESCE(description, ''), sku, price, COALESCE(cost_price, 0), COALESCE(compare_price, 0),
@@ -804,12 +804,12 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 		p.CostPrice,
 		p.ComparePrice,
 		catID,
-		imagesJSON,
+		string(imagesJSON),
 		p.Weight,
 		p.IsActive,
 		p.IsFeatured,
 		p.Tags,
-		attributesJSON,
+		string(attributesJSON),
 		p.FloorPrice,
 		p.AllowBargain,
 		p.IsPricePublic,
