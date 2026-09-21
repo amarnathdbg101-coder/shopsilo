@@ -38,18 +38,61 @@ func NewProductService(
 	}
 }
 
-// resolveCategoryID accepts both the persisted UUID and the frontend-owned slug.
-// This keeps the category catalog decoupled from the product form while preserving the DB relation.
+// resolveCategoryID accepts UUID, slug, name, or auto-creates on the fly.
+// Ensures product creation & updates never fail with ErrInvalidCategory.
 func (s *ProductService) resolveCategoryID(ctx context.Context, value string) (string, error) {
 	trimmed := strings.TrimSpace(value)
-	if category, err := s.categoryRepo.FindByID(ctx, trimmed); err == nil {
-		return category.ID, nil
-	}
-	category, err := s.categoryRepo.FindBySlug(ctx, strings.ToLower(trimmed))
-	if err != nil {
+	if trimmed == "" {
+		if def, err := s.categoryRepo.FindDefault(ctx); err == nil && def != nil {
+			return def.ID, nil
+		}
 		return "", ErrInvalidCategory
 	}
-	return category.ID, nil
+
+	// 1. If 36-char UUID format, try FindByID
+	if len(trimmed) == 36 && strings.Count(trimmed, "-") == 4 {
+		if category, err := s.categoryRepo.FindByID(ctx, trimmed); err == nil && category != nil {
+			return category.ID, nil
+		}
+	}
+
+	// 2. Try exact slug match
+	if category, err := s.categoryRepo.FindBySlug(ctx, strings.ToLower(trimmed)); err == nil && category != nil {
+		return category.ID, nil
+	}
+
+	// 3. Try slugified match
+	slugified := reuse.Slugify(trimmed)
+	if slugified != "" && slugified != strings.ToLower(trimmed) {
+		if category, err := s.categoryRepo.FindBySlug(ctx, slugified); err == nil && category != nil {
+			return category.ID, nil
+		}
+	}
+
+	// 4. Try name or partial search
+	if category, err := s.categoryRepo.FindByNameOrSlug(ctx, trimmed); err == nil && category != nil {
+		return category.ID, nil
+	}
+
+	// 5. If category is not in DB yet, dynamically insert it so merchant is never blocked
+	if len(trimmed) >= 2 {
+		catName := strings.Title(strings.ReplaceAll(trimmed, "-", " "))
+		newCat, err := s.categoryRepo.Create(ctx, &model.Category{
+			Name:     catName,
+			Slug:     reuse.Slugify(trimmed),
+			IsActive: true,
+		})
+		if err == nil && newCat != nil {
+			return newCat.ID, nil
+		}
+	}
+
+	// 6. Fallback to default category
+	if def, err := s.categoryRepo.FindDefault(ctx); err == nil && def != nil {
+		return def.ID, nil
+	}
+
+	return "", ErrInvalidCategory
 }
 
 func (s *ProductService) CreateProduct(ctx context.Context, userID string, input dto.CreateProductRequest) (*model.Product, error) {

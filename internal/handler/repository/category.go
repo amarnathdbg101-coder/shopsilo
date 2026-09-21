@@ -2,6 +2,8 @@
 package repository
 
 import (
+	"shopMe/internal/reuse"
+	"strings"
 	"context"
 	"errors"
 	"shopMe/internal/handler/dto"
@@ -150,6 +152,71 @@ func (r *CategoryRepo) FindBySlug(ctx context.Context, slug string) (*model.Cate
 			return nil, ErrCategoryNotFound
 		}
 		r.logger.Error("failed to find category by slug", zap.Error(err), zap.String("slug", slug))
+		return nil, err
+	}
+	return c, nil
+}
+
+func (r *CategoryRepo) FindByNameOrSlug(ctx context.Context, term string) (*model.Category, error) {
+	trimmed := strings.TrimSpace(term)
+	if trimmed == "" {
+		return nil, ErrCategoryNotFound
+	}
+	slug := reuse.Slugify(trimmed)
+
+	query := `
+		SELECT id, name, slug, COALESCE(description, ''), COALESCE(image_url, ''), parent_id, is_active, created_at
+		FROM categories
+		WHERE is_active = true AND (
+			slug = $1 OR 
+			slug = $2 OR 
+			LOWER(name) = $3 OR 
+			name ILIKE $4
+		)
+		ORDER BY 
+			CASE WHEN slug = $1 THEN 1 WHEN slug = $2 THEN 2 WHEN LOWER(name) = $3 THEN 3 ELSE 4 END ASC
+		LIMIT 1
+	`
+	c := &model.Category{}
+	err := r.db.QueryRow(ctx, query, strings.ToLower(trimmed), slug, strings.ToLower(trimmed), "%"+trimmed+"%").Scan(
+		&c.ID,
+		&c.Name,
+		&c.Slug,
+		&c.Description,
+		&c.ImageURL,
+		&c.ParentID,
+		&c.IsActive,
+		&c.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrCategoryNotFound
+		}
+		return nil, err
+	}
+	return c, nil
+}
+
+func (r *CategoryRepo) FindDefault(ctx context.Context) (*model.Category, error) {
+	query := `
+		SELECT id, name, slug, COALESCE(description, ''), COALESCE(image_url, ''), parent_id, is_active, created_at
+		FROM categories
+		WHERE is_active = true
+		ORDER BY CASE WHEN slug IN ('general-store', 'kirana-grocery') THEN 0 ELSE 1 END, name ASC
+		LIMIT 1
+	`
+	c := &model.Category{}
+	err := r.db.QueryRow(ctx, query).Scan(
+		&c.ID,
+		&c.Name,
+		&c.Slug,
+		&c.Description,
+		&c.ImageURL,
+		&c.ParentID,
+		&c.IsActive,
+		&c.CreatedAt,
+	)
+	if err != nil {
 		return nil, err
 	}
 	return c, nil
