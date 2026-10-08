@@ -300,16 +300,7 @@ case "split":
 		return nil, err
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return nil, errors.New("failed to commit sale")
-	}
-
-	// Redeem bargain deal if applied
-	if redeemDealID != "" {
-		_ = s.productRepo.RedeemBargainDeal(ctx, redeemDealID)
-	}
-
-	// Atomically record customer khata debt if khata was used
+	// Atomically record customer khata debt INSIDE the transaction if khata (udhar) was used
 	if khataAmount > 0 && s.khataRepo != nil {
 		var itmSummary string
 		if len(createdBill.Items) > 0 {
@@ -323,8 +314,9 @@ case "split":
 			itmSummary = fmt.Sprintf("%d items: %s", len(createdBill.Items), strings.Join(names, ", "))
 		}
 		receiptURL := fmt.Sprintf("/shops/me/pos/receipts/%s.pdf", createdBill.BillNumber)
-		_, _ = s.khataRepo.RecordTransaction(
+		_, err := s.khataRepo.RecordTransactionWithTx(
 			ctx,
+			tx,
 			shop.ID,
 			createdBill.CustomerPhone,
 			custName,
@@ -336,6 +328,18 @@ case "split":
 			receiptURL,
 			itmSummary,
 		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to record khata udhar transaction: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, errors.New("failed to commit sale transaction")
+	}
+
+	// Redeem bargain deal if applied
+	if redeemDealID != "" {
+		_ = s.productRepo.RedeemBargainDeal(ctx, redeemDealID)
 	}
 
 	receiptURL := fmt.Sprintf("/shops/me/pos/receipts/%s.pdf", createdBill.BillNumber)

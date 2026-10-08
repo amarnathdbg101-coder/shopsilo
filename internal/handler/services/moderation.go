@@ -79,7 +79,7 @@ func (s *ModerationService) SubmitReport(
 	return createdReport, quarantined, nil
 }
 
-// BanShop performs a complete 1-click ban: bans the shop, deactivates owner account, and blacklists IP/device/phone.
+// BanShop performs a complete 1-click ban: bans the shop, deactivates owner account, and blacklists IP/device/phone atomically in 1 transaction.
 func (s *ModerationService) BanShop(
 	ctx context.Context,
 	shopID string,
@@ -91,18 +91,27 @@ func (s *ModerationService) BanShop(
 		return repository.ErrShopNotFound
 	}
 
+	tx, err := s.shopRepo.BeginTx(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
 	// 1. Mark shop status as banned
-	if err := s.modRepo.SetShopStatus(ctx, shopID, model.ShopStatusBanned, req.Reason); err != nil {
+	if err := s.modRepo.SetShopStatusWithTx(ctx, tx, shopID, model.ShopStatusBanned, req.Reason); err != nil {
 		return fmt.Errorf("failed to update shop status: %w", err)
 	}
 
 	// 2. Deactivate owner account
-	_ = s.userRepo.DeactivateUser(ctx, shop.UserID)
+	if err := s.userRepo.DeactivateUserWithTx(ctx, tx, shop.UserID); err != nil {
+		s.logger.Warn("failed to deactivate user during shop ban", zap.Error(err), zap.String("user_id", shop.UserID))
+	}
 
 	// 3. Blacklist IP if requested
 	if req.BlacklistIP && shop.CreationIP != "" {
-		_ = s.modRepo.BanEntity(
+		_ = s.modRepo.BanEntityWithTx(
 			ctx,
+			tx,
 			model.EntityTypeIP,
 			shop.CreationIP,
 			fmt.Sprintf("Banned shop (%s) IP address: %s", shop.Name, req.Reason),
@@ -112,8 +121,9 @@ func (s *ModerationService) BanShop(
 
 	// 4. Blacklist Device Fingerprint if requested
 	if req.BlacklistDevice && shop.DeviceFingerprint != "" {
-		_ = s.modRepo.BanEntity(
+		_ = s.modRepo.BanEntityWithTx(
 			ctx,
+			tx,
 			model.EntityTypeDeviceID,
 			shop.DeviceFingerprint,
 			fmt.Sprintf("Banned shop (%s) Device ID: %s", shop.Name, req.Reason),
@@ -123,13 +133,18 @@ func (s *ModerationService) BanShop(
 
 	// 5. Blacklist phone number
 	if shop.Phone != "" {
-		_ = s.modRepo.BanEntity(
+		_ = s.modRepo.BanEntityWithTx(
 			ctx,
+			tx,
 			model.EntityTypePhone,
 			shop.Phone,
 			fmt.Sprintf("Banned shop (%s) Phone: %s", shop.Name, req.Reason),
 			&adminID,
 		)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit ban transaction: %w", err)
 	}
 
 	return nil
