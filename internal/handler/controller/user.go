@@ -317,6 +317,32 @@ func (c *UserController) GetProfile(w http.ResponseWriter, r *http.Request) {
 	reuse.Success(w, "User profile retrieved successfully", res)
 }
 
+func (c *UserController) GetBootstrapData(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	if c.service == nil {
+		reuse.Error(w, http.StatusBadRequest, "service uninitialized")
+		return
+	}
+
+	bootstrap, err := c.service.GetBootstrapData(r.Context(), claims.UserID)
+	if err != nil {
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Smart ETag check: if frontend's cached data version matches, return 304 Not Modified immediately (0ms DB roundtrip!)
+	if reuse.CheckAndSetETag(w, r, bootstrap.DataVersion) {
+		return
+	}
+
+	reuse.Success(w, "Bootstrap initial state retrieved successfully", bootstrap)
+}
+
 func (c *UserController) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())
 	if claims == nil || claims.UserID == "" {

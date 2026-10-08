@@ -2,10 +2,13 @@ package controller
 
 import (
 	"net/http"
+	"os"
+	"strings"
+	"time"
+
 	"shopMe/internal/handler/services"
 	"shopMe/internal/middleware"
 	"shopMe/internal/reuse"
-	"time"
 
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
@@ -15,7 +18,20 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all cross-origin mobile/web clients
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true // Allow native mobile apps and non-browser clients
+		}
+		allowedEnv := os.Getenv("ALLOWED_ORIGINS")
+		if allowedEnv == "" || allowedEnv == "*" {
+			return true // Permissive mode for local development
+		}
+		for _, allowed := range strings.Split(allowedEnv, ",") {
+			if strings.EqualFold(strings.TrimSpace(origin), strings.TrimSpace(allowed)) {
+				return true
+			}
+		}
+		return false
 	},
 }
 

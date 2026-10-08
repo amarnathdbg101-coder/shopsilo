@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net/http"
 	"net/url"
 	"path/filepath"
 	"shopMe/internal/utils"
@@ -64,6 +65,20 @@ func UploadImage(file multipart.File, header *multipart.FileHeader, folder strin
 	contentType := header.Header.Get("Content-Type")
 	if !allowedContentTypes[strings.ToLower(contentType)] {
 		return "", ErrInvalidImageType
+	}
+
+	// 1. Verify magic bytes with http.DetectContentType to prevent MIME-spoofing attacks
+	headerBuf := make([]byte, 512)
+	n, _ := file.Read(headerBuf)
+	_, _ = file.Seek(0, io.SeekStart)
+	if n > 0 {
+		detectedType := strings.ToLower(http.DetectContentType(headerBuf[:n]))
+		if idx := strings.Index(detectedType, ";"); idx != -1 {
+			detectedType = strings.TrimSpace(detectedType[:idx])
+		}
+		if !strings.HasPrefix(detectedType, "image/") {
+			return "", ErrInvalidImageType
+		}
 	}
 
 	// 1. Compress & downscale image before uploading to R2 to reduce storage cost and bandwidth

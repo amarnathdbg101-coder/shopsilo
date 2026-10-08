@@ -171,7 +171,7 @@ func (s *ShopService) CreateShop(
 	}
 
 	// 5. Update user role to "shop"
-	if err := s.userRepo.UpdateRoleWithTx(ctx, tx, userID, "shop"); err != nil {
+	if err := s.userRepo.UpdateRoleWithTx(ctx, tx, userID, "merchant"); err != nil {
 		return nil, errors.New("failed to upgrade user role to shop")
 	}
 
@@ -183,7 +183,7 @@ func (s *ShopService) CreateShop(
 	enrichShop(createdShop)
 
 	// 7. Generate upgraded JWT token with role "shop"
-	token, err := reuse.GenerateJwt(userID, userEmail, "shop")
+	token, err := reuse.GenerateJwt(userID, userEmail, "merchant")
 	if err != nil {
 		return &dto.ShopResponse{Shop: createdShop}, nil
 	}
@@ -416,7 +416,7 @@ func (s *ShopService) RestoreMyShop(ctx context.Context, userID, userEmail strin
 	}
 
 	// 2. Restore user role back to "shop"
-	if err := s.userRepo.UpdateRoleWithTx(ctx, tx, userID, "shop"); err != nil {
+	if err := s.userRepo.UpdateRoleWithTx(ctx, tx, userID, "merchant"); err != nil {
 		return "", errors.New("failed to restore user role to shop")
 	}
 
@@ -426,7 +426,7 @@ func (s *ShopService) RestoreMyShop(ctx context.Context, userID, userEmail strin
 	}
 
 	// 4. Generate new token with restored role "shop"
-	token, err := reuse.GenerateJwt(userID, userEmail, "shop")
+	token, err := reuse.GenerateJwt(userID, userEmail, "merchant")
 	if err != nil {
 		return "", nil
 	}

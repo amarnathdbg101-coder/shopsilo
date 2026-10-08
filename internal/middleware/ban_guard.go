@@ -62,9 +62,16 @@ func checkBannedCached(ctx context.Context, modRepo *repository.ModerationRepo, 
 	}
 
 	banCacheMu.Lock()
-	// Protect against unbounded memory growth under attack
+	// Protect against unbounded memory growth under attack by pruning expired entries first
 	if len(banCache) > 50000 {
-		banCache = make(map[string]banCacheEntry) // Emergency reset
+		for k, v := range banCache {
+			if now.After(v.expiresAt) {
+				delete(banCache, k)
+			}
+		}
+		if len(banCache) > 25000 {
+			banCache = make(map[string]banCacheEntry) // Emergency reset
+		}
 	}
 	banCache[key] = banCacheEntry{
 		banned:    banned,
@@ -91,11 +98,9 @@ func BanGuard(modRepo *repository.ModerationRepo) func(http.Handler) http.Handle
 			if clientIP != "" && clientIP != "127.0.0.1" && clientIP != "::1" {
 				banned, err := checkBannedCached(r.Context(), modRepo, model.EntityTypeIP, clientIP)
 				if err == nil && banned {
-					http.Error(
-						w,
-						`{"success":false,"error":"Access denied: This network has been suspended due to community safety violations."}`,
-						http.StatusForbidden,
-					)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusForbidden)
+					_, _ = w.Write([]byte(`{"success":false,"error":"Access denied: This network has been suspended due to community safety violations."}`))
 					return
 				}
 			}
@@ -104,11 +109,9 @@ func BanGuard(modRepo *repository.ModerationRepo) func(http.Handler) http.Handle
 			if deviceFP != "" {
 				banned, err := checkBannedCached(r.Context(), modRepo, model.EntityTypeDeviceID, deviceFP)
 				if err == nil && banned {
-					http.Error(
-						w,
-						`{"success":false,"error":"Access denied: This device has been suspended due to community safety violations."}`,
-						http.StatusForbidden,
-					)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusForbidden)
+					_, _ = w.Write([]byte(`{"success":false,"error":"Access denied: This device has been suspended due to community safety violations."}`))
 					return
 				}
 			}

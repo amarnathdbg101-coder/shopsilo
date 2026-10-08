@@ -15,9 +15,10 @@ import (
 )
 
 var (
-	ErrUserNotFound    = errors.New("user not found")
-	ErrDuplicateEmail  = errors.New("email already registered")
-	ErrDuplicatePhone  = errors.New("phone number already registered")
+	ErrUserNotFound      = errors.New("user not found")
+	ErrDuplicateEmail    = errors.New("email already registered")
+	ErrDuplicatePhone    = errors.New("phone number already registered")
+	ErrTokenAlreadyUsed  = errors.New("verification token already consumed or expired")
 )
 
 type UserRepo struct {
@@ -70,6 +71,104 @@ func (r *UserRepo) Create(ctx context.Context, u *model.User) (*model.User, erro
 		r.logger.Error("failed to create user", zap.Error(err), zap.String("email", u.Email))
 		return nil, err
 	}
+	return created, nil
+}
+
+// RegisterUserAtomic executes user registration within a single PostgreSQL transaction (ACID Atomicity).
+// It atomically consumes the verification token, inserts the user, and auto-links existing khata accounts.
+// If ANY step fails or errors out, the transaction immediately rolls back, preventing partial data leakage.
+func (r *UserRepo) RegisterUserAtomic(
+	ctx context.Context,
+	u *model.User,
+	verificationID string,
+	otpRepo *PhoneVerificationRepo,
+	khataRepo *KhataRepo,
+) (*model.User, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin database transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// 1. Consume phone verification token atomically in transaction if provided
+	if verificationID != "" && otpRepo != nil {
+		query := `
+			UPDATE phone_verifications
+			SET is_consumed = TRUE, consumed_at = NOW(), updated_at = NOW()
+			WHERE id = $1
+			  AND phone = $2
+			  AND is_verified = TRUE
+			  AND is_consumed = FALSE
+			  AND expires_at > NOW()
+		`
+		cmdTag, err := tx.Exec(ctx, query, verificationID, u.Phone)
+		if err != nil {
+			r.logger.Error("failed to consume verification token in transaction", zap.Error(err), zap.String("id", verificationID))
+			return nil, fmt.Errorf("failed to consume verification token: %w", err)
+		}
+		if cmdTag.RowsAffected() == 0 {
+			return nil, ErrTokenAlreadyUsed
+		}
+	}
+
+	// 2. Insert User Record atomically in transaction
+	insertQuery := `
+		INSERT INTO users (email, password_hash, full_name, phone, role, is_active, created_at, updated_at)
+		VALUES (LOWER($1), $2, $3, NULLIF(TRIM($4), ''), $5, $6, NOW(), NOW())
+		RETURNING id, email, password_hash, full_name, COALESCE(phone, ''), role, is_active, created_at, updated_at
+	`
+	created := &model.User{}
+	err = tx.QueryRow(
+		ctx,
+		insertQuery,
+		strings.TrimSpace(u.Email),
+		u.PasswordHash,
+		strings.TrimSpace(u.FullName),
+		u.Phone,
+		u.Role,
+		u.IsActive,
+	).Scan(
+		&created.ID,
+		&created.Email,
+		&created.PasswordHash,
+		&created.FullName,
+		&created.Phone,
+		&created.Role,
+		&created.IsActive,
+		&created.CreatedAt,
+		&created.UpdatedAt,
+	)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" { // Unique violation
+			if strings.Contains(strings.ToLower(pgErr.ConstraintName), "phone") {
+				return nil, ErrDuplicatePhone
+			}
+			return nil, ErrDuplicateEmail
+		}
+		r.logger.Error("failed to create user in transaction", zap.Error(err), zap.String("email", u.Email))
+		return nil, err
+	}
+
+	// 3. Auto-link any customer khata accounts atomically in transaction
+	if khataRepo != nil && created.Phone != "" {
+		khataQuery := `
+			UPDATE customer_khata
+			SET customer_id = $1::uuid, updated_at = NOW()
+			WHERE customer_id IS NULL
+			  AND (
+				  customer_mobile = $2 OR
+				  RIGHT(REGEXP_REPLACE(customer_mobile, '[^0-9]', '', 'g'), 10) = $2
+			  )
+		`
+		_, _ = tx.Exec(ctx, khataQuery, created.ID, created.Phone)
+	}
+
+	// 4. COMMIT TRANSACTION (ACID)
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit registration transaction: %w", err)
+	}
+
 	return created, nil
 }
 

@@ -19,9 +19,9 @@ func NewServer(port string, handler http.Handler) *http.Server {
         Addr:              fmt.Sprintf(":%s", port),
         Handler:           handler,
         ReadHeaderTimeout: 5 * time.Second,
-        ReadTimeout:       15 * time.Second,
-        WriteTimeout:      30 * time.Second,
-        IdleTimeout:       60 * time.Second,
+        ReadTimeout:       30 * time.Second,
+        WriteTimeout:      60 * time.Second,
+        IdleTimeout:       120 * time.Second,
         MaxHeaderBytes:    1 << 20,
     }
 }

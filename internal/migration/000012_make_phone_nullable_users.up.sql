@@ -1,4 +1,4 @@
-﻿-- 000012_make_phone_nullable_users.up.sql
+-- 000012_make_phone_nullable_users.up.sql
 ALTER TABLE users ALTER COLUMN phone DROP NOT NULL;
 UPDATE users SET phone = NULL WHERE phone = '';
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_phone_key;

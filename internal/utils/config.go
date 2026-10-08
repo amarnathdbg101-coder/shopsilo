@@ -41,7 +41,10 @@ func MustLoad() Config {
 		}
 		jwt := os.Getenv("JWT_SECRET")
 		if jwt == "" {
-			log.Fatal("jwt is require")
+			log.Fatal("jwt is required")
+		}
+		if len(jwt) < 16 {
+			log.Printf("[SECURITY WARNING] JWT_SECRET is shorter than 16 characters! Use a strong secret in production.")
 		}
 		bucket := os.Getenv("R2_BUCKET")
 		if bucket == "" {

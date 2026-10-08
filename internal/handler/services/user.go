@@ -1,4 +1,4 @@
-﻿// Package services handle business logic.
+// Package services handle business logic.
 package services
 
 import (
@@ -31,10 +31,12 @@ var googleOAuthHTTPClient = &http.Client{
 }
 
 type UserService struct {
-	repo       *repository.UserRepo
-	khataRepo  *repository.KhataRepo
-	otpRepo    *repository.PhoneVerificationRepo
-	smsService SMSService
+	repo         *repository.UserRepo
+	khataRepo    *repository.KhataRepo
+	otpRepo      *repository.PhoneVerificationRepo
+	shopRepo     *repository.ShopRepo
+	categoryRepo *repository.CategoryRepo
+	smsService   SMSService
 }
 
 func NewUserService(repo *repository.UserRepo) *UserService {
@@ -56,6 +58,20 @@ func (s *UserService) SetPhoneVerificationRepo(otpRepo *repository.PhoneVerifica
 		return
 	}
 	s.otpRepo = otpRepo
+}
+
+func (s *UserService) SetShopRepo(shopRepo *repository.ShopRepo) {
+	if s == nil {
+		return
+	}
+	s.shopRepo = shopRepo
+}
+
+func (s *UserService) SetCategoryRepo(categoryRepo *repository.CategoryRepo) {
+	if s == nil {
+		return
+	}
+	s.categoryRepo = categoryRepo
 }
 
 func (s *UserService) SetSMSService(smsService SMSService) {
@@ -244,6 +260,7 @@ func (s *UserService) Register(ctx context.Context, input dto.UserRegisterReques
 	}
 
 	// 2. Optional verification token validation (only validated if non-empty token passed)
+	verificationID := ""
 	if strings.TrimSpace(input.VerificationToken) != "" {
 		jwtSecret := utils.MustLoad().Jwt
 		claims, err := reuse.VerifyPhoneVerificationToken(input.VerificationToken, jwtSecret)
@@ -254,13 +271,7 @@ func (s *UserService) Register(ctx context.Context, input dto.UserRegisterReques
 		if cleanPhone != "" && claims.Phone != cleanPhone {
 			return nil, ErrPhoneVerificationMismatch
 		}
-
-		if s.otpRepo != nil {
-			consumed, err := s.otpRepo.ConsumeVerification(ctx, claims.VerificationID, cleanPhone)
-			if err != nil || !consumed {
-				return nil, ErrTokenAlreadyUsed
-			}
-		}
+		verificationID = claims.VerificationID
 	}
 
 	// 3. Check if email already exists
@@ -276,12 +287,18 @@ func (s *UserService) Register(ctx context.Context, input dto.UserRegisterReques
 		return nil, errors.New("failed to secure password")
 	}
 
+	userRole := "customer"
+	cleanRole := strings.ToLower(strings.TrimSpace(input.Role))
+	if cleanRole == "merchant" || cleanRole == "shop" {
+		userRole = "merchant"
+	}
+
 	user := &model.User{
 		Email:        email,
 		PasswordHash: hashedPassword,
 		FullName:     strings.TrimSpace(input.FullName),
 		Phone:        cleanPhone,
-		Role:         "customer",
+		Role:         userRole,
 		IsActive:     true,
 	}
 
@@ -289,7 +306,10 @@ func (s *UserService) Register(ctx context.Context, input dto.UserRegisterReques
 		return &dto.RegisterResponse{User: user}, nil
 	}
 
-	createdUser, err := s.repo.Create(ctx, user)
+	// 4. ATOMIC DATABASE TRANSACTION (ACID)
+	// Executes token consumption, user creation, and khata auto-linking in a single PostgreSQL transaction.
+	// Guarantees that if ANY step fails or constraint is violated, ALL database changes are automatically rolled back!
+	createdUser, err := s.repo.RegisterUserAtomic(ctx, user, verificationID, s.otpRepo, s.khataRepo)
 	if err != nil {
 		if errors.Is(err, repository.ErrDuplicateEmail) {
 			return nil, ErrEmailTaken
@@ -297,12 +317,10 @@ func (s *UserService) Register(ctx context.Context, input dto.UserRegisterReques
 		if errors.Is(err, repository.ErrDuplicatePhone) {
 			return nil, ErrPhoneTaken
 		}
+		if errors.Is(err, repository.ErrTokenAlreadyUsed) {
+			return nil, ErrTokenAlreadyUsed
+		}
 		return nil, err
-	}
-
-	// Auto-link any existing offline shop khatas to this user
-	if s.khataRepo != nil && createdUser.Phone != "" {
-		_, _ = s.khataRepo.AutoLinkCustomerKhatas(ctx, createdUser.ID, createdUser.Phone)
 	}
 
 	token, err := reuse.GenerateJwt(createdUser.ID, createdUser.Email, createdUser.Role)
@@ -336,6 +354,18 @@ func (s *UserService) Login(ctx context.Context, input dto.UserLoginRequest) (*d
 		return nil, ErrInvalidCredentials
 	}
 
+	// Enforce strict permanent role segregation between Merchant and Customer apps
+	reqRole := strings.ToLower(strings.TrimSpace(input.Role))
+	if reqRole == "merchant" || reqRole == "shop" {
+		if user.Role != "merchant" && user.Role != "shop" && user.Role != "admin" {
+			return nil, errors.New("this account is registered as a customer and cannot access the merchant partner app")
+		}
+	} else if reqRole == "customer" {
+		if user.Role == "merchant" || user.Role == "shop" {
+			return nil, errors.New("this account is registered as a merchant and cannot access the customer app")
+		}
+	}
+
 	// Auto-link any pending shop khatas on login as well
 	if s.khataRepo != nil && user.Phone != "" {
 		_, _ = s.khataRepo.AutoLinkCustomerKhatas(ctx, user.ID, user.Phone)
@@ -346,11 +376,61 @@ func (s *UserService) Login(ctx context.Context, input dto.UserLoginRequest) (*d
 		return nil, errors.New("failed to generate access token")
 	}
 
+	bootstrap, _ := s.GetBootstrapData(ctx, user.ID)
+
 	return &dto.TokenResponse{
 		AccessToken: token,
 		TokenType:   "Bearer",
 		ExpiresIn:   86400, // 24 hours in seconds
 		User:        user,
+		Bootstrap:   bootstrap,
+	}, nil
+}
+
+// GetBootstrapData retrieves consolidated initial state for smart offline-first frontend caching
+func (s *UserService) GetBootstrapData(ctx context.Context, userID string) (*dto.UserBootstrapData, error) {
+	if s == nil || s.repo == nil {
+		return nil, errors.New("user service uninitialized")
+	}
+
+	user, err := s.repo.FindByID(ctx, userID)
+	if err != nil || user == nil {
+		return nil, errors.New("user not found")
+	}
+
+	var shop *model.Shop
+	if s.shopRepo != nil && (user.Role == "merchant" || user.Role == "shop" || user.Role == "admin") {
+		if sObj, err := s.shopRepo.FindByUserID(ctx, userID); err == nil && sObj != nil {
+			shop = sObj
+		}
+	}
+
+	var categories []*model.Category
+	if s.categoryRepo != nil {
+		if cats, err := s.categoryRepo.FindAll(ctx); err == nil {
+			categories = cats
+		}
+	}
+
+	var shopID, shopUpdatedAt string
+	if shop != nil {
+		shopID = shop.ID
+		shopUpdatedAt = shop.UpdatedAt.Format(time.RFC3339Nano)
+	}
+
+	dataVersion := fmt.Sprintf("u:%s-ut:%s-s:%s-st:%s-c:%d",
+		user.ID,
+		user.UpdatedAt.Format(time.RFC3339Nano),
+		shopID,
+		shopUpdatedAt,
+		len(categories),
+	)
+
+	return &dto.UserBootstrapData{
+		User:        user,
+		Shop:        shop,
+		Categories:  categories,
+		DataVersion: dataVersion,
 	}, nil
 }
 
@@ -472,17 +552,21 @@ func (s *UserService) GoogleLogin(ctx context.Context, input dto.GoogleLoginRequ
 			return nil, errors.New("failed to generate access token")
 		}
 
+		bootstrap, _ := s.GetBootstrapData(ctx, user.ID)
+
 		return &dto.GoogleLoginResponse{
 			RequiresPhone: false,
 			AccessToken:   token,
 			TokenType:     "Bearer",
 			ExpiresIn:     86400,
 			User:          user,
+			Bootstrap:     bootstrap,
 		}, nil
 	}
 
 	// 3. Case B: New user registering for the first time
 	cleanPhone := ""
+	verificationID := ""
 	if strings.TrimSpace(input.Phone) != "" && strings.TrimSpace(input.VerificationToken) != "" {
 		var err error
 		cleanPhone, err = utils.NormalizeIndianPhone(input.Phone)
@@ -499,13 +583,7 @@ func (s *UserService) GoogleLogin(ctx context.Context, input dto.GoogleLoginRequ
 		if claims.Phone != cleanPhone {
 			return nil, ErrPhoneVerificationMismatch
 		}
-
-		if s.otpRepo != nil {
-			consumed, err := s.otpRepo.ConsumeVerification(ctx, claims.VerificationID, cleanPhone)
-			if err != nil || !consumed {
-				return nil, ErrTokenAlreadyUsed
-			}
-		}
+		verificationID = claims.VerificationID
 
 		// Ensure phone is not registered by another user
 		if s.repo != nil && cleanPhone != "" {
@@ -540,7 +618,7 @@ func (s *UserService) GoogleLogin(ctx context.Context, input dto.GoogleLoginRequ
 	var createdUser *model.User
 	if s.repo != nil {
 		var err error
-		createdUser, err = s.repo.Create(ctx, newUser)
+		createdUser, err = s.repo.RegisterUserAtomic(ctx, newUser, verificationID, s.otpRepo, s.khataRepo)
 		if err != nil {
 			if errors.Is(err, repository.ErrDuplicateEmail) {
 				return nil, ErrEmailTaken
@@ -548,15 +626,13 @@ func (s *UserService) GoogleLogin(ctx context.Context, input dto.GoogleLoginRequ
 			if errors.Is(err, repository.ErrDuplicatePhone) {
 				return nil, ErrPhoneTaken
 			}
+			if errors.Is(err, repository.ErrTokenAlreadyUsed) {
+				return nil, ErrTokenAlreadyUsed
+			}
 			return nil, errors.New("failed to create user from google account")
 		}
 	} else {
 		createdUser = newUser
-	}
-
-	// Auto-link any existing offline shop khatas to this user
-	if s.khataRepo != nil && createdUser.Phone != "" {
-		_, _ = s.khataRepo.AutoLinkCustomerKhatas(ctx, createdUser.ID, createdUser.Phone)
 	}
 
 	token, err := reuse.GenerateJwt(createdUser.ID, createdUser.Email, createdUser.Role)

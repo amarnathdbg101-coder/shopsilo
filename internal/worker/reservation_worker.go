@@ -27,11 +27,18 @@ func StartReservationCleaner(ctx context.Context, db *pgxpool.Pool, logger *zap.
 			logger.Info("reservation cleaner stopped cleanly")
 			return
 		case <-ticker.C:
-			cleanCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			if err := resRepo.ExpireStaleReservations(cleanCtx); err != nil {
-				logger.Warn("reservation cleaner encountered an issue", zap.Error(err))
-			}
-			cancel()
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						logger.Error("reservation cleaner caught panic during execution", zap.Any("panic", r))
+					}
+				}()
+				cleanCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				if err := resRepo.ExpireStaleReservations(cleanCtx); err != nil {
+					logger.Warn("reservation cleaner encountered an issue", zap.Error(err))
+				}
+			}()
 		}
 	}
 }

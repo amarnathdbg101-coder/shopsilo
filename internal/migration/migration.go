@@ -46,6 +46,17 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"ALTER TABLE shops ALTER COLUMN phone DROP NOT NULL;",
 		"ALTER TABLE shops ALTER COLUMN pincode DROP NOT NULL;",
 		"ALTER TABLE shops ALTER COLUMN city DROP NOT NULL;",
+
+		// Performance Indexes (Trigram GIN Indexes & B-tree composite indexes for fast catalog search)
+		"CREATE EXTENSION IF NOT EXISTS pg_trgm;",
+		"CREATE INDEX IF NOT EXISTS idx_products_trgm ON products USING gin (name gin_trgm_ops, description gin_trgm_ops, sku gin_trgm_ops);",
+		"CREATE INDEX IF NOT EXISTS idx_shops_trgm ON shops USING gin (name gin_trgm_ops, city gin_trgm_ops, category gin_trgm_ops);",
+		"CREATE INDEX IF NOT EXISTS idx_categories_trgm ON categories USING gin (name gin_trgm_ops, slug gin_trgm_ops);",
+		"CREATE INDEX IF NOT EXISTS idx_products_shop_active ON products(shop_id, is_active);",
+		"CREATE INDEX IF NOT EXISTS idx_pos_bills_shop_created ON pos_bills(shop_id, created_at DESC);",
+		"CREATE INDEX IF NOT EXISTS idx_khata_tx_shop_created ON khata_transactions(shop_id, created_at DESC);",
+		"CREATE INDEX IF NOT EXISTS idx_reservations_user_active ON reservations(user_id, status, expires_at);",
+
 		`INSERT INTO categories (name, slug, description, icon, is_active) VALUES
 		('Kirana & Grocery', 'kirana-grocery', 'Daily essentials, rice, flour, oil, pulses and spices', '🛒', true),
 		('Dairy & Breakfast', 'dairy-breakfast', 'Milk, curd, butter, paneer, eggs and bread', '🥛', true),

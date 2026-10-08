@@ -34,6 +34,7 @@ type UserRegisterRequest struct {
 	Password          string `json:"password" validate:"required,min=6,max=72"`
 	Phone             string `json:"phone" validate:"omitempty,min=10,max=20"`
 	VerificationToken string `json:"verification_token,omitempty"`
+	Role              string `json:"role,omitempty"`
 }
 
 type RegisterResponse struct {
@@ -44,6 +45,7 @@ type RegisterResponse struct {
 type UserLoginRequest struct {
 	Email    string `json:"email" validate:"required"` // supports email or mobile phone
 	Password string `json:"password" validate:"required"`
+	Role     string `json:"role,omitempty"`
 }
 
 type GoogleLoginRequest struct {
@@ -53,22 +55,31 @@ type GoogleLoginRequest struct {
 	Role              string `json:"role,omitempty"`
 }
 
+type UserBootstrapData struct {
+	User        *model.User       `json:"user"`
+	Shop        *model.Shop       `json:"shop,omitempty"`
+	Categories  []*model.Category `json:"categories,omitempty"`
+	DataVersion string            `json:"data_version"`
+}
+
 type GoogleLoginResponse struct {
-	RequiresPhone bool        `json:"requires_phone"`
-	Email         string      `json:"email,omitempty"`
-	FullName      string      `json:"full_name,omitempty"`
-	AvatarURL     string      `json:"avatar_url,omitempty"`
-	AccessToken   string      `json:"access_token,omitempty"`
-	TokenType     string      `json:"token_type,omitempty"`
-	ExpiresIn     int64       `json:"expires_in,omitempty"`
-	User          *model.User `json:"user,omitempty"`
+	RequiresPhone bool               `json:"requires_phone"`
+	Email         string             `json:"email,omitempty"`
+	FullName      string             `json:"full_name,omitempty"`
+	AvatarURL     string             `json:"avatar_url,omitempty"`
+	AccessToken   string             `json:"access_token,omitempty"`
+	TokenType     string             `json:"token_type,omitempty"`
+	ExpiresIn     int64              `json:"expires_in,omitempty"`
+	User          *model.User        `json:"user,omitempty"`
+	Bootstrap     *UserBootstrapData `json:"bootstrap,omitempty"`
 }
 
 type TokenResponse struct {
-	AccessToken string      `json:"access_token"`
-	TokenType   string      `json:"token_type"`
-	ExpiresIn   int64       `json:"expires_in"`
-	User        *model.User `json:"user"`
+	AccessToken string             `json:"access_token"`
+	TokenType   string             `json:"token_type"`
+	ExpiresIn   int64              `json:"expires_in"`
+	User        *model.User        `json:"user"`
+	Bootstrap   *UserBootstrapData `json:"bootstrap,omitempty"`
 }
 
 type RefreshTokenRequest struct {
