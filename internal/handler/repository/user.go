@@ -150,23 +150,26 @@ func (r *UserRepo) RegisterUserAtomic(
 		return nil, err
 	}
 
-	// 3. Auto-link any customer khata accounts atomically in transaction
+	// 3. COMMIT TRANSACTION (ACID)
+	// Guarantees token consumption and user creation are committed cleanly without interference
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit registration transaction: %w", err)
+	}
+
+	// 4. Best-effort customer khata auto-linking outside transaction
+	// Executed on connection pool so auxiliary table operations never abort user registration
 	if khataRepo != nil && created.Phone != "" {
 		khataQuery := `
 			UPDATE customer_khata
 			SET customer_id = $1::uuid, updated_at = NOW()
 			WHERE customer_id IS NULL
 			  AND (
+				  customer_phone = $2 OR
 				  customer_mobile = $2 OR
-				  RIGHT(REGEXP_REPLACE(customer_mobile, '[^0-9]', '', 'g'), 10) = $2
+				  RIGHT(REGEXP_REPLACE(customer_phone, '[^0-9]', '', 'g'), 10) = $2
 			  )
 		`
-		_, _ = tx.Exec(ctx, khataQuery, created.ID, created.Phone)
-	}
-
-	// 4. COMMIT TRANSACTION (ACID)
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("failed to commit registration transaction: %w", err)
+		_, _ = r.db.Exec(ctx, khataQuery, created.ID, created.Phone)
 	}
 
 	return created, nil
