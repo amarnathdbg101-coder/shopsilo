@@ -47,6 +47,37 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"ALTER TABLE shops ALTER COLUMN pincode DROP NOT NULL;",
 		"ALTER TABLE shops ALTER COLUMN city DROP NOT NULL;",
 
+		// Khata table enhancements
+		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS customer_id UUID;",
+		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS customer_mobile VARCHAR(20);",
+		"UPDATE customer_khata SET customer_mobile = customer_phone WHERE customer_mobile IS NULL OR customer_mobile = '';",
+		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS closure_status VARCHAR(20) DEFAULT 'ACTIVE';",
+		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS closure_otp VARCHAR(10);",
+		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS closure_requested_by VARCHAR(20);",
+		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS closure_requested_at TIMESTAMP;",
+		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS closed_at TIMESTAMP;",
+		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS promise_to_pay_date DATE;",
+		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS installment_target DECIMAL(10, 2) DEFAULT 0;",
+		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS credit_otp_required BOOLEAN DEFAULT false;",
+		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS credit_otp_threshold DECIMAL(10, 2) DEFAULT 0;",
+		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS trust_score INT DEFAULT 100;",
+		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS trust_badge VARCHAR(20) DEFAULT 'TRUSTED';",
+
+		// Khata transactions enhancements
+		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS shop_id UUID REFERENCES shops(id) ON DELETE CASCADE;",
+		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS bill_number VARCHAR(50);",
+		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS payment_mode VARCHAR(30) DEFAULT 'CASH';",
+		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS status VARCHAR(30) DEFAULT 'CONFIRMED';",
+		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS dispute_reason TEXT;",
+		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS disputed_at TIMESTAMP;",
+		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS resolution_action VARCHAR(30);",
+		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS resolution_notes TEXT;",
+		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP;",
+		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS reversal_of_id UUID REFERENCES khata_transactions(id) ON DELETE SET NULL;",
+		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS upi_ref_no VARCHAR(100);",
+		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS parchi_image_url TEXT;",
+		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS items_summary TEXT;",
+
 		// Performance Indexes (Trigram GIN Indexes & B-tree composite indexes for fast catalog search)
 		"CREATE EXTENSION IF NOT EXISTS pg_trgm;",
 		"CREATE INDEX IF NOT EXISTS idx_products_trgm ON products USING gin (name gin_trgm_ops, description gin_trgm_ops, sku gin_trgm_ops);",

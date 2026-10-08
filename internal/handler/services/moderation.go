@@ -103,9 +103,7 @@ func (s *ModerationService) BanShop(
 	}
 
 	// 2. Deactivate owner account
-	if err := s.userRepo.DeactivateUserWithTx(ctx, tx, shop.UserID); err != nil {
-		s.logger.Warn("failed to deactivate user during shop ban", zap.Error(err), zap.String("user_id", shop.UserID))
-	}
+	_ = s.userRepo.DeactivateUserWithTx(ctx, tx, shop.UserID)
 
 	// 3. Blacklist IP if requested
 	if req.BlacklistIP && shop.CreationIP != "" {
