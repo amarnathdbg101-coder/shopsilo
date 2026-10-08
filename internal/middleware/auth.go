@@ -37,13 +37,17 @@ func JWTAuth(secret string) func(http.Handler) http.Handler {
 			}
 
 			if authHeader == "" {
-				http.Error(w, `{"success":false,"error":"missing authorization header"}`, http.StatusUnauthorized)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"success":false,"error":"missing authorization header"}`))
 				return
 			}
 
 			parts := strings.SplitN(authHeader, " ", 2)
 			if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-				http.Error(w, `{"success":false,"error":"invalid authorization header format"}`, http.StatusUnauthorized)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"success":false,"error":"invalid authorization header format"}`))
 				return
 			}
 
@@ -58,7 +62,9 @@ func JWTAuth(secret string) func(http.Handler) http.Handler {
 			})
 
 			if err != nil || !token.Valid {
-				http.Error(w, `{"success":false,"error":"invalid or expired token"}`, http.StatusUnauthorized)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"success":false,"error":"invalid or expired token"}`))
 				return
 			}
 

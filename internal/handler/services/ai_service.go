@@ -53,11 +53,19 @@ func getAICache(key string) (string, bool) {
 func setAICache(key, resp string, ttl time.Duration) {
 	aiCacheMu.Lock()
 	defer aiCacheMu.Unlock()
+	now := time.Now()
 	if len(aiCache) > 500 {
-		now := time.Now()
 		for k, v := range aiCache {
 			if now.After(v.expiresAt) {
 				delete(aiCache, k)
+			}
+		}
+		if len(aiCache) > 250 {
+			for k := range aiCache {
+				delete(aiCache, k)
+				if len(aiCache) <= 250 {
+					break
+				}
 			}
 		}
 	}
@@ -764,13 +772,16 @@ func (s *aiService) callGeminiWithFallback(ctx context.Context, apiKey string, p
 }
 
 func (s *aiService) callSingleGeminiModel(ctx context.Context, apiKey, model string, payload geminiPayload) (string, error) {
+	modelCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal gemini payload: %w", err)
 	}
 
 	endpoint := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, apiKey)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
+	httpReq, err := http.NewRequestWithContext(modelCtx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return "", fmt.Errorf("failed to create http request: %w", err)
 	}

@@ -42,6 +42,10 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	categoryService := services.NewCategoryService(categoryRepo)
 	catc := controller.NewCategoryController(categoryService)
 
+	// Wire repos to userService for consolidated bootstrap initial state
+	userService.SetShopRepo(shopRepo)
+	userService.SetCategoryRepo(categoryRepo)
+
 	// Product layer
 	productRepo := repository.NewProductRepo(db, logger)
 	productService := services.NewProductService(productRepo, shopRepo, categoryRepo)
@@ -123,7 +127,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	r.Use(middleware.CORS)
 
 	// Liveness & Readiness health check for production orchestrators
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) { // Both
 		if err := db.Ping(r.Context()); err != nil {
 			reuse.Error(w, http.StatusServiceUnavailable, "database ping failed")
 			return
@@ -134,193 +138,194 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	})
 
 	// Public Grievance & Content Safety Report endpoint (IT Rules 2021 compliance)
-	r.Post("/reports", modc.SubmitReport)
+	r.Post("/reports", modc.SubmitReport) // Both
 
 	// Public Auth routes (Rate limited to 10 attempts/min per IP to prevent brute force)
 	r.Route("/auth", func(r chi.Router) {
 		r.Use(middleware.AuthRateLimiter.Middleware())
-		r.Post("/send-otp", uc.SendRegistrationOTP)
-		r.Post("/verify-otp", uc.VerifyRegistrationOTP)
-		r.Post("/register", uc.Register)
-		r.Post("/login", uc.Login)
-		r.Post("/staff-login", staffc.StaffLogin)
-		r.Post("/google", uc.GoogleLogin)
-		r.Post("/forgot-password", uc.ForgotPassword)
-		r.Post("/forget-password", uc.ForgotPassword) // alias for convenience
-		r.Post("/reset-password", uc.ResetPassword)
-		r.Post("/refresh", uc.RefreshToken)
+		r.Post("/send-otp", uc.SendRegistrationOTP)         // Both
+		r.Post("/verify-otp", uc.VerifyRegistrationOTP)     // Both
+		r.Post("/register", uc.Register)                   // Both
+		r.Post("/login", uc.Login)                         // Both
+		r.Post("/staff-login", staffc.StaffLogin)           // Shop
+		r.Post("/google", uc.GoogleLogin)                   // Both
+		r.Post("/forgot-password", uc.ForgotPassword)       // Both
+		r.Post("/forget-password", uc.ForgotPassword)       // Both
+		r.Post("/reset-password", uc.ResetPassword)         // Both
+		r.Post("/refresh", uc.RefreshToken)                 // Both
 	})
 
 	// Public Browsing routes (customers & visitors)
-	r.Get("/catalog/home-feed", sc.GetHomeFeed) // Consolidated customer explore feed
-	r.Get("/home-feed", sc.GetHomeFeed)         // Frontend alias
-	r.Post("/ai/customer-chat", aic.CustomerChat)
-	r.Post("/ai/scan-product", aic.ScanProduct)
-	r.Post("/ai/parse-parchi", aic.ParseParchi)
-	r.Post("/ai/semantic-search", aic.SemanticSearch)
-	r.Post("/ai/voice-bill", aic.VoiceBill)
-	r.Post("/ai/marketing-campaign", aic.GenerateMarketingCampaign)
-	r.Post("/ai/bargain-assist", aic.BargainAssist)
-	r.Get("/categories", catc.List)
-	r.Get("/shops", sc.List)
-	r.Get("/shops/{id}", sc.GetByID)
-	r.Get("/shops/slug/{slug}", sc.GetBySlug)
-	r.Get("/shops/{slug}/qr", sc.GetShopQR)
-	r.Get("/shops/{slug}/products", pc.ListByShop)
-	r.Get("/shops/{slug}/reviews", revc.List)
-	r.Get("/shops/{slug}/offers", loyc.ListOffers)
-	r.Get("/offers", loyc.ListAllOffers)
-	r.Get("/deals", loyc.ListAllOffers)
-	r.Get("/products/nearby", pc.FindNearby)
-	r.Get("/products", pc.List)
-	r.Get("/products/{id}", pc.GetByID)
-	r.Get("/products/slug/{slug}", pc.GetBySlug)
-	r.Get("/products/scan/{code}", loyc.ScanProduct)
-	r.Post("/products/{id}/notify-me", invc.SubscribeStockAlert)
-	r.Post("/products/{id}/make-offer", pc.MakeOffer)
-	r.Get("/receipts/{bill_number}", posc.ViewPublicReceiptPDF)
-	r.Post("/reports/telemetry-error", telc.LogFrontendError)
-	r.Get("/images/*", upc.ServeImage) // Public Cloudflare R2 image streaming proxy
+	r.Get("/catalog/home-feed", sc.GetHomeFeed)                        // Customer
+	r.Get("/home-feed", sc.GetHomeFeed)                                // Customer
+	r.Post("/ai/customer-chat", aic.CustomerChat)                      // Customer
+	r.Post("/ai/scan-product", aic.ScanProduct)                        // Both
+	r.Post("/ai/parse-parchi", aic.ParseParchi)                        // Both
+	r.Post("/ai/semantic-search", aic.SemanticSearch)                  // Customer
+	r.Post("/ai/voice-bill", aic.VoiceBill)                            // Shop
+	r.Post("/ai/marketing-campaign", aic.GenerateMarketingCampaign)   // Shop
+	r.Post("/ai/bargain-assist", aic.BargainAssist)                    // Both
+	r.Get("/categories", catc.List)                                    // Both
+	r.Get("/shops", sc.List)                                           // Customer
+	r.Get("/shops/{id}", sc.GetByID)                                   // Customer
+	r.Get("/shops/slug/{slug}", sc.GetBySlug)                          // Customer
+	r.Get("/shops/{slug}/qr", sc.GetShopQR)                            // Customer
+	r.Get("/shops/{slug}/products", pc.ListByShop)                     // Customer
+	r.Get("/shops/{slug}/reviews", revc.List)                          // Customer
+	r.Get("/shops/{slug}/offers", loyc.ListOffers)                     // Customer
+	r.Get("/offers", loyc.ListAllOffers)                               // Customer
+	r.Get("/deals", loyc.ListAllOffers)                                // Customer
+	r.Get("/products/nearby", pc.FindNearby)                           // Customer
+	r.Get("/products", pc.List)                                        // Customer
+	r.Get("/products/{id}", pc.GetByID)                                // Customer
+	r.Get("/products/slug/{slug}", pc.GetBySlug)                       // Customer
+	r.Get("/products/scan/{code}", loyc.ScanProduct)                   // Customer
+	r.Post("/products/{id}/notify-me", invc.SubscribeStockAlert)       // Customer
+	r.Post("/products/{id}/make-offer", pc.MakeOffer)                  // Customer
+	r.Get("/receipts/{bill_number}", posc.ViewPublicReceiptPDF)        // Customer
+	r.Post("/reports/telemetry-error", telc.LogFrontendError)          // Both
+	r.Get("/images/*", upc.ServeImage)                                 // Both
 
 	// Protected routes (JWT authentication required)
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.JWTAuth(utils.MustLoad().Jwt))
 
 		// User profile actions
-		r.Get("/user/me", uc.GetProfile)
-		r.Get("/user/loyalty", loyc.GetUserLoyalty)
-		r.Put("/user/profile", uc.UpdateProfile)
-		r.With(middleware.UploadRateLimiter.Middleware()).Post("/user/avatar", upc.UploadUserAvatar)
+		r.Get("/user/me", uc.GetProfile)                                                             // Both
+		r.Get("/user/bootstrap", uc.GetBootstrapData)                                               // Both
+		r.Get("/user/loyalty", loyc.GetUserLoyalty)                                                 // Customer
+		r.Put("/user/profile", uc.UpdateProfile)                                                     // Both
+		r.With(middleware.UploadRateLimiter.Middleware()).Post("/user/avatar", upc.UploadUserAvatar) // Both
 
 		// Customer Khata & Dual-Entry Udhar Passbook
-		r.Get("/customer/khata", custKhatac.GetCustomerKhataSummary)
-		r.Get("/customer/khata/{khataId}/transactions", custKhatac.GetCustomerKhataPassbook)
-		r.Post("/customer/khata/{khataId}/dispute", custKhatac.DisputeTransaction)
-		r.Post("/customer/khata/{khataId}/pay-upi", custKhatac.SubmitUPIPayment)
-		r.Get("/customer/khata/{khataId}/statement.pdf", custKhatac.DownloadCustomerPDF)
+		r.Get("/customer/khata", custKhatac.GetCustomerKhataSummary)                     // Customer
+		r.Get("/customer/khata/{khataId}/transactions", custKhatac.GetCustomerKhataPassbook) // Customer
+		r.Post("/customer/khata/{khataId}/dispute", custKhatac.DisputeTransaction)       // Customer
+		r.Post("/customer/khata/{khataId}/pay-upi", custKhatac.SubmitUPIPayment)          // Customer
+		r.Get("/customer/khata/{khataId}/statement.pdf", custKhatac.DownloadCustomerPDF) // Customer
 
 		// Shop Owner management
-		r.Post("/shops", sc.Create)
-		r.Get("/shops/me", sc.GetMyShop)
-		r.Get("/shops/me/dashboard", sc.GetMerchantDashboard) // Consolidated merchant dashboard
-		r.Get("/shops/me/qr", sc.GetMyShopQR)
-		r.Get("/shops/me/digest", sc.GetDailyDigest)
-		r.Put("/shops/me", sc.UpdateMyShop)
-		r.Patch("/shops/me/status", sc.ToggleStatus)
-		r.Delete("/shops/me", sc.DeleteMyShop)
-		r.Post("/shops/me/restore", sc.RestoreMyShop)
-		r.Get("/shops/me/ws", wsc.ServeShopWebSocket)
-		r.With(middleware.UploadRateLimiter.Middleware()).Post("/shops/me/images", upc.UploadShopImages)
+		r.Post("/shops", sc.Create)                                                             // Shop
+		r.Get("/shops/me", sc.GetMyShop)                                                         // Shop
+		r.Get("/shops/me/dashboard", sc.GetMerchantDashboard)                                  // Shop
+		r.Get("/shops/me/qr", sc.GetMyShopQR)                                                   // Shop
+		r.Get("/shops/me/digest", sc.GetDailyDigest)                                            // Shop
+		r.Put("/shops/me", sc.UpdateMyShop)                                                     // Shop
+		r.Patch("/shops/me/status", sc.ToggleStatus)                                            // Shop
+		r.Delete("/shops/me", sc.DeleteMyShop)                                                  // Shop
+		r.Post("/shops/me/restore", sc.RestoreMyShop)                                           // Shop
+		r.Get("/shops/me/ws", wsc.ServeShopWebSocket)                                            // Shop
+		r.With(middleware.UploadRateLimiter.Middleware()).Post("/shops/me/images", upc.UploadShopImages) // Shop
 
-				// Authenticated merchant intelligence
-				r.Post("/ai/merchant-copilot", aic.MerchantCopilot)
+		// Authenticated merchant intelligence
+		r.Post("/ai/merchant-copilot", aic.MerchantCopilot) // Shop
 
 		// Shop Staff & Cashier sub-accounts
-		r.Get("/shops/me/staff", staffc.ListStaff)
-		r.Post("/shops/me/staff", staffc.CreateStaff)
-		r.Put("/shops/me/staff/{id}", staffc.UpdateStaff)
-		r.Delete("/shops/me/staff/{id}", staffc.DeleteStaff)
+		r.Get("/shops/me/staff", staffc.ListStaff)             // Shop
+		r.Post("/shops/me/staff", staffc.CreateStaff)           // Shop
+		r.Put("/shops/me/staff/{id}", staffc.UpdateStaff)       // Shop
+		r.Delete("/shops/me/staff/{id}", staffc.DeleteStaff)    // Shop
 
 		// Shop Product management
-		r.Get("/shops/me/products", pc.ListMyShopProducts)
-		r.Post("/products", pc.Create)
-		r.Put("/products/{id}", pc.Update)
-		r.Delete("/products/{id}", pc.Delete)
-		r.With(middleware.UploadRateLimiter.Middleware()).Post("/products/images", upc.UploadProductImages)
-		r.Post("/shops/me/products/{id}/markdown", pc.ApplyClearanceMarkdown)
-		r.Post("/shops/me/products/bulk-import", pc.BulkImport)
-		r.Get("/shops/me/products/import-template.csv", pc.DownloadImportTemplate)
+		r.Get("/shops/me/products", pc.ListMyShopProducts)                                                 // Shop
+		r.Post("/products", pc.Create)                                                                     // Shop
+		r.Put("/products/{id}", pc.Update)                                                                 // Shop
+		r.Delete("/products/{id}", pc.Delete)                                                              // Shop
+		r.With(middleware.UploadRateLimiter.Middleware()).Post("/products/images", upc.UploadProductImages) // Shop
+		r.Post("/shops/me/products/{id}/markdown", pc.ApplyClearanceMarkdown)                              // Shop
+		r.Post("/shops/me/products/bulk-import", pc.BulkImport)                                            // Shop
+		r.Get("/shops/me/products/import-template.csv", pc.DownloadImportTemplate)                         // Shop
 
 		// Shop Inventory & Wholesale Restock
-		r.Post("/shops/me/inventory/adjust", invc.AdjustStock)
-		r.Get("/shops/me/inventory/low-stock", invc.GetLowStockAlerts)
-		r.Post("/shops/me/inventory/alerts/{id}/dismiss", invc.DismissStockAlert)
-		r.Get("/shops/me/inventory/demand-watchlist", invc.GetDemandWatchlist)
-		r.Get("/shops/me/inventory/reorder-sheet.pdf", invc.DownloadReorderSheetPDF)
-		r.Post("/shops/me/inventory/procurement-pdf", invc.GenerateCustomProcurementPDF)
-		r.Get("/shops/me/inventory/reorder/whatsapp", invc.GetSupplierReorderWhatsApp)
+		r.Post("/shops/me/inventory/adjust", invc.AdjustStock)                           // Shop
+		r.Get("/shops/me/inventory/low-stock", invc.GetLowStockAlerts)                     // Shop
+		r.Post("/shops/me/inventory/alerts/{id}/dismiss", invc.DismissStockAlert)          // Shop
+		r.Get("/shops/me/inventory/demand-watchlist", invc.GetDemandWatchlist)             // Shop
+		r.Get("/shops/me/inventory/reorder-sheet.pdf", invc.DownloadReorderSheetPDF)       // Shop
+		r.Post("/shops/me/inventory/procurement-pdf", invc.GenerateCustomProcurementPDF)   // Shop
+		r.Get("/shops/me/inventory/reorder/whatsapp", invc.GetSupplierReorderWhatsApp)     // Shop
 
 		// Shop Analytics & Profit Intelligence
-		r.Get("/shops/me/analytics/profit", ac.GetMonthlyProfit)
-		r.Get("/shops/me/analytics/products", ac.GetProductMatrix)
+		r.Get("/shops/me/analytics/profit", ac.GetMonthlyProfit)     // Shop
+		r.Get("/shops/me/analytics/products", ac.GetProductMatrix)   // Shop
 
 		// Shop Counter POS & Digital Receipts
-		r.Post("/shops/me/pos/sale", posc.CreateSale)
-		r.Post("/shops/me/pos/sales/{billNumber}/cancel", posc.CancelBill)
-		r.Get("/shops/me/pos/daily-summary", posc.GetDailySummary)
-		r.Get("/shops/me/pos/summary", posc.GetDailySummary) // frontend alias
-		r.Get("/shops/me/pos/scan/{sku}", posc.ScanBarcode)
-		r.Get("/shops/me/pos/receipts/{bill_number}", posc.DownloadReceiptPDF)
-		r.Get("/shops/me/pos/receipts/{bill_number}/share", posc.ShareBill)
-		r.Get("/shops/me/pos/day-close", posc.GetDailyCloseReport)
-		r.Get("/shops/me/pos/gst-report", posc.GetMonthlyGSTReport)
-		r.Post("/shops/me/pos/park", posc.ParkBill)
-		r.Get("/shops/me/pos/park", posc.ListParkedBills)
-		r.Get("/shops/me/pos/park/{id}", posc.GetParkedBill)
-		r.Delete("/shops/me/pos/park/{id}", posc.DeleteParkedBill)
-		r.Get("/shops/me/pos/bargain-assist", pc.GetPOSBargainAssist)
-		r.Post("/shops/me/pos/parse-parchi", aic.ParseParchi)
-		r.Get("/shops/me/pos/weekly-scorecard", posc.GetWeeklyScorecard)
-		r.Get("/shops/me/pos/customers/{phone}/recent-basket", posc.GetCustomerRecentBasket)
-		r.Post("/shops/me/pos/returns", posc.ProcessPOSReturn)
+		r.Post("/shops/me/pos/sale", posc.CreateSale)                               // Shop
+		r.Post("/shops/me/pos/sales/{billNumber}/cancel", posc.CancelBill)          // Shop
+		r.Get("/shops/me/pos/daily-summary", posc.GetDailySummary)                  // Shop
+		r.Get("/shops/me/pos/summary", posc.GetDailySummary)                        // Shop
+		r.Get("/shops/me/pos/scan/{sku}", posc.ScanBarcode)                         // Shop
+		r.Get("/shops/me/pos/receipts/{bill_number}", posc.DownloadReceiptPDF)      // Shop
+		r.Get("/shops/me/pos/receipts/{bill_number}/share", posc.ShareBill)         // Shop
+		r.Get("/shops/me/pos/day-close", posc.GetDailyCloseReport)                  // Shop
+		r.Get("/shops/me/pos/gst-report", posc.GetMonthlyGSTReport)                // Shop
+		r.Post("/shops/me/pos/park", posc.ParkBill)                                 // Shop
+		r.Get("/shops/me/pos/park", posc.ListParkedBills)                           // Shop
+		r.Get("/shops/me/pos/park/{id}", posc.GetParkedBill)                        // Shop
+		r.Delete("/shops/me/pos/park/{id}", posc.DeleteParkedBill)                  // Shop
+		r.Get("/shops/me/pos/bargain-assist", pc.GetPOSBargainAssist)               // Shop
+		r.Post("/shops/me/pos/parse-parchi", aic.ParseParchi)                      // Shop
+		r.Get("/shops/me/pos/weekly-scorecard", posc.GetWeeklyScorecard)           // Shop
+		r.Get("/shops/me/pos/customers/{phone}/recent-basket", posc.GetCustomerRecentBasket) // Shop
+		r.Post("/shops/me/pos/returns", posc.ProcessPOSReturn)                     // Shop
 
 		// Shop Expenses (Dukan ke Roz ke Kharche)
-		r.Post("/shops/me/expenses", expc.CreateExpense)
-		r.Get("/shops/me/expenses", expc.ListExpenses)
-		r.Delete("/shops/me/expenses/{id}", expc.DeleteExpense)
+		r.Post("/shops/me/expenses", expc.CreateExpense)      // Shop
+		r.Get("/shops/me/expenses", expc.ListExpenses)        // Shop
+		r.Delete("/shops/me/expenses/{id}", expc.DeleteExpense) // Shop
 
 		// Shop Customer Khata (Udhar & settlement passbook)
-		r.Get("/shops/me/khata/summary", khatac.GetSummary)
-		r.Get("/shops/me/khata/aging", khatac.GetAgingReport)
-		r.Get("/shops/me/khata", khatac.ListCustomers)
-		r.Get("/shops/me/khata/{mobile}", khatac.GetCustomerHistory)
-		r.Get("/shops/me/khata/{mobile}/statement", khatac.GetCustomerHistory) // frontend JSON alias
-		r.Get("/shops/me/khata/{mobile}/reminder", khatac.GetPaymentReminder)
-		r.Get("/shops/me/khata/{mobile}/statement.pdf", khatac.DownloadStatementPDF)
-		r.Get("/shops/me/khata/{mobile}/statement/share", khatac.GetStatementShare)
-		r.Put("/shops/me/khata/{mobile}/credit-limit", khatac.UpdateCreditLimit)
-		r.Post("/shops/me/khata", khatac.RecordCredit)
-		r.Post("/shops/me/khata/{mobile}/payment", khatac.RecordPayment)
-		r.Post("/shops/me/khata/{id}/request-closure", khatac.RequestClosure)
-		r.Post("/shops/me/khata/{id}/verify-closure-otp", khatac.VerifyClosureOTP)
-		r.Post("/shops/me/khata/{id}/transactions/{txId}/reverse", khatac.ReverseTransaction)
-		r.Post("/shops/me/khata/{id}/dispute/{txId}/resolve", khatac.ResolveDispute)
-		r.Post("/shops/me/khata/{id}/promise-date", khatac.SetPromiseToPay)
-		r.Get("/shops/me/khata/{mobile}/trust-score", khatac.GetCustomerTrustScore)
+		r.Get("/shops/me/khata/summary", khatac.GetSummary)                      // Shop
+		r.Get("/shops/me/khata/aging", khatac.GetAgingReport)                    // Shop
+		r.Get("/shops/me/khata", khatac.ListCustomers)                           // Shop
+		r.Get("/shops/me/khata/{mobile}", khatac.GetCustomerHistory)             // Shop
+		r.Get("/shops/me/khata/{mobile}/statement", khatac.GetCustomerHistory)   // Shop
+		r.Get("/shops/me/khata/{mobile}/reminder", khatac.GetPaymentReminder)     // Shop
+		r.Get("/shops/me/khata/{mobile}/statement.pdf", khatac.DownloadStatementPDF) // Shop
+		r.Get("/shops/me/khata/{mobile}/statement/share", khatac.GetStatementShare) // Shop
+		r.Put("/shops/me/khata/{mobile}/credit-limit", khatac.UpdateCreditLimit) // Shop
+		r.Post("/shops/me/khata", khatac.RecordCredit)                           // Shop
+		r.Post("/shops/me/khata/{mobile}/payment", khatac.RecordPayment)         // Shop
+		r.Post("/shops/me/khata/{id}/request-closure", khatac.RequestClosure)   // Shop
+		r.Post("/shops/me/khata/{id}/verify-closure-otp", khatac.VerifyClosureOTP) // Shop
+		r.Post("/shops/me/khata/{id}/transactions/{txId}/reverse", khatac.ReverseTransaction) // Shop
+		r.Post("/shops/me/khata/{id}/dispute/{txId}/resolve", khatac.ResolveDispute) // Shop
+		r.Post("/shops/me/khata/{id}/promise-date", khatac.SetPromiseToPay)      // Shop
+		r.Get("/shops/me/khata/{mobile}/trust-score", khatac.GetCustomerTrustScore) // Shop
 
 		// Customer Digital Khata & Udhar Passbook (Dual-Entry Ledger)
-		r.Get("/customer/khata", custKhatac.GetCustomerKhataSummary)
-		r.Get("/customer/khata/{khataId}/transactions", custKhatac.GetCustomerKhataPassbook)
-		r.Post("/customer/khata/{khataId}/dispute", custKhatac.DisputeTransaction)
-		r.Post("/customer/khata/{khataId}/pay-upi", custKhatac.SubmitUPIPayment)
-		r.Get("/customer/khata/{khataId}/statement.pdf", custKhatac.DownloadCustomerPDF)
-		r.Post("/customer/khata/{khataId}/request-closure", custKhatac.RequestClosure)
-		r.Post("/customer/khata/{khataId}/verify-closure-otp", custKhatac.VerifyClosureOTP)
-		r.Put("/customer/khata/{khataId}/otp-protection", custKhatac.SetCreditOTPProtection)
-		r.Post("/customer/khata/{khataId}/promise-date", custKhatac.SetPromiseToPay)
+		r.Get("/customer/khata", custKhatac.GetCustomerKhataSummary)                     // Customer
+		r.Get("/customer/khata/{khataId}/transactions", custKhatac.GetCustomerKhataPassbook) // Customer
+		r.Post("/customer/khata/{khataId}/dispute", custKhatac.DisputeTransaction)       // Customer
+		r.Post("/customer/khata/{khataId}/pay-upi", custKhatac.SubmitUPIPayment)          // Customer
+		r.Get("/customer/khata/{khataId}/statement.pdf", custKhatac.DownloadCustomerPDF) // Customer
+		r.Post("/customer/khata/{khataId}/request-closure", custKhatac.RequestClosure)   // Customer
+		r.Post("/customer/khata/{khataId}/verify-closure-otp", custKhatac.VerifyClosureOTP) // Customer
+		r.Put("/customer/khata/{khataId}/otp-protection", custKhatac.SetCreditOTPProtection) // Customer
+		r.Post("/customer/khata/{khataId}/promise-date", custKhatac.SetPromiseToPay)      // Customer
 
 		// Shop Returns & VIP Offers
-		r.Post("/shops/me/returns", loyc.ProcessReturn)
-		r.Get("/shops/me/returns", loyc.ListReturns)
-		r.Post("/shops/me/offers", loyc.CreateOffer)
-		r.Put("/shops/me/offers/{id}", loyc.UpdateOffer)
-		r.Delete("/shops/me/offers/{id}", loyc.DeleteOffer)
-		r.Get("/shops/me/offers/history", loyc.GetOfferHistory)
+		r.Post("/shops/me/returns", loyc.ProcessReturn)          // Shop
+		r.Get("/shops/me/returns", loyc.ListReturns)            // Shop
+		r.Post("/shops/me/offers", loyc.CreateOffer)            // Shop
+		r.Put("/shops/me/offers/{id}", loyc.UpdateOffer)        // Shop
+		r.Delete("/shops/me/offers/{id}", loyc.DeleteOffer)     // Shop
+		r.Get("/shops/me/offers/history", loyc.GetOfferHistory)  // Shop
 
 		// In-Store Item Reservations (Customer)
-		r.Post("/reservations", resc.Create)
-		r.Get("/reservations", resc.ListUserReservations)
-		r.Get("/reservations/{id}", resc.GetByID)
-		r.Post("/reservations/{id}/cancel", resc.CancelUserReservation)
+		r.Post("/reservations", resc.Create)                   // Customer
+		r.Get("/reservations", resc.ListUserReservations)      // Customer
+		r.Get("/reservations/{id}", resc.GetByID)              // Customer
+		r.Post("/reservations/{id}/cancel", resc.CancelUserReservation) // Customer
 
 		// In-Store Reservations (Shopkeeper counter management)
-		r.Get("/shops/me/reservations", resc.ListShopReservations)
-		r.Post("/shops/me/reservations/verify", resc.VerifyShopReservation)
-		r.Post("/shops/me/reservations/{id}/cancel", resc.CancelShopReservation)
+		r.Get("/shops/me/reservations", resc.ListShopReservations)         // Shop
+		r.Post("/shops/me/reservations/verify", resc.VerifyShopReservation) // Shop
+		r.Post("/shops/me/reservations/{id}/cancel", resc.CancelShopReservation) // Shop
 
 		// Shop Reviews (Customer)
-		r.Post("/shops/{slug}/reviews", revc.AddOrUpdate)
-		r.Delete("/shops/{slug}/reviews", revc.Delete)
+		r.Post("/shops/{slug}/reviews", revc.AddOrUpdate) // Customer
+		r.Delete("/shops/{slug}/reviews", revc.Delete)     // Customer
 	})
 
 	// Admin protected routes (Role: admin required)
@@ -328,32 +333,32 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Use(middleware.JWTAuth(utils.MustLoad().Jwt))
 		r.Use(middleware.RequireRole("admin"))
 
-		r.Get("/stats", modc.GetStats)
-		r.Get("/shops", modc.ListAdminShops)
-		r.Patch("/shops/{id}/status", modc.UpdateAdminShopStatus)
-		r.Post("/shops/{id}/ban", modc.BanShop)
+		r.Get("/stats", modc.GetStats)                           // Admin
+		r.Get("/shops", modc.ListAdminShops)                     // Admin
+		r.Patch("/shops/{id}/status", modc.UpdateAdminShopStatus) // Admin
+		r.Post("/shops/{id}/ban", modc.BanShop)                   // Admin
 
-		r.Get("/reports", modc.ListReports)
-		r.Post("/reports/{id}/resolve", modc.ResolveReport)
+		r.Get("/reports", modc.ListReports)                      // Admin
+		r.Post("/reports/{id}/resolve", modc.ResolveReport)      // Admin
 
-		r.Get("/banned-entities", modc.ListBannedEntities)
-		r.Post("/banned-entities", modc.AddBannedEntity)
-		r.Delete("/banned-entities/{id}", modc.UnbanEntity)
+		r.Get("/banned-entities", modc.ListBannedEntities)       // Admin
+		r.Post("/banned-entities", modc.AddBannedEntity)         // Admin
+		r.Delete("/banned-entities/{id}", modc.UnbanEntity)      // Admin
 
 		// Category management
-		r.Get("/categories", catc.AdminList)
-		r.Post("/categories", catc.AdminCreate)
-		r.Put("/categories/{id}", catc.AdminUpdate)
-		r.Delete("/categories/{id}", catc.AdminDelete)
+		r.Get("/categories", catc.AdminList)                     // Admin
+		r.Post("/categories", catc.AdminCreate)                   // Admin
+		r.Put("/categories/{id}", catc.AdminUpdate)               // Admin
+		r.Delete("/categories/{id}", catc.AdminDelete)            // Admin
 
 		// User & Merchant management
-		r.Get("/users", uc.AdminListUsers)
-		r.Patch("/users/{id}/status", uc.AdminUpdateUserStatus)
+		r.Get("/users", uc.AdminListUsers)                       // Admin
+		r.Patch("/users/{id}/status", uc.AdminUpdateUserStatus)   // Admin
 
 		// 24-Hour Developer Error Telemetry Vault & Live Performance Metrics
-		r.Get("/errors", telc.GetAdminErrors)
-		r.Delete("/errors/clear", telc.ClearAdminErrors)
-		r.Get("/performance-metrics", telc.GetLivePerformanceMetrics)
+		r.Get("/errors", telc.GetAdminErrors)                    // Admin
+		r.Delete("/errors/clear", telc.ClearAdminErrors)          // Admin
+		r.Get("/performance-metrics", telc.GetLivePerformanceMetrics) // Admin
 	})
 
 	return r

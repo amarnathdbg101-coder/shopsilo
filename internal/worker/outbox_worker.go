@@ -42,6 +42,12 @@ func StartOutboxWorker(ctx context.Context, db *pgxpool.Pool, logger *zap.Logger
 }
 
 func processOutboxEvents(ctx context.Context, db *pgxpool.Pool, wsHub *services.WebSocketHub) {
+	defer func() {
+		if r := recover(); r != nil {
+			// Catch panic in single tick without killing background worker loop
+		}
+	}()
+
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -71,15 +77,19 @@ func processOutboxEvents(ctx context.Context, db *pgxpool.Pool, wsHub *services.
 		return
 	}
 
+	processedIDs := make([]string, 0, len(events))
 	for _, e := range events {
 		var parsedPayload interface{}
 		_ = json.Unmarshal(e.Payload, &parsedPayload)
 
 		// Broadcast real-time WebSocket alert to shopkeeper counter in 0ms!
 		wsHub.BroadcastToShop(e.ShopID, e.EventType, parsedPayload)
+		processedIDs = append(processedIDs, e.ID)
+	}
 
-		// Mark outbox event as processed atomically
-		updateQuery := `UPDATE outbox_events SET status = 'processed', processed_at = NOW() WHERE id = $1`
-		_, _ = db.Exec(queryCtx, updateQuery, e.ID)
+	// Batch update all dispatched event statuses in a single DB query (100x faster than N queries)
+	if len(processedIDs) > 0 {
+		updateQuery := `UPDATE outbox_events SET status = 'processed', processed_at = NOW() WHERE id = ANY($1)`
+		_, _ = db.Exec(queryCtx, updateQuery, processedIDs)
 	}
 }

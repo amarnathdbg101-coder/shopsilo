@@ -14,12 +14,16 @@ func RequireRole(roles ...string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			claims := GetUserFromContext(r.Context())
 			if claims == nil {
-				http.Error(w, `{"success":false,"error":"unauthorized"}`, http.StatusUnauthorized)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"success":false,"error":"unauthorized"}`))
 				return
 			}
 
 			if !roleMap[claims.Role] {
-				http.Error(w, `{"success":false,"error":"forbidden: insufficient permissions"}`, http.StatusForbidden)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"success":false,"error":"forbidden: insufficient permissions"}`))
 				return
 			}
 
