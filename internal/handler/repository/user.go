@@ -387,6 +387,23 @@ func (r *UserRepo) DeactivateUser(ctx context.Context, userID string) error {
 	return nil
 }
 
+func (r *UserRepo) DeactivateUserWithTx(ctx context.Context, tx pgx.Tx, userID string) error {
+	query := `
+		UPDATE users
+		SET is_active = false, updated_at = NOW()
+		WHERE id = $1
+	`
+	cmdTag, err := tx.Exec(ctx, query, userID)
+	if err != nil {
+		r.logger.Error("failed to deactivate user in transaction", zap.Error(err), zap.String("user_id", userID))
+		return err
+	}
+	if cmdTag.RowsAffected() == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
 func (r *UserRepo) UpdateProfile(ctx context.Context, userID, fullName, phone string) (*model.User, error) {
 	query := `
 		UPDATE users

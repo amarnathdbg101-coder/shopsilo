@@ -108,16 +108,30 @@ func (r *KhataRepo) GetOrCreateCustomer(ctx context.Context, shopID, customerNam
 
 // RecordTransaction atomically records a credit or payment transaction and updates the customer balance.
 func (r *KhataRepo) RecordTransaction(ctx context.Context, shopID, customerMobile, customerName, txType string, amount float64, notes, billNumber, paymentMode, parchiImageURL, itemsSummary string) (*model.KhataTransaction, error) {
-	cleanMobile, err := utils.NormalizeIndianPhone(customerMobile)
-	if err != nil {
-		cleanMobile = strings.TrimSpace(customerMobile)
-	}
-
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback(ctx)
+
+	kTx, err := r.RecordTransactionWithTx(ctx, tx, shopID, customerMobile, customerName, txType, amount, notes, billNumber, paymentMode, parchiImageURL, itemsSummary)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return kTx, nil
+}
+
+// RecordTransactionWithTx executes a customer khata credit/payment transaction within an existing database transaction (ACID).
+func (r *KhataRepo) RecordTransactionWithTx(ctx context.Context, tx pgx.Tx, shopID, customerMobile, customerName, txType string, amount float64, notes, billNumber, paymentMode, parchiImageURL, itemsSummary string) (*model.KhataTransaction, error) {
+	cleanMobile, err := utils.NormalizeIndianPhone(customerMobile)
+	if err != nil {
+		cleanMobile = strings.TrimSpace(customerMobile)
+	}
 
 	// 1. Lock and fetch current customer khata
 	var khataID string
@@ -170,8 +184,6 @@ func (r *KhataRepo) RecordTransaction(ctx context.Context, shopID, customerMobil
 		&dupTx.Notes, &dupTx.BillNumber, &dupTx.PaymentMode, &dupTx.Status, &dupTx.DisputeReason,
 		&dupTx.DisputedAt, &dupTx.UPIRefNo, &dupTx.CreatedAt,
 	); err == nil {
-		// Found identical transaction within 5 seconds, commit and return existing
-		_ = tx.Commit(ctx)
 		return &dupTx, nil
 	}
 
@@ -229,10 +241,6 @@ func (r *KhataRepo) RecordTransaction(ctx context.Context, shopID, customerMobil
 	}
 	if itmSum != "" {
 		kTx.ItemsSummary = &itmSum
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	return &kTx, nil

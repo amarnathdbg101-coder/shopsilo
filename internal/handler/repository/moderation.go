@@ -100,6 +100,18 @@ func (r *ModerationRepo) BanEntity(ctx context.Context, entityType, entityValue,
 	return err
 }
 
+// BanEntityWithTx inserts an entity into the banned_entities blacklist within an existing transaction.
+func (r *ModerationRepo) BanEntityWithTx(ctx context.Context, tx pgx.Tx, entityType, entityValue, reason string, bannedBy *string) error {
+	query := `
+		INSERT INTO banned_entities (entity_type, entity_value, reason, banned_by, created_at)
+		VALUES ($1, $2, $3, $4, NOW())
+		ON CONFLICT (entity_value) DO UPDATE
+		SET reason = EXCLUDED.reason, banned_by = EXCLUDED.banned_by
+	`
+	_, err := tx.Exec(ctx, query, entityType, strings.TrimSpace(entityValue), reason, bannedBy)
+	return err
+}
+
 // UnbanEntity removes an entity from the blacklist.
 func (r *ModerationRepo) UnbanEntity(ctx context.Context, id string) error {
 	query := `DELETE FROM banned_entities WHERE id = $1`
@@ -228,6 +240,17 @@ func (r *ModerationRepo) SetShopStatus(ctx context.Context, shopID, status, reas
 		WHERE id = $3
 	`
 	_, err := r.db.Exec(ctx, query, status, reason, shopID)
+	return err
+}
+
+// SetShopStatusWithTx updates the status and suspension reason of a shop within an existing transaction.
+func (r *ModerationRepo) SetShopStatusWithTx(ctx context.Context, tx pgx.Tx, shopID, status, reason string) error {
+	query := `
+		UPDATE shops
+		SET status = $1, suspension_reason = $2, updated_at = NOW()
+		WHERE id = $3
+	`
+	_, err := tx.Exec(ctx, query, status, reason, shopID)
 	return err
 }
 
