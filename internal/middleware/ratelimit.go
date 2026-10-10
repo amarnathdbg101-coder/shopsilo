@@ -1,4 +1,4 @@
-package middleware
+﻿package middleware
 
 import (
 	"net"
@@ -11,8 +11,9 @@ import (
 )
 
 type clientRecord struct {
-	count     int
-	windowEnd time.Time
+	count      int
+	violations int
+	windowEnd  time.Time
 }
 
 // IPRateLimiter tracks request counts per IP in memory
@@ -78,8 +79,9 @@ func (l *IPRateLimiter) CheckAndAllow(ip string) (allowed bool, remaining int, r
 
 	if !exists || now.After(rec.windowEnd) {
 		rec = &clientRecord{
-			count:     1,
-			windowEnd: now.Add(l.window),
+			count:      1,
+			violations: 0,
+			windowEnd:  now.Add(l.window),
 		}
 		l.records[ip] = rec
 		remaining = l.limit - 1
@@ -99,6 +101,13 @@ func (l *IPRateLimiter) CheckAndAllow(ip string) (allowed bool, remaining int, r
 		rec.count++
 		remaining = l.limit - rec.count
 		return true, remaining, resetInSec
+	}
+
+	// Limit reached or exceeded
+	rec.violations++
+	if rec.violations >= 4 {
+		// Automatically escalate repeat abusers to IP Jail for 15 minutes
+		JailIP(ip, 15*time.Minute, "excessive rate limit violations")
 	}
 
 	remaining = 0
@@ -164,12 +173,18 @@ func (l *IPRateLimiter) Middleware() func(http.Handler) http.Handler {
 
 // Pre-configured standard limiters
 var (
-	// AuthRateLimiter limits sensitive login/register/reset requests (10 requests per minute)
-	AuthRateLimiter = NewIPRateLimiter(10, 1*time.Minute)
+	// AuthRateLimiter limits sensitive login/register/reset requests (15 requests per minute as configured)
+	AuthRateLimiter = NewIPRateLimiter(15, 1*time.Minute)
+
+	// OTPRateLimiter restricts rapid OTP generation requests (4 requests per 10 minutes)
+	OTPRateLimiter = NewIPRateLimiter(4, 10*time.Minute)
+
+	// MutationRateLimiter protects database writes like placing orders or product mutations (30 per minute)
+	MutationRateLimiter = NewIPRateLimiter(30, 1*time.Minute)
 
 	// UploadRateLimiter limits heavy image uploads to Cloudflare R2 (20 uploads per minute)
 	UploadRateLimiter = NewIPRateLimiter(20, 1*time.Minute)
 
-	// GlobalRateLimiter protects the API from aggressive scraping or DoS (120 requests per minute)
-	GlobalRateLimiter = NewIPRateLimiter(120, 1*time.Minute)
+	// GlobalRateLimiter protects the API from aggressive scraping or DoS (100 requests per minute)
+	GlobalRateLimiter = NewIPRateLimiter(100, 1*time.Minute)
 )

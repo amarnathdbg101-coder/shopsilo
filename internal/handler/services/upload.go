@@ -183,18 +183,19 @@ func (s *UploadService) UploadShopImages(
 			return "", nil, bannerErr
 		}
 
-		// Clean old promotional banners from R2
-		for _, oldBanner := range shop.Banners {
-			_ = reuse.DeleteImage(oldBanner)
+		// Populate shop banners if none existed previously
+		if len(shop.Banners) == 0 {
+			shop.Banners = newBanners
 		}
-		shop.Banners = newBanners
 	} else {
 		newBanners = shop.Banners
 	}
 
-	// 3. Save changes in DB
-	if _, err := s.shopRepo.Update(ctx, shop); err != nil {
-		return "", nil, errors.New("failed to update shop images in database")
+	// 3. Save changes in DB if logo was updated or initial banners were set
+	if (logoFile != nil && logoHeader != nil) || (len(bannerFiles) > 0 && len(shop.Banners) > 0) {
+		if _, err := s.shopRepo.Update(ctx, shop); err != nil {
+			return "", nil, errors.New("failed to update shop images in database")
+		}
 	}
 
 	return newLogoURL, newBanners, nil

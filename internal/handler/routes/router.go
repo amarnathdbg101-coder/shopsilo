@@ -120,6 +120,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	// Global middlewares
 	r.Use(chimw.RequestID)
 	r.Use(chimw.RealIP)
+	r.Use(middleware.BotGuard)
 	r.Use(chimw.Compress(5))
 	r.Use(middleware.GlobalRateLimiter.Middleware())
 	r.Use(middleware.BanGuard(modRepo))
@@ -140,10 +141,10 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	// Public Grievance & Content Safety Report endpoint (IT Rules 2021 compliance)
 	r.Post("/reports", modc.SubmitReport) // Both
 
-	// Public Auth routes (Rate limited to 10 attempts/min per IP to prevent brute force)
+	// Public Auth routes (Rate limited to 15 attempts/min per IP to prevent brute force)
 	r.Route("/auth", func(r chi.Router) {
 		r.Use(middleware.AuthRateLimiter.Middleware())
-		r.Post("/send-otp", uc.SendRegistrationOTP)         // Both
+		r.With(middleware.OTPRateLimiter.Middleware()).Post("/send-otp", uc.SendRegistrationOTP)         // Both
 		r.Post("/verify-otp", uc.VerifyRegistrationOTP)     // Both
 		r.Post("/register", uc.Register)                   // Both
 		r.Post("/login", uc.Login)                         // Both
@@ -228,7 +229,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 
 		// Shop Product management
 		r.Get("/shops/me/products", pc.ListMyShopProducts)                                                 // Shop
-		r.Post("/products", pc.Create)                                                                     // Shop
+		r.With(middleware.MutationRateLimiter.Middleware()).Post("/products", pc.Create)                  // Shop
 		r.Put("/products/{id}", pc.Update)                                                                 // Shop
 		r.Delete("/products/{id}", pc.Delete)                                                              // Shop
 		r.With(middleware.UploadRateLimiter.Middleware()).Post("/products/images", upc.UploadProductImages) // Shop

@@ -80,6 +80,10 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 		attributesJSON = []byte("{}")
 	}
 
+	if p.Tags == nil {
+		p.Tags = []string{}
+	}
+
 	var catID *string
 	if strings.TrimSpace(p.CategoryID) != "" {
 		c := strings.TrimSpace(p.CategoryID)
@@ -94,7 +98,7 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15::jsonb, $16, $17, $18
 		)
 		RETURNING id, shop_id, name, slug, COALESCE(description, ''), sku, price, COALESCE(cost_price, 0), COALESCE(compare_price, 0),
-		          COALESCE(category_id::text, ''), images, COALESCE(weight, 0), is_active, is_featured, tags, COALESCE(attributes, '{}'::jsonb), created_at, updated_at,
+		          COALESCE(category_id::text, ''), images, COALESCE(weight, 0), is_active, is_featured, COALESCE(tags, '{}'), COALESCE(attributes, '{}'::jsonb), created_at, updated_at,
 		          COALESCE(floor_price, 0), COALESCE(allow_bargain, true), COALESCE(is_price_public, true)
 	`
 
@@ -774,6 +778,10 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 		attributesJSON = []byte("{}")
 	}
 
+	if p.Tags == nil {
+		p.Tags = []string{}
+	}
+
 	var catID *string
 	if strings.TrimSpace(p.CategoryID) != "" {
 		c := strings.TrimSpace(p.CategoryID)
@@ -787,7 +795,7 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 		    floor_price = $15, allow_bargain = $16, is_price_public = $17, updated_at = NOW()
 		WHERE id = $18 AND shop_id = $19
 		RETURNING id, shop_id, name, slug, COALESCE(description, ''), sku, price, COALESCE(cost_price, 0), COALESCE(compare_price, 0),
-		          COALESCE(category_id::text, ''), images, COALESCE(weight, 0), is_active, is_featured, tags, COALESCE(attributes, '{}'::jsonb), created_at, updated_at,
+		          COALESCE(category_id::text, ''), images, COALESCE(weight, 0), is_active, is_featured, COALESCE(tags, '{}'), COALESCE(attributes, '{}'::jsonb), created_at, updated_at,
 		          COALESCE(floor_price, 0), COALESCE(allow_bargain, true), COALESCE(is_price_public, true)
 	`
 	updated := &model.Product{}

@@ -46,6 +46,9 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"ALTER TABLE shops ALTER COLUMN phone DROP NOT NULL;",
 		"ALTER TABLE shops ALTER COLUMN pincode DROP NOT NULL;",
 		"ALTER TABLE shops ALTER COLUMN city DROP NOT NULL;",
+		"ALTER TABLE categories ADD COLUMN IF NOT EXISTS image_url VARCHAR(500) DEFAULT '';",
+		"ALTER TABLE categories ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES categories(id) ON DELETE SET NULL;",
+		"INSERT INTO categories (name, slug, description, icon, is_active) VALUES ('General Store', 'general-store', 'All grocery and general store everyday items', '??', true) ON CONFLICT (slug) DO NOTHING;",
 
 		// Khata table enhancements
 		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS customer_id UUID;",

@@ -319,6 +319,22 @@ func (s *ShopService) UpdateMyShop(ctx context.Context, userID string, input dto
 		shop.LogoURL = strings.TrimSpace(*input.LogoURL)
 	}
 	if input.Banners != nil {
+		if len(*input.Banners) > 2 {
+			return nil, ErrTooManyBannerImages
+		}
+
+		newBannersMap := make(map[string]bool)
+		for _, b := range *input.Banners {
+			newBannersMap[b] = true
+		}
+
+		// Delete old banners that are removed to prevent storage bloat in R2
+		for _, oldBanner := range shop.Banners {
+			if !newBannersMap[oldBanner] && oldBanner != "" {
+				_ = reuse.DeleteImage(oldBanner)
+			}
+		}
+
 		shop.Banners = *input.Banners
 	}
 	if input.Timing != nil {
