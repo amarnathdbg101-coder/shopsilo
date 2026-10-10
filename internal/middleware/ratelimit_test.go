@@ -1,4 +1,4 @@
-package middleware
+﻿package middleware
 
 import (
 	"net/http"
@@ -8,7 +8,7 @@ import (
 )
 
 func TestRateLimiter_Allow(t *testing.T) {
-	limiter := NewIPRateLimiter(3, 100*time.Millisecond)
+	limiter := NewIPRateLimiter(3, 10, 100*time.Millisecond)
 	defer limiter.Stop()
 
 	testIP := "192.168.1.100"
@@ -34,8 +34,29 @@ func TestRateLimiter_Allow(t *testing.T) {
 	}
 }
 
+func TestRateLimiter_MicroBurst(t *testing.T) {
+	// Limit is 10 per minute, but burst limit is only 2 within 2 seconds
+	limiter := NewIPRateLimiter(10, 2, 1*time.Minute)
+	defer limiter.Stop()
+
+	testIP := "192.168.1.105"
+
+	// 1st and 2nd requests should be allowed
+	if !limiter.Allow(testIP) {
+		t.Fatalf("1st request should be allowed")
+	}
+	if !limiter.Allow(testIP) {
+		t.Fatalf("2nd request should be allowed")
+	}
+
+	// 3rd rapid request in same second should exceed burst limit!
+	if limiter.Allow(testIP) {
+		t.Fatalf("3rd request should fail due to micro-burst limit")
+	}
+}
+
 func TestRateLimiter_Middleware(t *testing.T) {
-	limiter := NewIPRateLimiter(2, 500*time.Millisecond)
+	limiter := NewIPRateLimiter(2, 5, 500*time.Millisecond)
 	defer limiter.Stop()
 
 	handler := limiter.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

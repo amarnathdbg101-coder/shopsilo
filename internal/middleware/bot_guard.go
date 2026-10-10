@@ -3,6 +3,8 @@ package middleware
 
 import (
 	"net/http"
+	"net/url"
+	"regexp"
 	"shopMe/internal/reuse"
 	"strconv"
 	"strings"
@@ -19,6 +21,11 @@ var (
 	jailMu        sync.RWMutex
 	ipJailMap     = make(map[string]jailRecord)
 	stopJailPurge chan struct{}
+
+	// Pre-compiled WAF regular expressions for 0ms CPU overhead
+	sqliRegex = regexp.MustCompile(`(?i)(union\s+(all\s+)?select|select\s+[\w\*\s,]+\s+from|insert\s+into|delete\s+from|drop\s+(table|database)|alter\s+table|;\s*--|--\s*$|/\*.*\*/|or\s+['"\d\w]+=['"\d\w]+|benchmark\s*\(|sleep\s*\()`)
+	traversalRegex = regexp.MustCompile(`(?i)(\.\.[/\\]\.\.[/\\]|/etc/passwd|/proc/self|windows[/\\]system32)`)
+	xssRegex = regexp.MustCompile(`(?i)(<script|javascript:|onerror\s*=|onload\s*=|document\.cookie|<iframe|<svg)`)
 )
 
 func init() {
@@ -205,6 +212,32 @@ func isAutomatedScraperUA(ua string) bool {
 	return false
 }
 
+// isMaliciousPayload inspects URL path and query parameters using in-memory WAF regex patterns
+func isMaliciousPayload(urlPath, rawQuery string) (bool, string) {
+	decodedQuery, err := url.QueryUnescape(rawQuery)
+	if err != nil {
+		decodedQuery = rawQuery
+	}
+	decodedPath, err := url.PathUnescape(urlPath)
+	if err != nil {
+		decodedPath = urlPath
+	}
+
+	target := decodedPath + " " + decodedQuery
+
+	if sqliRegex.MatchString(target) {
+		return true, "SQL Injection attempt"
+	}
+	if traversalRegex.MatchString(target) {
+		return true, "Path Traversal attempt"
+	}
+	if xssRegex.MatchString(target) {
+		return true, "Cross-Site Scripting (XSS) attempt"
+	}
+
+	return false, ""
+}
+
 // ValidateHoneypot inspects hidden bot trap fields.
 // If populated, automatically quarantines the client IP and returns false.
 func ValidateHoneypot(honeypotVal string, ip string) bool {
@@ -213,6 +246,26 @@ func ValidateHoneypot(honeypotVal string, ip string) bool {
 		return false
 	}
 	return true
+}
+
+// BodySizeGuard enforces maximum incoming request body size to block memory starvation attacks
+func BodySizeGuard(defaultLimit int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			maxBytes := defaultLimit
+			contentType := strings.ToLower(r.Header.Get("Content-Type"))
+			if strings.HasPrefix(contentType, "multipart/form-data") {
+				maxBytes = 10 << 20 // 10MB limit for image uploads
+			}
+
+			if r.ContentLength > maxBytes && maxBytes > 0 {
+				reuse.Error(w, http.StatusRequestEntityTooLarge, "Request payload exceeds maximum allowed size.")
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // BotGuard inspects requests for automated malicious bots, exploit scanners, and quarantined IPs.
@@ -228,7 +281,27 @@ func BotGuard(next http.Handler) http.Handler {
 			return
 		}
 
-		// 2. Exploit path probing detection (Instant 30-minute quarantine)
+		// 2. Reject dangerous / non-standard HTTP methods (e.g. TRACE, CONNECT, TRACK)
+		if r.Method == "TRACE" || r.Method == "CONNECT" || r.Method == "TRACK" {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			reuse.Error(w, http.StatusMethodNotAllowed, "HTTP method not permitted.")
+			return
+		}
+
+		// 3. Reject missing Host header
+		if strings.TrimSpace(r.Host) == "" {
+			reuse.Error(w, http.StatusBadRequest, "Invalid request: Host header is required.")
+			return
+		}
+
+		// 4. In-Memory WAF Inspection: Detect SQLi, Path Traversal, and XSS in URL & Queries
+		if malicious, rule := isMaliciousPayload(r.URL.Path, r.URL.RawQuery); malicious {
+			JailIP(ip, 30*time.Minute, "WAF triggered: "+rule)
+			reuse.Error(w, http.StatusForbidden, "Access denied: Malicious request pattern detected by WAF.")
+			return
+		}
+
+		// 5. Exploit path probing detection (Instant 30-minute quarantine)
 		if isExploitProbe(r.URL.Path) {
 			JailIP(ip, 30*time.Minute, "exploit probe: "+r.URL.Path)
 			reuse.Error(w, http.StatusForbidden, "Access denied: Malicious vulnerability probe detected.")
@@ -237,14 +310,14 @@ func BotGuard(next http.Handler) http.Handler {
 
 		ua := r.UserAgent()
 
-		// 3. Known malicious security scanner detection
+		// 6. Known malicious security scanner detection
 		if isMaliciousScannerUA(ua) {
 			JailIP(ip, 15*time.Minute, "malicious scanner signature: "+ua)
 			reuse.Error(w, http.StatusForbidden, "Access denied: Automated security scanner blocked.")
 			return
 		}
 
-		// 4. Block automated scrapers and bots on sensitive mutating operations
+		// 7. Block automated scrapers and bots on sensitive mutating operations
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
 			// Require User-Agent on mutating operations
 			if strings.TrimSpace(ua) == "" {

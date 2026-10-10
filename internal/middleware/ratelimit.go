@@ -11,25 +11,29 @@ import (
 )
 
 type clientRecord struct {
-	count      int
-	violations int
-	windowEnd  time.Time
+	count         int
+	violations    int
+	windowEnd     time.Time
+	burstCount    int
+	lastBurstTime time.Time
 }
 
-// IPRateLimiter tracks request counts per IP in memory
+// IPRateLimiter tracks request counts and sub-second burst surges per IP in memory
 type IPRateLimiter struct {
 	mu          sync.RWMutex
 	records     map[string]*clientRecord
 	limit       int
+	burstLimit  int
 	window      time.Duration
 	stopCleanup chan struct{}
 }
 
-// NewIPRateLimiter creates a new rate limiter with background garbage collection
-func NewIPRateLimiter(limit int, window time.Duration) *IPRateLimiter {
+// NewIPRateLimiter creates a new rate limiter with background garbage collection and micro-burst protection
+func NewIPRateLimiter(limit int, burstLimit int, window time.Duration) *IPRateLimiter {
 	limiter := &IPRateLimiter{
 		records:     make(map[string]*clientRecord),
 		limit:       limit,
+		burstLimit:  burstLimit,
 		window:      window,
 		stopCleanup: make(chan struct{}),
 	}
@@ -69,7 +73,7 @@ func (l *IPRateLimiter) Stop() {
 	close(l.stopCleanup)
 }
 
-// CheckAndAllow checks if the given IP is within the rate limit and returns headers metadata
+// CheckAndAllow checks if the given IP is within the rate limit and burst quota
 func (l *IPRateLimiter) CheckAndAllow(ip string) (allowed bool, remaining int, resetInSec int64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -79,9 +83,11 @@ func (l *IPRateLimiter) CheckAndAllow(ip string) (allowed bool, remaining int, r
 
 	if !exists || now.After(rec.windowEnd) {
 		rec = &clientRecord{
-			count:      1,
-			violations: 0,
-			windowEnd:  now.Add(l.window),
+			count:         1,
+			violations:    0,
+			windowEnd:     now.Add(l.window),
+			burstCount:    1,
+			lastBurstTime: now,
 		}
 		l.records[ip] = rec
 		remaining = l.limit - 1
@@ -97,6 +103,23 @@ func (l *IPRateLimiter) CheckAndAllow(ip string) (allowed bool, remaining int, r
 		resetInSec = 0
 	}
 
+	// 1. Micro-burst check (2-second sub-window surge limiter)
+	if now.Sub(rec.lastBurstTime) > 2*time.Second {
+		rec.burstCount = 1
+		rec.lastBurstTime = now
+	} else {
+		rec.burstCount++
+		if l.burstLimit > 0 && rec.burstCount > l.burstLimit {
+			rec.violations++
+			if rec.violations >= 4 {
+				JailIP(ip, 15*time.Minute, "excessive micro-burst abuse")
+			}
+			remaining = 0
+			return false, remaining, resetInSec
+		}
+	}
+
+	// 2. Sliding window quota check
 	if rec.count < l.limit {
 		rec.count++
 		remaining = l.limit - rec.count
@@ -173,18 +196,18 @@ func (l *IPRateLimiter) Middleware() func(http.Handler) http.Handler {
 
 // Pre-configured standard limiters
 var (
-	// AuthRateLimiter limits sensitive login/register/reset requests (15 requests per minute as configured)
-	AuthRateLimiter = NewIPRateLimiter(15, 1*time.Minute)
+	// AuthRateLimiter limits sensitive login/register/reset requests (15 requests/min, max 5 per 2s burst)
+	AuthRateLimiter = NewIPRateLimiter(15, 5, 1*time.Minute)
 
-	// OTPRateLimiter restricts rapid OTP generation requests (4 requests per 10 minutes)
-	OTPRateLimiter = NewIPRateLimiter(4, 10*time.Minute)
+	// OTPRateLimiter restricts rapid OTP generation requests (4 requests/10min, max 2 per 2s burst)
+	OTPRateLimiter = NewIPRateLimiter(4, 2, 10*time.Minute)
 
-	// MutationRateLimiter protects database writes like placing orders or product mutations (30 per minute)
-	MutationRateLimiter = NewIPRateLimiter(30, 1*time.Minute)
+	// MutationRateLimiter protects database writes like placing orders or product mutations (30/min, max 8 per 2s burst)
+	MutationRateLimiter = NewIPRateLimiter(30, 8, 1*time.Minute)
 
-	// UploadRateLimiter limits heavy image uploads to Cloudflare R2 (20 uploads per minute)
-	UploadRateLimiter = NewIPRateLimiter(20, 1*time.Minute)
+	// UploadRateLimiter limits heavy image uploads to Cloudflare R2 (20 uploads/min, max 5 per 2s burst)
+	UploadRateLimiter = NewIPRateLimiter(20, 5, 1*time.Minute)
 
-	// GlobalRateLimiter protects the API from aggressive scraping or DoS (100 requests per minute)
-	GlobalRateLimiter = NewIPRateLimiter(100, 1*time.Minute)
+	// GlobalRateLimiter protects the API from aggressive scraping or DoS (100 requests/min, max 25 per 2s burst)
+	GlobalRateLimiter = NewIPRateLimiter(100, 25, 1*time.Minute)
 )

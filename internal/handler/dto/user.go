@@ -4,8 +4,9 @@ package dto
 import "shopMe/internal/handler/model"
 
 type SendPhoneOTPRequest struct {
-	Phone   string `json:"phone" validate:"required,min=10,max=20"`
-	Channel string `json:"channel,omitempty" validate:"omitempty,oneof=whatsapp sms"` // defaults to whatsapp
+	Phone    string `json:"phone" validate:"required,min=10,max=20"`
+	Channel  string `json:"channel,omitempty" validate:"omitempty,oneof=whatsapp sms"` // defaults to whatsapp
+	Honeypot string `json:"website_url,omitempty"`                                     // Honeypot trap field
 }
 
 type SendPhoneOTPResponse struct {
@@ -35,6 +36,7 @@ type UserRegisterRequest struct {
 	Phone             string `json:"phone" validate:"omitempty,min=10,max=20"`
 	VerificationToken string `json:"verification_token,omitempty"`
 	Role              string `json:"role,omitempty"`
+	Honeypot          string `json:"website_url,omitempty"` // Honeypot trap field
 }
 
 type RegisterResponse struct {
@@ -46,6 +48,7 @@ type UserLoginRequest struct {
 	Email    string `json:"email" validate:"required"` // supports email or mobile phone
 	Password string `json:"password" validate:"required"`
 	Role     string `json:"role,omitempty"`
+	Honeypot string `json:"website_url,omitempty"` // Honeypot trap field
 }
 
 type GoogleLoginRequest struct {

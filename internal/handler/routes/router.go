@@ -121,6 +121,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	r.Use(chimw.RequestID)
 	r.Use(chimw.RealIP)
 	r.Use(middleware.BotGuard)
+	r.Use(middleware.BodySizeGuard(2 << 20))
 	r.Use(chimw.Compress(5))
 	r.Use(middleware.GlobalRateLimiter.Middleware())
 	r.Use(middleware.BanGuard(modRepo))

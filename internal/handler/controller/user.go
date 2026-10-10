@@ -38,6 +38,11 @@ func (c *UserController) SendRegistrationOTP(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if !middleware.ValidateHoneypot(input.Honeypot, middleware.ExtractIP(r)) {
+		reuse.Error(w, http.StatusBadRequest, "invalid request submission")
+		return
+	}
+
 	if c.service == nil {
 		reuse.Error(w, http.StatusBadRequest, "service uninitialized")
 		return
@@ -109,6 +114,11 @@ func (c *UserController) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !middleware.ValidateHoneypot(input.Honeypot, middleware.ExtractIP(r)) {
+		reuse.Error(w, http.StatusBadRequest, "invalid request submission")
+		return
+	}
+
 	if c.service == nil {
 		reuse.Error(w, http.StatusBadRequest, "service uninitialized")
 		return
@@ -143,6 +153,11 @@ func (c *UserController) Login(w http.ResponseWriter, r *http.Request) {
 
 	if err := reuse.ValidateStruct(&input); err != nil {
 		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if !middleware.ValidateHoneypot(input.Honeypot, middleware.ExtractIP(r)) {
+		reuse.Error(w, http.StatusBadRequest, "invalid request submission")
 		return
 	}
 
