@@ -530,16 +530,20 @@ func (c *ProductController) BulkImport(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var file io.ReadCloser
-		for _, key := range []string{"file", "csv", "data", "upload", "spreadsheet"} {
-			if f, _, err := r.FormFile(key); err == nil && f != nil {
+		var fileName string
+		for _, key := range []string{"file", "csv", "excel", "data", "upload", "spreadsheet"} {
+			if f, header, err := r.FormFile(key); err == nil && f != nil {
 				file = f
+				if header != nil {
+					fileName = header.Filename
+				}
 				break
 			}
 		}
 
 		if file != nil {
 			defer file.Close()
-			res, err := c.productService.BulkImportProductsFromCSV(r.Context(), claims.UserID, file, updateExisting)
+			res, err := c.productService.BulkImportProductsFromFile(r.Context(), claims.UserID, fileName, file, updateExisting)
 			if err != nil {
 				if errors.Is(err, services.ErrShopNotFound) {
 					reuse.Error(w, http.StatusNotFound, "you must register a shop first")
@@ -548,7 +552,7 @@ func (c *ProductController) BulkImport(w http.ResponseWriter, r *http.Request) {
 				reuse.Error(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			reuse.Created(w, "Bulk product CSV import completed successfully", res)
+			reuse.Created(w, "Bulk product import completed successfully", res)
 			return
 		}
 	}
@@ -567,7 +571,26 @@ func (c *ProductController) BulkImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Check if body is raw CSV text (Content-Type: text/csv or begins with plain CSV text)
+	// 3. Check if body is raw Excel (.xlsx) or CSV
+	isRawExcel := bytes.HasPrefix(trimmed, []byte("PK\x03\x04")) ||
+		strings.Contains(contentType, "spreadsheet") ||
+		strings.Contains(contentType, "vnd.openxmlformats")
+
+	if isRawExcel {
+		res, err := c.productService.BulkImportProductsFromExcel(r.Context(), claims.UserID, bytes.NewReader(bodyBytes), updateExisting)
+		if err != nil {
+			if errors.Is(err, services.ErrShopNotFound) {
+				reuse.Error(w, http.StatusNotFound, "you must register a shop first")
+				return
+			}
+			reuse.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		reuse.Created(w, "Bulk product Excel import completed successfully", res)
+		return
+	}
+
+	// Check if body is raw CSV text (Content-Type: text/csv or begins with plain CSV text)
 	isRawCSV := strings.Contains(contentType, "text/csv") ||
 		strings.Contains(contentType, "text/plain") ||
 		(trimmed[0] != '{' && trimmed[0] != '[') ||
@@ -739,10 +762,23 @@ func getMapInt(m map[string]interface{}, keys ...string) int {
 	return 0
 }
 
-// DownloadImportTemplate serves a ready-to-use sample CSV import template file (Protected / Public)
+// DownloadImportTemplate serves a ready-to-use sample CSV or Excel import template file (Protected / Public)
 func (c *ProductController) DownloadImportTemplate(w http.ResponseWriter, r *http.Request) {
-	csvBytes := c.productService.GenerateCSVImportTemplate()
+	format := strings.ToLower(r.URL.Query().Get("format"))
+	if format == "xlsx" || format == "excel" || strings.HasSuffix(strings.ToLower(r.URL.Path), ".xlsx") {
+		excelBytes, err := c.productService.GenerateExcelImportTemplate()
+		if err != nil {
+			reuse.Error(w, http.StatusInternalServerError, "failed to generate Excel template: "+err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+		w.Header().Set("Content-Disposition", `attachment; filename="shopsilo_products_import_template.xlsx"`)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(excelBytes)
+		return
+	}
 
+	csvBytes := c.productService.GenerateCSVImportTemplate()
 	w.Header().Set("Content-Type", "text/csv")
 	w.Header().Set("Content-Disposition", `attachment; filename="shopsilo_products_import_template.csv"`)
 	w.WriteHeader(http.StatusOK)

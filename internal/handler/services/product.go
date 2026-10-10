@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"github.com/xuri/excelize/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -723,56 +724,40 @@ func generateDealCode() string {
 	return string(b)
 }
 
-// BulkImportProductsFromCSV parses CSV bytes and bulk imports products into shop catalog in batch.
-func (s *ProductService) BulkImportProductsFromCSV(ctx context.Context, userID string, csvReader io.Reader, updateExisting bool) (*dto.BulkImportResponse, error) {
-	shop, err := s.shopRepo.FindByUserID(ctx, userID)
-	if err != nil {
-		return nil, ErrShopNotFound
+// Helper to clean number strings containing currency symbols
+func cleanImportNumber(val string) string {
+	v := strings.TrimSpace(val)
+	v = strings.ReplaceAll(v, "₹", "")
+	v = strings.ReplaceAll(v, "Rs.", "")
+	v = strings.ReplaceAll(v, "Rs", "")
+	v = strings.ReplaceAll(v, "INR", "")
+	v = strings.ReplaceAll(v, ",", "")
+	return strings.TrimSpace(v)
+}
+
+// Helper to normalize SKU string, handling scientific notation from Excel (e.g. 8.90103E+12)
+func cleanImportSKU(val string) string {
+	s := strings.TrimSpace(val)
+	if strings.Contains(s, "E+") || strings.Contains(s, "e+") {
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return fmt.Sprintf("%.0f", f)
+		}
 	}
+	return s
+}
 
-	rawBytes, err := io.ReadAll(csvReader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read CSV data: %w", err)
-	}
-
-	// Strip UTF-8 BOM if present
-	if len(rawBytes) >= 3 && rawBytes[0] == 0xEF && rawBytes[1] == 0xBB && rawBytes[2] == 0xBF {
-		rawBytes = rawBytes[3:]
-	}
-
-	// Delimiter detection: check for semicolon or tab if comma isn't prominent
-	commaCount := bytes.Count(rawBytes, []byte(","))
-	semiCount := bytes.Count(rawBytes, []byte(";"))
-	tabCount := bytes.Count(rawBytes, []byte("\t"))
-
-	var delimiter rune = ','
-	if semiCount > commaCount && semiCount > tabCount {
-		delimiter = ';'
-	} else if tabCount > commaCount && tabCount > semiCount {
-		delimiter = '\t'
-	}
-
-	reader := csv.NewReader(bytes.NewReader(rawBytes))
-	reader.Comma = delimiter
-	reader.TrimLeadingSpace = true
-	reader.FieldsPerRecord = -1 // flexible column count per row
-
-	records, err := reader.ReadAll()
-	if err != nil {
-		return nil, fmt.Errorf("invalid CSV file format: %w", err)
-	}
-
+// parseRecordsToImportItems extracts product items from a 2D grid of CSV/Excel cells.
+func parseRecordsToImportItems(records [][]string) []dto.BulkImportProductItem {
 	if len(records) <= 1 {
-		return nil, errors.New("CSV file is empty or missing data rows")
+		return nil
 	}
 
-	// Identify header positions
 	header := records[0]
 	nameCol, skuCol, priceCol, costCol, compareCol, stockCol, minStockCol, catCol, unitCol, descCol := -1, -1, -1, -1, -1, -1, -1, -1, -1, -1
 
 	for i, h := range header {
 		cleanH := strings.ToLower(strings.TrimSpace(h))
-		if strings.Contains(cleanH, "name") || strings.Contains(cleanH, "title") || strings.Contains(cleanH, "item") || strings.Contains(cleanH, "saman") {
+		if strings.Contains(cleanH, "name") || strings.Contains(cleanH, "title") || strings.Contains(cleanH, "item") || strings.Contains(cleanH, "saman") || strings.Contains(cleanH, "product") {
 			nameCol = i
 		} else if strings.Contains(cleanH, "sku") || strings.Contains(cleanH, "code") || strings.Contains(cleanH, "barcode") || strings.Contains(cleanH, "upc") || strings.Contains(cleanH, "ean") {
 			skuCol = i
@@ -806,26 +791,6 @@ func (s *ProductService) BulkImportProductsFromCSV(ctx context.Context, userID s
 		priceCol = 1
 	}
 
-	cleanNumber := func(val string) string {
-		v := strings.TrimSpace(val)
-		v = strings.ReplaceAll(v, "₹", "")
-		v = strings.ReplaceAll(v, "Rs.", "")
-		v = strings.ReplaceAll(v, "Rs", "")
-		v = strings.ReplaceAll(v, "INR", "")
-		v = strings.ReplaceAll(v, ",", "")
-		return strings.TrimSpace(v)
-	}
-
-	cleanSKU := func(val string) string {
-		s := strings.TrimSpace(val)
-		if strings.Contains(s, "E+") || strings.Contains(s, "e+") {
-			if f, err := strconv.ParseFloat(s, 64); err == nil {
-				return fmt.Sprintf("%.0f", f)
-			}
-		}
-		return s
-	}
-
 	var items []dto.BulkImportProductItem
 
 	for _, row := range records[1:] {
@@ -839,10 +804,10 @@ func (s *ProductService) BulkImportProductsFromCSV(ctx context.Context, userID s
 			item.Name = strings.TrimSpace(row[nameCol])
 		}
 		if skuCol != -1 && skuCol < len(row) {
-			item.SKU = cleanSKU(row[skuCol])
+			item.SKU = cleanImportSKU(row[skuCol])
 		}
 		if priceCol < len(row) {
-			pVal, _ := strconv.ParseFloat(cleanNumber(row[priceCol]), 64)
+			pVal, _ := strconv.ParseFloat(cleanImportNumber(row[priceCol]), 64)
 			if pVal <= 0 {
 				pVal = 10.0 // Default price
 			}
@@ -851,21 +816,21 @@ func (s *ProductService) BulkImportProductsFromCSV(ctx context.Context, userID s
 			item.Price = 10.0
 		}
 		if costCol != -1 && costCol < len(row) {
-			cVal, _ := strconv.ParseFloat(cleanNumber(row[costCol]), 64)
+			cVal, _ := strconv.ParseFloat(cleanImportNumber(row[costCol]), 64)
 			item.CostPrice = cVal
 		}
 		if compareCol != -1 && compareCol < len(row) {
-			cmpVal, _ := strconv.ParseFloat(cleanNumber(row[compareCol]), 64)
+			cmpVal, _ := strconv.ParseFloat(cleanImportNumber(row[compareCol]), 64)
 			item.ComparePrice = cmpVal
 		}
 		if stockCol != -1 && stockCol < len(row) {
-			sVal, _ := strconv.Atoi(cleanNumber(row[stockCol]))
+			sVal, _ := strconv.Atoi(cleanImportNumber(row[stockCol]))
 			item.StockQuantity = sVal
 		} else {
 			item.StockQuantity = 10
 		}
 		if minStockCol != -1 && minStockCol < len(row) {
-			mVal, _ := strconv.Atoi(cleanNumber(row[minStockCol]))
+			mVal, _ := strconv.Atoi(cleanImportNumber(row[minStockCol]))
 			item.MinStock = mVal
 		}
 		if catCol != -1 && catCol < len(row) {
@@ -883,7 +848,114 @@ func (s *ProductService) BulkImportProductsFromCSV(ctx context.Context, userID s
 		}
 	}
 
+	return items
+}
+
+// BulkImportProductsFromCSV parses CSV bytes and bulk imports products into shop catalog in batch.
+func (s *ProductService) BulkImportProductsFromCSV(ctx context.Context, userID string, csvReader io.Reader, updateExisting bool) (*dto.BulkImportResponse, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, userID)
+	if err != nil {
+		return nil, ErrShopNotFound
+	}
+
+	rawBytes, err := io.ReadAll(csvReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read CSV data: %w", err)
+	}
+
+	// Strip UTF-8 BOM if present
+	if len(rawBytes) >= 3 && rawBytes[0] == 0xEF && rawBytes[1] == 0xBB && rawBytes[2] == 0xBF {
+		rawBytes = rawBytes[3:]
+	}
+
+	// Delimiter detection: check for semicolon or tab if comma isn't prominent
+	commaCount := bytes.Count(rawBytes, []byte(","))
+	semiCount := bytes.Count(rawBytes, []byte(";"))
+	tabCount := bytes.Count(rawBytes, []byte("	"))
+
+	var delimiter rune = ','
+	if semiCount > commaCount && semiCount > tabCount {
+		delimiter = ';'
+	} else if tabCount > commaCount && tabCount > semiCount {
+		delimiter = '	'
+	}
+
+	reader := csv.NewReader(bytes.NewReader(rawBytes))
+	reader.Comma = delimiter
+	reader.TrimLeadingSpace = true
+	reader.FieldsPerRecord = -1 // flexible column count per row
+
+	records, err := reader.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("invalid CSV file format: %w", err)
+	}
+
+	if len(records) <= 1 {
+		return nil, errors.New("CSV file is empty or missing data rows")
+	}
+
+	items := parseRecordsToImportItems(records)
+	if len(items) == 0 {
+		return nil, errors.New("no valid product rows found in CSV")
+	}
+
 	return s.productRepo.BulkImportProducts(ctx, shop.ID, items, updateExisting)
+}
+
+// BulkImportProductsFromExcel parses Excel (.xlsx) data and bulk imports products into shop catalog.
+func (s *ProductService) BulkImportProductsFromExcel(ctx context.Context, userID string, excelReader io.Reader, updateExisting bool) (*dto.BulkImportResponse, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, userID)
+	if err != nil {
+		return nil, ErrShopNotFound
+	}
+
+	f, err := excelize.OpenReader(excelReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse Excel file: %w", err)
+	}
+	defer f.Close()
+
+	sheets := f.GetSheetList()
+	if len(sheets) == 0 {
+		return nil, errors.New("Excel workbook contains no sheets")
+	}
+
+	// Read rows from the first sheet
+	records, err := f.GetRows(sheets[0])
+	if err != nil {
+		return nil, fmt.Errorf("failed to read Excel rows: %w", err)
+	}
+
+	if len(records) <= 1 {
+		return nil, errors.New("Excel sheet is empty or contains no product rows")
+	}
+
+	items := parseRecordsToImportItems(records)
+	if len(items) == 0 {
+		return nil, errors.New("no valid product rows found in Excel sheet")
+	}
+
+	return s.productRepo.BulkImportProducts(ctx, shop.ID, items, updateExisting)
+}
+
+// BulkImportProductsFromFile automatically detects CSV vs Excel format and imports products.
+func (s *ProductService) BulkImportProductsFromFile(ctx context.Context, userID string, filename string, fileReader io.Reader, updateExisting bool) (*dto.BulkImportResponse, error) {
+	rawBytes, err := io.ReadAll(fileReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read uploaded file: %w", err)
+	}
+
+	lowerName := strings.ToLower(filename)
+	isExcel := strings.HasSuffix(lowerName, ".xlsx") ||
+		strings.HasSuffix(lowerName, ".xlsm") ||
+		strings.HasSuffix(lowerName, ".xls") ||
+		bytes.HasPrefix(rawBytes, []byte("PK"))
+
+	if isExcel {
+		return s.BulkImportProductsFromExcel(ctx, userID, bytes.NewReader(rawBytes), updateExisting)
+	}
+
+	return s.BulkImportProductsFromCSV(ctx, userID, bytes.NewReader(rawBytes), updateExisting)
 }
 
 // BulkImportProductsFromJSON bulk imports products provided via JSON array.
@@ -895,16 +967,78 @@ func (s *ProductService) BulkImportProductsFromJSON(ctx context.Context, userID 
 	return s.productRepo.BulkImportProducts(ctx, shop.ID, items, updateExisting)
 }
 
-
-
 // GenerateCSVImportTemplate returns a ready-to-use sample CSV template for shopkeepers.
 func (s *ProductService) GenerateCSVImportTemplate() []byte {
-	template := "Name,SKU,Price,CostPrice,StockQuantity,MinStock,Description\n" +
-		"Aashirvaad Shuddh Chakki Atta 5kg,ATT-5KG,245.00,210.00,50,5,5kg Whole Wheat Flour Pack\n" +
-		"Fortune Sunlite Refined Oil 1L,OIL-1L,135.00,115.00,40,5,1 Liter Pouch\n" +
-		"Tata Salt Iodized 1kg,SALT-1KG,28.00,22.00,100,10,1kg Vacuum Evaporated Iodized Salt\n" +
-		"Dettol Original Soap 125g,DET-125G,55.00,45.00,60,8,Antiseptic Bathing Bar\n" +
-		"Maggi 2-Minute Masala Noodles 70g,MAG-70G,14.00,11.50,120,15,Instant Noodles Pack\n"
-
+	template := `Name,SKU,Price,CostPrice,ComparePrice,StockQuantity,MinStock,Category,Unit,Description
+Aashirvaad Shuddh Chakki Atta 5kg,ATT-5KG,245.00,210.00,270.00,50,5,Atta & Flour,kg,5kg Whole Wheat Flour Pack
+Fortune Sunlite Refined Oil 1L,OIL-1L,135.00,115.00,150.00,40,5,Oils & Ghee,L,1 Liter Pouch
+Tata Salt Iodized 1kg,SALT-1KG,28.00,22.00,30.00,100,10,Masalas & Spices,kg,1kg Vacuum Evaporated Iodized Salt
+Dettol Original Soap 125g,DET-125G,55.00,45.00,60.00,60,8,Personal Care,pcs,Antiseptic Bathing Bar
+Maggi 2-Minute Masala Noodles 70g,MAG-70G,14.00,11.50,15.00,120,15,Snacks & Instant,pack,Instant Noodles Pack
+`
 	return []byte(template)
+}
+
+// GenerateExcelImportTemplate creates a professionally formatted sample Excel spreadsheet.
+func (s *ProductService) GenerateExcelImportTemplate() ([]byte, error) {
+	f := excelize.NewFile()
+	defer f.Close()
+
+	sheet := "Products"
+	f.SetSheetName("Sheet1", sheet)
+
+	headers := []string{
+		"Product Name *", "SKU / Barcode", "Selling Price (₹) *", "Cost Price (₹)",
+		"MRP / Compare Price (₹)", "Stock Quantity", "Min Stock Alert", "Category", "Unit", "Description",
+	}
+
+	// Write header row
+	for colIdx, h := range headers {
+		cell, _ := excelize.CoordinatesToCellName(colIdx+1, 1)
+		_ = f.SetCellValue(sheet, cell, h)
+	}
+
+	// Style header
+	headerStyle, err := f.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Bold: true, Color: "#FFFFFF", Size: 11},
+		Fill: excelize.Fill{Type: "pattern", Color: []string{"#2563EB"}, Pattern: 1},
+		Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center"},
+	})
+	if err == nil {
+		_ = f.SetRowStyle(sheet, 1, 1, headerStyle)
+	}
+	_ = f.SetRowHeight(sheet, 1, 26)
+
+	// Sample rows
+	sampleData := [][]interface{}{
+		{"Aashirvaad Shuddh Chakki Atta 5kg", "ATT-5KG", 245.00, 210.00, 270.00, 50, 5, "Atta & Flour", "kg", "5kg Whole Wheat Flour Pack"},
+		{"Fortune Sunlite Refined Oil 1L", "OIL-1L", 135.00, 115.00, 150.00, 40, 5, "Oils & Ghee", "L", "1 Liter Pouch"},
+		{"Tata Salt Iodized 1kg", "SALT-1KG", 28.00, 22.00, 30.00, 100, 10, "Masalas & Spices", "kg", "1kg Vacuum Evaporated Iodized Salt"},
+		{"Dettol Original Soap 125g", "DET-125G", 55.00, 45.00, 60.00, 60, 8, "Personal Care", "pcs", "Antiseptic Bathing Bar"},
+		{"Maggi 2-Minute Masala Noodles 70g", "MAG-70G", 14.00, 11.50, 15.00, 120, 15, "Snacks & Instant", "pack", "Instant Noodles Pack"},
+	}
+
+	for rowIdx, rowData := range sampleData {
+		rNum := rowIdx + 2
+		for colIdx, val := range rowData {
+			cell, _ := excelize.CoordinatesToCellName(colIdx+1, rNum)
+			_ = f.SetCellValue(sheet, cell, val)
+		}
+		_ = f.SetRowHeight(sheet, rNum, 20)
+	}
+
+	// Set column widths
+	colWidths := map[string]float64{
+		"A": 36, "B": 18, "C": 18, "D": 16, "E": 22,
+		"F": 16, "G": 16, "H": 20, "I": 12, "J": 36,
+	}
+	for col, width := range colWidths {
+		_ = f.SetColWidth(sheet, col, col, width)
+	}
+
+	buf, err := f.WriteToBuffer()
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
