@@ -254,7 +254,8 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/shops/me/analytics/products", ac.GetProductMatrix)   // Shop
 
 		// Shop Counter POS & Digital Receipts
-		r.Post("/shops/me/pos/sale", posc.CreateSale)                               // Shop
+		r.Post("/shops/me/pos/sale", posc.CreateSale)
+		r.Get("/shops/me/pos/sales", posc.ListSales)                                 // Shop                               // Shop
 		r.Post("/shops/me/pos/sales/{billNumber}/cancel", posc.CancelBill)          // Shop
 		r.Get("/shops/me/pos/daily-summary", posc.GetDailySummary)                  // Shop
 		r.Get("/shops/me/pos/summary", posc.GetDailySummary)                        // Shop

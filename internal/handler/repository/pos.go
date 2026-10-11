@@ -121,8 +121,15 @@ func (r *POSRepo) CreateSaleWithTx(ctx context.Context, tx pgx.Tx, bill *model.P
 	batch := &pgx.Batch{}
 	for _, item := range bill.Items {
 		item.BillID = bill.ID
-		batch.Queue(itemInsertQuery, item.BillID, item.ProductID, item.ProductName, item.ProductSKU, item.Quantity, item.UnitPrice, item.UnitCost, item.TotalPrice)
-		batch.Queue(stockDeductQuery, item.Quantity, item.ProductID)
+		var pidParam interface{} = nil
+		trimmedPID := strings.TrimSpace(item.ProductID)
+		if trimmedPID != "" && !strings.HasPrefix(trimmedPID, "custom_") {
+			pidParam = trimmedPID
+		}
+		batch.Queue(itemInsertQuery, item.BillID, pidParam, item.ProductName, item.ProductSKU, item.Quantity, item.UnitPrice, item.UnitCost, item.TotalPrice)
+		if pidParam != nil {
+			batch.Queue(stockDeductQuery, item.Quantity, pidParam)
+		}
 	}
 
 	br := tx.SendBatch(ctx, batch)
@@ -133,9 +140,12 @@ func (r *POSRepo) CreateSaleWithTx(ctx context.Context, tx pgx.Tx, bill *model.P
 			r.logger.Error("failed to insert pos bill item in batch", zap.Error(err))
 			return nil, 0, 0, err
 		}
-		if _, err := br.Exec(); err != nil {
-			r.logger.Error("failed to deduct inventory on pos sale in batch", zap.Error(err), zap.String("product_id", item.ProductID))
-			return nil, 0, 0, err
+		trimmedPID := strings.TrimSpace(item.ProductID)
+		if trimmedPID != "" && !strings.HasPrefix(trimmedPID, "custom_") {
+			if _, err := br.Exec(); err != nil {
+				r.logger.Error("failed to deduct inventory on pos sale in batch", zap.Error(err), zap.String("product_id", item.ProductID))
+				return nil, 0, 0, err
+			}
 		}
 	}
 
@@ -840,3 +850,139 @@ func (r *POSRepo) CancelBillWithTx(ctx context.Context, tx pgx.Tx, shopID, billN
 
 
 
+
+// ListBills retrieves paginated POS bills with total sales metrics and items.
+func (r *POSRepo) ListBills(ctx context.Context, shopID string, page, limit int, dateFilter string) (*dto.POSBillListResponse, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 50
+	}
+	offset := (page - 1) * limit
+
+	var whereClause strings.Builder
+	whereClause.WriteString("WHERE b.shop_id = $1")
+	args := []interface{}{shopID}
+	argIdx := 2
+
+	now := time.Now()
+	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	endOfToday := startOfToday.Add(24 * time.Hour)
+
+	if dateFilter == "today" {
+		whereClause.WriteString(fmt.Sprintf(" AND b.created_at >= $%d AND b.created_at < $%d", argIdx, argIdx+1))
+		args = append(args, startOfToday, endOfToday)
+		argIdx += 2
+	} else if dateFilter != "" && dateFilter != "all" {
+		if t, err := time.Parse("2006-01-02", dateFilter); err == nil {
+			start := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, now.Location())
+			end := start.Add(24 * time.Hour)
+			whereClause.WriteString(fmt.Sprintf(" AND b.created_at >= $%d AND b.created_at < $%d", argIdx, argIdx+1))
+			args = append(args, start, end)
+			argIdx += 2
+		}
+	}
+
+	// 1. Get today's total metrics
+	var todayBills int
+	var todaySales float64
+	todayQuery := `
+		SELECT COUNT(*), COALESCE(SUM(total_amount), 0)
+		FROM pos_bills
+		WHERE shop_id = $1 AND created_at >= $2 AND created_at < $3
+	`
+	_ = r.db.QueryRow(ctx, todayQuery, shopID, startOfToday, endOfToday).Scan(&todayBills, &todaySales)
+
+	// 2. Count total bills matching filter
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM pos_bills b %s", whereClause.String())
+	var totalCount int
+	err := r.db.QueryRow(ctx, countQuery, args...).Scan(&totalCount)
+	if err != nil {
+		r.logger.Error("failed to count pos bills", zap.Error(err))
+		return nil, err
+	}
+
+	// 3. Query bills with items aggregated as JSON
+	query := fmt.Sprintf(`
+		SELECT 
+			b.id,
+			b.bill_number,
+			COALESCE(b.customer_phone, ''),
+			COALESCE(u.name, 'Walk-in Customer'),
+			b.subtotal,
+			b.discount_amount,
+			b.total_amount,
+			b.payment_method,
+			'completed' AS status,
+			TO_CHAR(b.created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+			COUNT(i.id) AS items_count,
+			COALESCE(json_agg(json_build_object(
+				'id', i.id,
+				'bill_id', i.bill_id,
+				'product_id', COALESCE(i.product_id::text, ''),
+				'product_name', i.product_name,
+				'product_sku', COALESCE(i.product_sku, ''),
+				'quantity', i.quantity,
+				'unit_price', i.unit_price,
+				'unit_cost', i.unit_cost,
+				'total_price', i.total_price
+			)) FILTER (WHERE i.id IS NOT NULL), '[]'::json) AS items_json
+		FROM pos_bills b
+		LEFT JOIN users u ON b.customer_user_id = u.id
+		LEFT JOIN pos_bill_items i ON b.id = i.bill_id
+		%s
+		GROUP BY b.id, u.name
+		ORDER BY b.created_at DESC
+		LIMIT $%d OFFSET $%d
+	`, whereClause.String(), argIdx, argIdx+1)
+
+	args = append(args, limit, offset)
+
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		r.logger.Error("failed to list pos bills", zap.Error(err))
+		return nil, err
+	}
+	defer rows.Close()
+
+	bills := make([]*dto.POSBillSummaryItem, 0, limit)
+	for rows.Next() {
+		item := &dto.POSBillSummaryItem{}
+		var itemsJson []byte
+		err := rows.Scan(
+			&item.ID,
+			&item.BillNumber,
+			&item.CustomerPhone,
+			&item.CustomerName,
+			&item.Subtotal,
+			&item.DiscountAmount,
+			&item.TotalAmount,
+			&item.PaymentMethod,
+			&item.Status,
+			&item.CreatedAt,
+			&item.ItemsCount,
+			&itemsJson,
+		)
+		if err != nil {
+			r.logger.Error("failed to scan pos bill summary", zap.Error(err))
+			return nil, err
+		}
+
+		if len(itemsJson) > 0 {
+			var billItems []*model.POSBillItem
+			if err := json.Unmarshal(itemsJson, &billItems); err == nil {
+				item.Items = billItems
+			}
+		}
+
+		bills = append(bills, item)
+	}
+
+	return &dto.POSBillListResponse{
+		Bills:      bills,
+		TotalCount: totalCount,
+		TotalSales: todaySales,
+		TodayBills: todayBills,
+	}, nil
+}

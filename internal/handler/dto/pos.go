@@ -4,8 +4,10 @@ package dto
 import "shopMe/internal/handler/model"
 
 type POSSaleItemRequest struct {
-	ProductID   string   `json:"product_id" validate:"required,uuid"`
+	ProductID   string   `json:"product_id,omitempty"`
+	Name        string   `json:"name,omitempty"`
 	Quantity    int      `json:"quantity" validate:"required,gt=0"`
+	UnitPrice   float64  `json:"unit_price,omitempty" validate:"omitempty,gte=0"`
 	CustomPrice *float64 `json:"custom_price,omitempty" validate:"omitempty,gte=0"`
 	VariantSize string   `json:"variant_size,omitempty"` // Selected size option e.g. "1 kg", "5 kg"
 }
@@ -253,4 +255,26 @@ type ProcessPOSReturnResponse struct {
 	ProcessedAt         string  `json:"processed_at"`
 }
 
+// POSBillSummaryItem represents a clean sale item for listing and history screens.
+type POSBillSummaryItem struct {
+	ID             string              `json:"id"`
+	BillNumber     string              `json:"bill_number"`
+	CustomerPhone  string              `json:"customer_phone,omitempty"`
+	CustomerName   string              `json:"customer_name,omitempty"`
+	Subtotal       float64             `json:"subtotal"`
+	DiscountAmount float64             `json:"discount_amount"`
+	TotalAmount    float64             `json:"total_amount"`
+	PaymentMethod  string              `json:"payment_method"`
+	Status         string              `json:"status"`
+	CreatedAt      string              `json:"created_at"`
+	ItemsCount     int                 `json:"items_count"`
+	Items          []*model.POSBillItem `json:"items,omitempty"`
+}
 
+// POSBillListResponse provides paginated sales and today's summary metrics.
+type POSBillListResponse struct {
+	Bills      []*POSBillSummaryItem `json:"bills"`
+	TotalCount int                   `json:"total_count"`
+	TotalSales float64               `json:"total_sales"`
+	TodayBills int                   `json:"today_bills"`
+}

@@ -50,6 +50,23 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"ALTER TABLE categories ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES categories(id) ON DELETE SET NULL;",
 		"INSERT INTO categories (name, slug, description, icon, is_active) VALUES ('General Store', 'general-store', 'All grocery and general store everyday items', '??', true) ON CONFLICT (slug) DO NOTHING;",
 
+				// POS Bills & Sales table enhancements
+		"ALTER TABLE pos_bills ADD COLUMN IF NOT EXISTS customer_user_id UUID REFERENCES users(id) ON DELETE SET NULL;",
+		"ALTER TABLE pos_bills ADD COLUMN IF NOT EXISTS subtotal DECIMAL(10, 2) DEFAULT 0;",
+		"ALTER TABLE pos_bills ADD COLUMN IF NOT EXISTS discount_amount DECIMAL(10, 2) DEFAULT 0;",
+		"ALTER TABLE pos_bills ADD COLUMN IF NOT EXISTS total_cost DECIMAL(10, 2) DEFAULT 0;",
+		"ALTER TABLE pos_bills ADD COLUMN IF NOT EXISTS cash_amount DECIMAL(10, 2) DEFAULT 0;",
+		"ALTER TABLE pos_bills ADD COLUMN IF NOT EXISTS online_amount DECIMAL(10, 2) DEFAULT 0;",
+		"ALTER TABLE pos_bills ADD COLUMN IF NOT EXISTS khata_amount DECIMAL(10, 2) DEFAULT 0;",
+		"ALTER TABLE pos_bills ADD COLUMN IF NOT EXISTS cancellation_reason TEXT;",
+		"ALTER TABLE pos_bills ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP;",
+		"ALTER TABLE pos_bills ALTER COLUMN cashier_user_id DROP NOT NULL;",
+
+		// POS Bill Items enhancements
+		"ALTER TABLE pos_bill_items ADD COLUMN IF NOT EXISTS product_sku VARCHAR(100) DEFAULT '';",
+		"ALTER TABLE pos_bill_items ADD COLUMN IF NOT EXISTS unit_cost DECIMAL(10, 2) DEFAULT 0;",
+		"ALTER TABLE pos_bill_items ALTER COLUMN product_id DROP NOT NULL;",
+
 		// Khata table enhancements
 		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS customer_id UUID;",
 		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS customer_mobile VARCHAR(20);",

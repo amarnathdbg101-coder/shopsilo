@@ -60,8 +60,10 @@ func normalizePOSItems(items []dto.POSSaleItemRequest) ([]dto.POSSaleItemRequest
 	seen := make(map[string]int, len(items))
 
 	for _, it := range items {
-		if strings.TrimSpace(it.ProductID) == "" {
-			return nil, errors.New("product id is required for every bill item")
+		cleanPID := strings.TrimSpace(it.ProductID)
+		cleanName := strings.TrimSpace(it.Name)
+		if cleanPID == "" && cleanName == "" {
+			return nil, errors.New("product id or item name is required for every bill item")
 		}
 		if it.Quantity <= 0 {
 			return nil, errors.New("item quantity must be greater than zero")
@@ -70,10 +72,15 @@ func normalizePOSItems(items []dto.POSSaleItemRequest) ([]dto.POSSaleItemRequest
 			return nil, errors.New("custom price cannot be negative")
 		}
 
-		if idx, exists := seen[it.ProductID]; exists {
+		key := cleanPID
+		if key == "" || strings.HasPrefix(key, "custom_") {
+			key = "custom:" + cleanName
+		}
+
+		if idx, exists := seen[key]; exists {
 			current := &normalized[idx]
 			if current.CustomPrice != nil && it.CustomPrice != nil && *current.CustomPrice != *it.CustomPrice {
-				return nil, fmt.Errorf("conflicting custom prices for product %s in the same cart", it.ProductID)
+				return nil, fmt.Errorf("conflicting custom prices for item '%s' in the same cart", cleanName)
 			}
 			if it.CustomPrice != nil {
 				current.CustomPrice = it.CustomPrice
@@ -83,7 +90,7 @@ func normalizePOSItems(items []dto.POSSaleItemRequest) ([]dto.POSSaleItemRequest
 		}
 
 		normalized = append(normalized, it)
-		seen[it.ProductID] = len(normalized) - 1
+		seen[key] = len(normalized) - 1
 	}
 
 	return normalized, nil
@@ -146,76 +153,105 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 	var totalCost float64
 	var redeemDealID string
 
-	// Fetch all cart products in a single optimized batch query with inventory JOIN
-	productIDs := make([]string, len(input.Items))
-	for i, it := range input.Items {
-		productIDs[i] = it.ProductID
-	}
-
-	prodsMap, err := s.productRepo.FindByIDs(ctx, shop.ID, productIDs)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch products: %w", err)
-	}
-
-	// Validate each product belongs to shop and has stock
+	// Fetch catalog products in a single optimized batch query
+	catalogProductIDs := make([]string, 0, len(input.Items))
 	for _, it := range input.Items {
-		prod, exists := prodsMap[it.ProductID]
-		if !exists {
-			return nil, fmt.Errorf("product %s not found or inactive in your shop", it.ProductID)
+		pid := strings.TrimSpace(it.ProductID)
+		if pid != "" && !strings.HasPrefix(pid, "custom_") {
+			catalogProductIDs = append(catalogProductIDs, pid)
 		}
+	}
 
-		if prod.Inventory != nil {
-			avail := prod.Inventory.Quantity - prod.Inventory.ReservedQuantity
-			if avail < it.Quantity {
-				return nil, fmt.Errorf("insufficient stock for '%s' (available: %d, requested: %d)", prod.Name, avail, it.Quantity)
+	var prodsMap map[string]*model.Product
+	if len(catalogProductIDs) > 0 {
+		var err error
+		prodsMap, err = s.productRepo.FindByIDs(ctx, shop.ID, catalogProductIDs)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch products: %w", err)
+		}
+	} else {
+		prodsMap = make(map[string]*model.Product)
+	}
+
+	// Process each item (Catalog product OR Loose/Custom item)
+	for _, it := range input.Items {
+		pid := strings.TrimSpace(it.ProductID)
+		isCustom := pid == "" || strings.HasPrefix(pid, "custom_")
+
+		var itemName string
+		var itemSKU string
+		var unitPrice float64
+		var unitCost float64
+		var validProductID string
+
+		if isCustom {
+			itemName = strings.TrimSpace(it.Name)
+			if itemName == "" {
+				itemName = "Custom Item"
 			}
-		}
-
-		unitPrice := prod.Price
-
-		if it.CustomPrice != nil {
-			if *it.CustomPrice < 0 {
-				return nil, errors.New("custom price cannot be negative")
+			itemSKU = "CUSTOM"
+			if it.CustomPrice != nil && *it.CustomPrice >= 0 {
+				unitPrice = *it.CustomPrice
+			} else if it.UnitPrice > 0 {
+				unitPrice = it.UnitPrice
+			} else {
+				return nil, errors.New("price required for custom/loose item")
 			}
-			unitPrice = *it.CustomPrice
-		}
-
-		// Check if a valid bargain deal code was supplied
-		if strings.TrimSpace(input.BargainDealCode) != "" {
-			if deal, err := s.productRepo.GetValidBargainDeal(ctx, prod.ID, input.BargainDealCode); err == nil && deal != nil {
-				unitPrice = deal.AgreedPrice
-				redeemDealID = deal.ID
+			unitCost = 0
+			validProductID = ""
+		} else {
+			prod, exists := prodsMap[pid]
+			if !exists || prod == nil {
+				return nil, fmt.Errorf("product %s not found or inactive in your shop", pid)
 			}
-		}
+			validProductID = prod.ID
+			itemName = prod.Name
+			itemSKU = prod.SKU
+			unitPrice = prod.Price
+			unitCost = prod.CostPrice
 
-		// 🛡️ Strict Loss Prevention Guardrail
-		// If merchant enters a selling price below floor_price (or below cost_price if no floor price set),
-		// reject bill creation and return a clear, protective error message preventing business loss.
-		minAllowedPrice := prod.FloorPrice
-		if minAllowedPrice <= 0 && prod.CostPrice > 0 {
-			minAllowedPrice = prod.CostPrice
-		}
-		if minAllowedPrice > 0 && unitPrice < minAllowedPrice {
-			lossPerUnit := prod.CostPrice - unitPrice
-			if lossPerUnit < 0 {
-				lossPerUnit = minAllowedPrice - unitPrice
+			if it.CustomPrice != nil {
+				if *it.CustomPrice < 0 {
+					return nil, errors.New("custom price cannot be negative")
+				}
+				unitPrice = *it.CustomPrice
 			}
-			return nil, fmt.Errorf("loss prevention alert: cannot sell '%s' at Rs.%.2f. Minimum allowed floor price is Rs.%.2f (Cost: Rs.%.2f). Selling below floor causes a loss of Rs.%.2f per unit; bill generation blocked", prod.Name, unitPrice, minAllowedPrice, prod.CostPrice, lossPerUnit)
+
+			// Check if a valid bargain deal code was supplied
+			if strings.TrimSpace(input.BargainDealCode) != "" {
+				if deal, err := s.productRepo.GetValidBargainDeal(ctx, prod.ID, input.BargainDealCode); err == nil && deal != nil {
+					unitPrice = deal.AgreedPrice
+					redeemDealID = deal.ID
+				}
+			}
+
+			// Strict Loss Prevention Guardrail
+			minAllowedPrice := prod.FloorPrice
+			if minAllowedPrice <= 0 && prod.CostPrice > 0 {
+				minAllowedPrice = prod.CostPrice
+			}
+			if minAllowedPrice > 0 && unitPrice < minAllowedPrice {
+				lossPerUnit := prod.CostPrice - unitPrice
+				if lossPerUnit < 0 {
+					lossPerUnit = minAllowedPrice - unitPrice
+				}
+				return nil, fmt.Errorf("loss prevention alert: cannot sell '%s' at Rs.%.2f. Minimum allowed floor price is Rs.%.2f (Cost: Rs.%.2f). Selling below floor causes a loss of Rs.%.2f per unit; bill generation blocked", prod.Name, unitPrice, minAllowedPrice, prod.CostPrice, lossPerUnit)
+			}
 		}
 
 		lineTotal := unitPrice * float64(it.Quantity)
-		lineCost := prod.CostPrice * float64(it.Quantity)
+		lineCost := unitCost * float64(it.Quantity)
 
 		subtotal += lineTotal
 		totalCost += lineCost
 
 		billItems = append(billItems, &model.POSBillItem{
-			ProductID:   prod.ID,
-			ProductName: prod.Name,
-			ProductSKU:  prod.SKU,
+			ProductID:   validProductID,
+			ProductName: itemName,
+			ProductSKU:  itemSKU,
 			Quantity:    it.Quantity,
 			UnitPrice:   unitPrice,
-			UnitCost:    prod.CostPrice,
+			UnitCost:    unitCost,
 			TotalPrice:  lineTotal,
 		})
 	}
@@ -998,4 +1034,16 @@ func generateCreditNoteCode() string {
 		randPart = n.Int64() + 1000
 	}
 	return fmt.Sprintf("CN-%s-%04d", time.Now().Format("060102"), randPart)
+}
+
+// ListBills returns paginated sales history with today summary metrics.
+func (s *POSService) ListBills(ctx context.Context, shopOwnerUserID string, page, limit int, dateFilter string) (*dto.POSBillListResponse, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, ErrShopNotFound
+		}
+		return nil, err
+	}
+	return s.posRepo.ListBills(ctx, shop.ID, page, limit, dateFilter)
 }

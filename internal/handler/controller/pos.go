@@ -505,3 +505,34 @@ func (c *POSController) ProcessPOSReturn(w http.ResponseWriter, r *http.Request)
 
 
 
+
+// ListSales returns paginated sales history with summary metrics (Protected - Shop)
+func (c *POSController) ListSales(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit < 1 || limit > 100 {
+		limit = 50
+	}
+	dateFilter := r.URL.Query().Get("date")
+
+	res, err := c.service.ListBills(r.Context(), claims.UserID, page, limit, dateFilter)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Sales retrieved successfully", res)
+}
