@@ -2,31 +2,111 @@ package migration
 
 import (
 	"context"
+	"embed"
 	"fmt"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
-	"github.com/golang-migrate/migrate/v4"
-	_ "github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func RunAutoMigrations(dbURL string) error {
-	m, err := migrate.New("file://internal/migration", dbURL)
+//go:embed *.sql
+var migrationFS embed.FS
+
+type migrationEntry struct {
+	version  int64
+	filename string
+	content  string
+}
+
+// RunAutoMigrations executes all pending embedded .up.sql migrations natively via pgxpool.
+// This completely eliminates runtime dependency on external filesystem paths in cloud/Docker
+// and avoids broken advisory locks with Supabase PgBouncer transaction poolers.
+func RunAutoMigrations(pool *pgxpool.Pool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	// 1. Ensure schema_migrations tracking table exists
+	_, err := pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version BIGINT PRIMARY KEY,
+			dirty BOOLEAN NOT NULL DEFAULT false
+		);
+	`)
 	if err != nil {
-		return fmt.Errorf("failed to create migration driver: %w", err)
+		return fmt.Errorf("failed to initialize schema_migrations: %w", err)
 	}
 
-	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
-		return fmt.Errorf("failed to run up migrations: %w", err)
+	// 2. Fetch applied versions
+	rows, err := pool.Query(ctx, "SELECT version FROM schema_migrations WHERE dirty = false;")
+	if err != nil {
+		return fmt.Errorf("failed to fetch schema_migrations: %w", err)
+	}
+	defer rows.Close()
+
+	applied := make(map[int64]bool)
+	for rows.Next() {
+		var v int64
+		if err := rows.Scan(&v); err == nil {
+			applied[v] = true
+		}
+	}
+
+	// 3. Read embedded migration files
+	dirEntries, err := migrationFS.ReadDir(".")
+	if err != nil {
+		return fmt.Errorf("failed to read embedded migrations: %w", err)
+	}
+
+	var pending []migrationEntry
+	for _, entry := range dirEntries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".up.sql") {
+			parts := strings.SplitN(entry.Name(), "_", 2)
+			if len(parts) > 1 {
+				v, parseErr := strconv.ParseInt(parts[0], 10, 64)
+				if parseErr == nil {
+					data, readErr := migrationFS.ReadFile(entry.Name())
+					if readErr == nil {
+						pending = append(pending, migrationEntry{
+							version:  v,
+							filename: entry.Name(),
+							content:  string(data),
+						})
+					}
+				}
+			}
+		}
+	}
+
+	// Sort migrations in ascending order
+	sort.Slice(pending, func(i, j int) bool {
+		return pending[i].version < pending[j].version
+	})
+
+	// 4. Apply unapplied migrations sequentially
+	for _, m := range pending {
+		if applied[m.version] {
+			continue
+		}
+
+		if _, err := pool.Exec(ctx, m.content); err != nil {
+			return fmt.Errorf("failed to apply migration %s: %w", m.filename, err)
+		}
+
+		_, err = pool.Exec(ctx, "INSERT INTO schema_migrations (version, dirty) VALUES ($1, false) ON CONFLICT (version) DO UPDATE SET dirty = false;", m.version)
+		if err != nil {
+			return fmt.Errorf("failed to record migration %s: %w", m.filename, err)
+		}
 	}
 
 	return nil
 }
 
-// EnsureSchemaColumns runs fast, idempotent ALTER TABLE statements to guarantee all critical columns exist.
+// EnsureSchemaColumns runs fast, idempotent ALTER TABLE and index optimizations.
 func EnsureSchemaColumns(pool *pgxpool.Pool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	queries := []string{
@@ -48,9 +128,9 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"ALTER TABLE shops ALTER COLUMN city DROP NOT NULL;",
 		"ALTER TABLE categories ADD COLUMN IF NOT EXISTS image_url VARCHAR(500) DEFAULT '';",
 		"ALTER TABLE categories ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES categories(id) ON DELETE SET NULL;",
-		"INSERT INTO categories (name, slug, description, icon, is_active) VALUES ('General Store', 'general-store', 'All grocery and general store everyday items', '??', true) ON CONFLICT (slug) DO NOTHING;",
+		"INSERT INTO categories (name, slug, description, icon, is_active) VALUES ('General Store', 'general-store', 'All grocery and general store everyday items', '🛒', true) ON CONFLICT (slug) DO NOTHING;",
 
-				// POS Bills & Sales table enhancements
+		// POS Bills & Sales table enhancements
 		"ALTER TABLE pos_bills ADD COLUMN IF NOT EXISTS customer_user_id UUID REFERENCES users(id) ON DELETE SET NULL;",
 		"ALTER TABLE pos_bills ADD COLUMN IF NOT EXISTS subtotal DECIMAL(10, 2) DEFAULT 0;",
 		"ALTER TABLE pos_bills ADD COLUMN IF NOT EXISTS discount_amount DECIMAL(10, 2) DEFAULT 0;",
@@ -107,7 +187,7 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS parchi_image_url TEXT;",
 		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS items_summary TEXT;",
 
-		// Performance Indexes (Trigram GIN Indexes & B-tree composite indexes for fast catalog search)
+		// Performance Indexes (Foreign Key Speedups, Trigram GIN Indexes, Composite B-Trees)
 		"CREATE EXTENSION IF NOT EXISTS pg_trgm;",
 		"CREATE INDEX IF NOT EXISTS idx_products_trgm ON products USING gin (name gin_trgm_ops, description gin_trgm_ops, sku gin_trgm_ops);",
 		"CREATE INDEX IF NOT EXISTS idx_shops_trgm ON shops USING gin (name gin_trgm_ops, city gin_trgm_ops, category gin_trgm_ops);",
@@ -116,12 +196,20 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"CREATE INDEX IF NOT EXISTS idx_pos_bills_shop_created ON pos_bills(shop_id, created_at DESC);",
 		"CREATE INDEX IF NOT EXISTS idx_khata_tx_shop_created ON khata_transactions(shop_id, created_at DESC);",
 		"CREATE INDEX IF NOT EXISTS idx_reservations_user_active ON reservations(user_id, status, expires_at);",
+		"CREATE INDEX IF NOT EXISTS idx_pos_bills_customer ON pos_bills(customer_user_id);",
+		"CREATE INDEX IF NOT EXISTS idx_pos_bill_items_prod ON pos_bill_items(product_id);",
+		"CREATE INDEX IF NOT EXISTS idx_reservations_product ON reservations(product_id);",
+		"CREATE INDEX IF NOT EXISTS idx_khata_tx_reversal ON khata_transactions(reversal_of_id);",
+		"CREATE INDEX IF NOT EXISTS idx_daily_expenses_shop_created ON daily_expenses(shop_id, created_at DESC);",
+		"CREATE INDEX IF NOT EXISTS idx_store_offers_shop_active ON store_offers(shop_id, is_active);",
+		"CREATE INDEX IF NOT EXISTS idx_banned_entities_banned_by ON banned_entities(banned_by);",
+		"CREATE INDEX IF NOT EXISTS idx_categories_parent_id ON categories(parent_id);",
 
 		`INSERT INTO categories (name, slug, description, icon, is_active) VALUES
 		('Kirana & Grocery', 'kirana-grocery', 'Daily essentials, rice, flour, oil, pulses and spices', '🛒', true),
 		('Dairy & Breakfast', 'dairy-breakfast', 'Milk, curd, butter, paneer, eggs and bread', '🥛', true),
-		('Snacks & Beverages', 'snacks-beverages', 'Biscuits, namkeen, cold drinks, tea and coffee', '🍪', true),
-		('Fruits & Vegetables', 'fruits-vegetables', 'Fresh local farm fruits and green vegetables', '🥦', true),
+		('Snacks & Beverages', 'snacks-beverages', 'Biscuits, namkeen, cold drinks, tea and coffee', '☕', true),
+		('Fruits & Vegetables', 'fruits-vegetables', 'Fresh local farm fruits and green vegetables', '🥬', true),
 		('Personal Care', 'personal-care', 'Soaps, shampoos, toothpaste, skincare and haircare', '🧼', true),
 		('Household Cleaning', 'household-cleaning', 'Detergents, floor cleaners, dishwash and mosquito repellents', '🧹', true),
 		('Clothing & Apparel', 'clothing-apparel', 'Menswear, womenswear, kids wear and innerwear', '👕', true),

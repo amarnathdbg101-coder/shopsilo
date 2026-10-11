@@ -24,13 +24,13 @@ func main() {
 	}
 	defer db.Close()
 
-	// Automatically run database migrations to keep schema up-to-date in production (e.g. Render)
-	migration.EnsureSchemaColumns(db)
-	if err := migration.RunAutoMigrations(cfg.DBURL); err != nil {
+	// Automatically run embedded database migrations to keep schema up-to-date in production (e.g. Render)
+	if err := migration.RunAutoMigrations(db); err != nil {
 		logger.Warn("auto-migration notice", zap.Error(err))
 	} else {
 		logger.Info("database auto-migrations verified successfully")
 	}
+	migration.EnsureSchemaColumns(db)
 
 	router := routes.RouteSetup(db, logger)
 

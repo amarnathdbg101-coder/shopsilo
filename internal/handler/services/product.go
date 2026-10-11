@@ -136,6 +136,25 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 		allowBargain = *input.AllowBargain
 	}
 
+	isPricePublic := true
+	if input.IsPricePublic != nil {
+		isPricePublic = *input.IsPricePublic
+	} else if input.Attributes != nil {
+		if val, exists := input.Attributes["is_price_public"]; exists {
+			if b, ok := val.(bool); ok {
+				isPricePublic = b
+			} else if s, ok := val.(string); ok {
+				isPricePublic = (s == "true" || s == "1")
+			}
+		}
+	}
+
+	attrs := input.Attributes
+	if attrs == nil {
+		attrs = make(map[string]interface{})
+	}
+	attrs["is_price_public"] = isPricePublic
+
 	product := &model.Product{
 		ShopID:            shop.ID,
 		Name:              strings.TrimSpace(input.Name),
@@ -147,13 +166,14 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 		ComparePrice:      input.ComparePrice,
 		FloorPrice:        input.FloorPrice,
 		AllowBargain:      allowBargain,
+		IsPricePublic:     isPricePublic,
 		CategoryID:        categoryID,
 		Images:            images,
 		Weight:            input.Weight,
 		IsActive:          true,
 		IsFeatured:        input.IsFeatured,
 		Tags:              input.Tags,
-		Attributes:        input.Attributes,
+		Attributes:        attrs,
 		MinStock:          minStock,
 		LowStockThreshold: minStock,
 	}
@@ -260,9 +280,24 @@ func (s *ProductService) UpdateProduct(ctx context.Context, userID, productID st
 	if input.AllowBargain != nil {
 		existing.AllowBargain = *input.AllowBargain
 	}
+	if input.IsPricePublic != nil {
+		existing.IsPricePublic = *input.IsPricePublic
+	} else if input.Attributes != nil {
+		if val, exists := (*input.Attributes)["is_price_public"]; exists {
+			if b, ok := val.(bool); ok {
+				existing.IsPricePublic = b
+			} else if s, ok := val.(string); ok {
+				existing.IsPricePublic = (s == "true" || s == "1")
+			}
+		}
+	}
 	if input.Attributes != nil {
 		existing.Attributes = *input.Attributes
 	}
+	if existing.Attributes == nil {
+		existing.Attributes = make(map[string]interface{})
+	}
+	existing.Attributes["is_price_public"] = existing.IsPricePublic
 	if input.MinStock != nil {
 		val := *input.MinStock
 		if val < 1 {

@@ -22,11 +22,11 @@ import (
 )
 
 const (
-	MaxImageSizeBytes = 8 * 1024 * 1024 // 8MB limit to support large camera HD photos before backend auto-downscales them!
+	MaxImageSizeBytes = 20 * 1024 * 1024 // 20MB limit to support large camera HD photos before backend auto-downscales them!
 )
 
 var (
-	ErrImageTooLarge     = errors.New("image size exceeds maximum allowed 2MB")
+	ErrImageTooLarge     = errors.New("image size exceeds maximum allowed 20MB")
 	ErrInvalidImageType  = errors.New("invalid image format; only JPEG, PNG, and WebP are allowed")
 	allowedContentTypes  = map[string]bool{
 		"image/jpeg": true,
@@ -62,9 +62,16 @@ func UploadImage(file multipart.File, header *multipart.FileHeader, folder strin
 		return "", ErrImageTooLarge
 	}
 
-	contentType := header.Header.Get("Content-Type")
-	if !allowedContentTypes[strings.ToLower(contentType)] {
-		return "", ErrInvalidImageType
+	rawContentType := header.Header.Get("Content-Type")
+	contentType := rawContentType
+	if idx := strings.Index(contentType, ";"); idx != -1 {
+		contentType = contentType[:idx]
+	}
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	if contentType == "image/x-png" {
+		contentType = "image/png"
+	} else if contentType == "image/pjpeg" {
+		contentType = "image/jpeg"
 	}
 
 	// 1. Verify magic bytes with http.DetectContentType to prevent MIME-spoofing attacks
@@ -76,9 +83,16 @@ func UploadImage(file multipart.File, header *multipart.FileHeader, folder strin
 		if idx := strings.Index(detectedType, ";"); idx != -1 {
 			detectedType = strings.TrimSpace(detectedType[:idx])
 		}
-		if !strings.HasPrefix(detectedType, "image/") {
+		if contentType == "" || contentType == "application/octet-stream" {
+			contentType = detectedType
+		}
+		if !strings.HasPrefix(detectedType, "image/") && !allowedContentTypes[contentType] {
 			return "", ErrInvalidImageType
 		}
+	}
+
+	if !allowedContentTypes[contentType] {
+		return "", ErrInvalidImageType
 	}
 
 	// 1. Compress & downscale image before uploading to R2 to reduce storage cost and bandwidth

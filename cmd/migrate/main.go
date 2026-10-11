@@ -1,55 +1,47 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
-	"shopMe/internal/utils"
+	"time"
 
-	"github.com/golang-migrate/migrate/v4"
-	_ "github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"shopMe/internal/migration"
+	"shopMe/internal/utils"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		log.Fatal("use migrate up or down")
+		log.Fatal("use: migrate up | version")
 		return
 	}
 
-	m, err := migrate.New("file://internal/migration", utils.MustLoad().DBURL)
+	cfg := utils.MustLoad()
+	db, err := utils.ConnectDB(cfg.DBURL)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("database connection failed: %v", err)
 	}
+	defer db.Close()
 
 	switch os.Args[1] {
 	case "up":
-		if err := m.Up(); err != nil && err != migrate.ErrNoChange {
-			log.Fatal(err)
+		if err := migration.RunAutoMigrations(db); err != nil {
+			log.Fatalf("failed to run migrations: %v", err)
 		}
-	case "down":
-		if err := m.Steps(-1); err != nil && err != migrate.ErrNoChange {
-			log.Fatal(err)
-		}
-	case "force":
-		if len(os.Args) < 3 {
-			log.Fatal("use: migrate force <version>")
-		}
-		var version int
-		if _, err := fmt.Sscanf(os.Args[2], "%d", &version); err != nil {
-			log.Fatalf("invalid version: %v", err)
-		}
-		if err := m.Force(version); err != nil {
-			log.Fatal(err)
-		}
-		log.Printf("Forced migration to version %d", version)
+		migration.EnsureSchemaColumns(db)
+		log.Println("All migrations and schema optimizations verified successfully!")
 	case "version":
-		v, dirty, err := m.Version()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		var v int64
+		var dirty bool
+		err := db.QueryRow(ctx, "SELECT version, dirty FROM schema_migrations ORDER BY version DESC LIMIT 1;").Scan(&v, &dirty)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatalf("failed to query version: %v", err)
 		}
-		log.Printf("Current version: %d, Dirty: %v", v, dirty)
+		fmt.Printf("Current schema_migrations version: %d, Dirty: %v\n", v, dirty)
 	default:
-		log.Fatalf("migration command wrong: %v", os.Args[1])
+		log.Fatalf("unknown migration command: %s (supported: up, version)", os.Args[1])
 	}
 }

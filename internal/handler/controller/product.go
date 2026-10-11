@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"shopMe/internal/handler/dto"
+	"shopMe/internal/handler/model"
 	"shopMe/internal/handler/repository"
 	"shopMe/internal/handler/services"
 	"shopMe/internal/middleware"
@@ -144,6 +145,27 @@ func (c *ProductController) Delete(w http.ResponseWriter, r *http.Request) {
 	reuse.Success(w, "Product deleted successfully", nil)
 }
 
+func sanitizePublicProduct(p *model.Product) {
+	if p == nil {
+		return
+	}
+	if !p.IsPricePublic {
+		p.Price = 0
+		p.ComparePrice = 0
+		p.CostPrice = 0
+		p.FloorPrice = 0
+		p.MRP = 0
+		if p.Attributes != nil {
+			delete(p.Attributes, "price")
+			delete(p.Attributes, "cost_price")
+			delete(p.Attributes, "floor_price")
+			delete(p.Attributes, "compare_price")
+			delete(p.Attributes, "mrp")
+			p.Attributes["is_price_public"] = false
+		}
+	}
+}
+
 // GetByID handles retrieving a single product by UUID (Public)
 func (c *ProductController) GetByID(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
@@ -162,6 +184,7 @@ func (c *ProductController) GetByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sanitizePublicProduct(product)
 	reuse.Success(w, "Product retrieved successfully", product)
 }
 
@@ -183,6 +206,7 @@ func (c *ProductController) GetBySlug(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sanitizePublicProduct(product)
 	reuse.Success(w, "Product retrieved successfully", product)
 }
 
@@ -245,6 +269,9 @@ func (c *ProductController) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	for _, p := range result.Products {
+		sanitizePublicProduct(p)
+	}
 	reuse.Success(w, "Products retrieved successfully", result)
 }
 
@@ -347,6 +374,9 @@ func (c *ProductController) ListByShop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	for _, p := range result.Products {
+		sanitizePublicProduct(p)
+	}
 	reuse.Success(w, "Shop products retrieved successfully", result)
 }
 

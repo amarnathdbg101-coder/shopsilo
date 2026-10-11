@@ -66,7 +66,7 @@ func (c *UploadController) UploadShopImages(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Max 10MB parsing limit
-	if err := r.ParseMultipartForm(10 * 1024 * 1024); err != nil {
+	if err := r.ParseMultipartForm(40 * 1024 * 1024); err != nil {
 		reuse.Error(w, http.StatusBadRequest, "failed to parse multipart form")
 		return
 	}
@@ -140,19 +140,30 @@ func (c *UploadController) UploadProductImages(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if err := r.ParseMultipartForm(10 * 1024 * 1024); err != nil {
+	if err := r.ParseMultipartForm(40 * 1024 * 1024); err != nil {
 		reuse.Error(w, http.StatusBadRequest, "failed to parse multipart form")
 		return
 	}
 
 	headers := r.MultipartForm.File["images"]
 	if len(headers) == 0 {
+		headers = r.MultipartForm.File["images[]"]
+	}
+	if len(headers) == 0 {
+		headers = r.MultipartForm.File["file"]
+	}
+	if len(headers) == 0 {
+		headers = r.MultipartForm.File["files"]
+	}
+	if len(headers) == 0 {
+		headers = r.MultipartForm.File["image"]
+	}
+	if len(headers) == 0 {
 		reuse.Error(w, http.StatusBadRequest, "at least one image is required")
 		return
 	}
 	if len(headers) > 4 {
-		reuse.Error(w, http.StatusBadRequest, "cannot upload more than 4 images for a product")
-		return
+		headers = headers[:4]
 	}
 
 	var files []multipart.File

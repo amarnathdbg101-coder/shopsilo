@@ -166,6 +166,11 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 		_ = json.Unmarshal(imagesBytes, &created.Images)
 	}
 
+	created.Attributes = make(map[string]interface{})
+	if len(attributesBytes) > 0 {
+		_ = json.Unmarshal(attributesBytes, &created.Attributes)
+	}
+
 	invQuery := `
 		INSERT INTO inventory (product_id, quantity, reserved_quantity, low_stock_threshold)
 		VALUES ($1, $2, 0, $3)
@@ -679,7 +684,8 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 		       COALESCE(p.category_id::text, ''), COALESCE(p.images, '[]'::jsonb), COALESCE(p.weight, 0), p.is_active, p.is_featured, COALESCE(p.tags, '{}'), COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1),
 		       COALESCE(s.name, ''), COALESCE(s.slug, ''), COALESCE(s.phone, ''), COALESCE(s.address, ''), COALESCE(s.city, ''),
-		       s.latitude, s.longitude, COALESCE(c.name, '')
+		       s.latitude, s.longitude, COALESCE(c.name, ''),
+		       COALESCE(p.floor_price, 0), COALESCE(p.allow_bargain, true), COALESCE(p.is_price_public, true)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
 		LEFT JOIN shops s ON s.id = p.shop_id
@@ -735,6 +741,9 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 			&p.ShopLatitude,
 			&p.ShopLongitude,
 			&p.CategoryName,
+			&p.FloorPrice,
+			&p.AllowBargain,
+			&p.IsPricePublic,
 		)
 		if err != nil {
 			r.logger.Error("failed to scan product row", zap.Error(err))
@@ -864,6 +873,11 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 	updated.Images = []string{}
 	if len(imagesBytes) > 0 {
 		_ = json.Unmarshal(imagesBytes, &updated.Images)
+	}
+
+	updated.Attributes = make(map[string]interface{})
+	if len(attributesBytes) > 0 {
+		_ = json.Unmarshal(attributesBytes, &updated.Attributes)
 	}
 
 	lowLimit := 1
