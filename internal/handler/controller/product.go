@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 	"strings"
@@ -569,6 +570,28 @@ func (c *ProductController) BulkImport(w http.ResponseWriter, r *http.Request) {
 	if len(trimmed) == 0 {
 		reuse.Error(w, http.StatusBadRequest, "request body cannot be empty")
 		return
+	}
+
+	// 2.5 Fallback for multipart form where Content-Type was stripped by client/interceptor
+	if bytes.HasPrefix(trimmed, []byte("--")) {
+		firstLineEnd := bytes.IndexByte(trimmed, '\n')
+		if firstLineEnd > 2 {
+			boundary := string(bytes.TrimSpace(trimmed[2:firstLineEnd]))
+			mr := multipart.NewReader(bytes.NewReader(trimmed), boundary)
+			for {
+				p, pErr := mr.NextPart()
+				if pErr != nil {
+					break
+				}
+				fileName := p.FileName()
+				res, err := c.productService.BulkImportProductsFromFile(r.Context(), claims.UserID, fileName, p, updateExisting)
+				p.Close()
+				if err == nil && res != nil {
+					reuse.Created(w, "Bulk product import completed successfully", res)
+					return
+				}
+			}
+		}
 	}
 
 	// 3. Check if body is raw Excel (.xlsx) or CSV

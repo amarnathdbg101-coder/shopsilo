@@ -724,20 +724,34 @@ func generateDealCode() string {
 	return string(b)
 }
 
-// Helper to clean number strings containing currency symbols
+// Helper to clean number strings containing currency symbols, commas, percent, etc.
 func cleanImportNumber(val string) string {
 	v := strings.TrimSpace(val)
-	v = strings.ReplaceAll(v, "₹", "")
-	v = strings.ReplaceAll(v, "Rs.", "")
-	v = strings.ReplaceAll(v, "Rs", "")
-	v = strings.ReplaceAll(v, "INR", "")
-	v = strings.ReplaceAll(v, ",", "")
-	return strings.TrimSpace(v)
+	v = strings.Trim(v, "\uFEFF\"' ")
+	var b strings.Builder
+	hasDot := false
+	hasDigit := false
+	for _, r := range v {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+			hasDigit = true
+		} else if r == '.' && !hasDot {
+			b.WriteRune(r)
+			hasDot = true
+		} else if r == '-' && b.Len() == 0 {
+			b.WriteRune(r)
+		}
+	}
+	if !hasDigit {
+		return "0"
+	}
+	return b.String()
 }
 
 // Helper to normalize SKU string, handling scientific notation from Excel (e.g. 8.90103E+12)
 func cleanImportSKU(val string) string {
 	s := strings.TrimSpace(val)
+	s = strings.Trim(s, "\uFEFF\"' ")
 	if strings.Contains(s, "E+") || strings.Contains(s, "e+") {
 		if f, err := strconv.ParseFloat(s, 64); err == nil {
 			return fmt.Sprintf("%.0f", f)
@@ -753,34 +767,143 @@ func parseRecordsToImportItems(records [][]string) []dto.BulkImportProductItem {
 	}
 
 	header := records[0]
-	nameCol, skuCol, priceCol, costCol, compareCol, stockCol, minStockCol, catCol, unitCol, descCol := -1, -1, -1, -1, -1, -1, -1, -1, -1, -1
+	nameCol := -1
+	skuCol := -1
+	priceCol := -1
+	costCol := -1
+	compareCol := -1
+	stockCol := -1
+	minStockCol := -1
+	catCol := -1
+	unitCol := -1
+	descCol := -1
+	brandCol := -1
+
+	type attrPair struct {
+		nameCol int
+		valCol  int
+	}
+	var attrPairs []attrPair
 
 	for i, h := range header {
-		cleanH := strings.ToLower(strings.TrimSpace(h))
-		if strings.Contains(cleanH, "name") || strings.Contains(cleanH, "title") || strings.Contains(cleanH, "item") || strings.Contains(cleanH, "saman") || strings.Contains(cleanH, "product") {
-			nameCol = i
-		} else if strings.Contains(cleanH, "sku") || strings.Contains(cleanH, "code") || strings.Contains(cleanH, "barcode") || strings.Contains(cleanH, "upc") || strings.Contains(cleanH, "ean") {
-			skuCol = i
-		} else if strings.Contains(cleanH, "mrp") || strings.Contains(cleanH, "compare") || strings.Contains(cleanH, "original") {
-			compareCol = i
-		} else if strings.Contains(cleanH, "price") || strings.Contains(cleanH, "rate") || strings.Contains(cleanH, "selling") {
-			if strings.Contains(cleanH, "cost") || strings.Contains(cleanH, "buy") || strings.Contains(cleanH, "wholesale") || strings.Contains(cleanH, "purchase") {
-				costCol = i
-			} else if priceCol == -1 {
-				priceCol = i
+		cleanH := strings.ToLower(strings.Trim(strings.TrimSpace(h), "\uFEFF\"' "))
+		isAttr := strings.Contains(cleanH, "attribute") || strings.Contains(cleanH, "attr")
+		isBadge := strings.Contains(cleanH, "badge") || strings.Contains(cleanH, "featured")
+		isDiscount := strings.Contains(cleanH, "discount") || strings.Contains(cleanH, "%") ||
+			strings.Contains(cleanH, "off") || strings.Contains(cleanH, "profit") || strings.Contains(cleanH, "margin")
+		isAlert := strings.Contains(cleanH, "alert") || strings.Contains(cleanH, "threshold") ||
+			strings.Contains(cleanH, "min") || strings.Contains(cleanH, "low") || strings.Contains(cleanH, "reorder")
+		isCost := strings.Contains(cleanH, "cost") || strings.Contains(cleanH, "khared") ||
+			strings.Contains(cleanH, "purchase") || strings.Contains(cleanH, "wholesale") || strings.Contains(cleanH, "buy")
+		isCompare := strings.Contains(cleanH, "mrp") || strings.Contains(cleanH, "compare") ||
+			strings.Contains(cleanH, "original") || strings.Contains(cleanH, "market") || strings.Contains(cleanH, "list")
+		isStock := strings.Contains(cleanH, "stock") || strings.Contains(cleanH, "qty") ||
+			strings.Contains(cleanH, "quantity") || strings.Contains(cleanH, "inventory") || strings.Contains(cleanH, "units")
+
+		// 1. Product Name (Strict: cannot be attribute, badge, discount, alert, or cost)
+		if !isAttr && !isBadge && !isDiscount && !isAlert && !isCost {
+			if cleanH == "product name" || cleanH == "product_name" || cleanH == "item name" || cleanH == "item_name" ||
+				cleanH == "title" || cleanH == "name" || cleanH == "product" || cleanH == "item" || cleanH == "saman" || cleanH == "naam" {
+				nameCol = i
+			} else if nameCol == -1 && (strings.Contains(cleanH, "name") || strings.Contains(cleanH, "title") || strings.Contains(cleanH, "product") || strings.Contains(cleanH, "item")) &&
+				!strings.Contains(cleanH, "category") && !strings.Contains(cleanH, "brand") {
+				nameCol = i
 			}
-		} else if strings.Contains(cleanH, "cost") || strings.Contains(cleanH, "wholesale") || strings.Contains(cleanH, "buy") || strings.Contains(cleanH, "purchase") {
-			costCol = i
-		} else if strings.Contains(cleanH, "stock") || strings.Contains(cleanH, "qty") || strings.Contains(cleanH, "quantity") || strings.Contains(cleanH, "units") {
-			stockCol = i
-		} else if strings.Contains(cleanH, "min") || strings.Contains(cleanH, "threshold") || strings.Contains(cleanH, "alert") {
-			minStockCol = i
-		} else if strings.Contains(cleanH, "category") || strings.Contains(cleanH, "cat") || strings.Contains(cleanH, "group") || strings.Contains(cleanH, "type") {
-			catCol = i
-		} else if strings.Contains(cleanH, "unit") || strings.Contains(cleanH, "uom") || strings.Contains(cleanH, "pack") {
-			unitCol = i
-		} else if strings.Contains(cleanH, "desc") || strings.Contains(cleanH, "detail") {
-			descCol = i
+		}
+
+		// 2. SKU / Barcode
+		if !isAttr && !isBadge {
+			if strings.Contains(cleanH, "sku") || strings.Contains(cleanH, "barcode") ||
+				strings.Contains(cleanH, "item code") || strings.Contains(cleanH, "product code") ||
+				strings.Contains(cleanH, "upc") || strings.Contains(cleanH, "ean") || cleanH == "code" {
+				if skuCol == -1 {
+					skuCol = i
+				}
+			}
+		}
+
+		// 3. Cost Price
+		if isCost && !isDiscount {
+			if costCol == -1 {
+				costCol = i
+			}
+		}
+
+		// 4. MRP / Compare Price (strictly exclude discount/margin)
+		if isCompare && !isDiscount {
+			if compareCol == -1 {
+				compareCol = i
+			}
+		}
+
+		// 5. Selling Price
+		if !isCost && !isCompare && !isDiscount {
+			if strings.Contains(cleanH, "selling") || strings.Contains(cleanH, "sell") ||
+				strings.Contains(cleanH, "sales") || strings.Contains(cleanH, "price") ||
+				strings.Contains(cleanH, "rate") || cleanH == "sp" {
+				if priceCol == -1 {
+					priceCol = i
+				}
+			}
+		}
+
+		// 6. Min Stock / Low Stock Alert
+		if isAlert {
+			if minStockCol == -1 {
+				minStockCol = i
+			}
+		}
+
+		// 7. Stock Quantity (strictly exclude alert / min / low)
+		if isStock && !isAlert {
+			if stockCol == -1 {
+				stockCol = i
+			}
+		}
+
+		// 8. Category
+		if !isAttr {
+			if strings.Contains(cleanH, "category") || cleanH == "cat" ||
+				strings.Contains(cleanH, "group") || strings.Contains(cleanH, "department") {
+				if catCol == -1 {
+					catCol = i
+				}
+			}
+		}
+
+		// 9. Unit
+		if !isAttr {
+			if strings.Contains(cleanH, "unit") || strings.Contains(cleanH, "uom") ||
+				cleanH == "pack" || cleanH == "packaging" {
+				if unitCol == -1 {
+					unitCol = i
+				}
+			}
+		}
+
+		// 10. Description
+		if strings.Contains(cleanH, "desc") || strings.Contains(cleanH, "detail") ||
+			strings.Contains(cleanH, "notes") || strings.Contains(cleanH, "about") {
+			if descCol == -1 {
+				descCol = i
+			}
+		}
+
+		// 11. Brand
+		if !isAttr {
+			if strings.Contains(cleanH, "brand") || strings.Contains(cleanH, "company") ||
+				strings.Contains(cleanH, "manufacturer") || strings.Contains(cleanH, "mfg") {
+				if brandCol == -1 {
+					brandCol = i
+				}
+			}
+		}
+
+		// 12. Attribute pair detection (e.g. Attribute 1 Name, Attribute 1 Value)
+		if isAttr && strings.Contains(cleanH, "name") {
+			if i+1 < len(header) && strings.Contains(strings.ToLower(header[i+1]), "val") {
+				attrPairs = append(attrPairs, attrPair{nameCol: i, valCol: i + 1})
+			}
 		}
 	}
 
@@ -798,14 +921,22 @@ func parseRecordsToImportItems(records [][]string) []dto.BulkImportProductItem {
 			continue
 		}
 
-		item := dto.BulkImportProductItem{}
-
+		name := ""
 		if nameCol < len(row) {
-			item.Name = strings.TrimSpace(row[nameCol])
+			name = strings.TrimSpace(row[nameCol])
 		}
+		if name == "" {
+			continue
+		}
+
+		item := dto.BulkImportProductItem{
+			Name: name,
+		}
+
 		if skuCol != -1 && skuCol < len(row) {
 			item.SKU = cleanImportSKU(row[skuCol])
 		}
+
 		if priceCol < len(row) {
 			pVal, _ := strconv.ParseFloat(cleanImportNumber(row[priceCol]), 64)
 			if pVal <= 0 {
@@ -815,37 +946,83 @@ func parseRecordsToImportItems(records [][]string) []dto.BulkImportProductItem {
 		} else {
 			item.Price = 10.0
 		}
+
 		if costCol != -1 && costCol < len(row) {
 			cVal, _ := strconv.ParseFloat(cleanImportNumber(row[costCol]), 64)
 			item.CostPrice = cVal
 		}
+
 		if compareCol != -1 && compareCol < len(row) {
 			cmpVal, _ := strconv.ParseFloat(cleanImportNumber(row[compareCol]), 64)
 			item.ComparePrice = cmpVal
 		}
+
 		if stockCol != -1 && stockCol < len(row) {
 			sVal, _ := strconv.Atoi(cleanImportNumber(row[stockCol]))
 			item.StockQuantity = sVal
 		} else {
 			item.StockQuantity = 10
 		}
+
 		if minStockCol != -1 && minStockCol < len(row) {
 			mVal, _ := strconv.Atoi(cleanImportNumber(row[minStockCol]))
 			item.MinStock = mVal
+		} else {
+			item.MinStock = 5
 		}
+
 		if catCol != -1 && catCol < len(row) {
 			item.CategoryName = strings.TrimSpace(row[catCol])
 		}
+
 		if unitCol != -1 && unitCol < len(row) {
-			item.Unit = strings.TrimSpace(row[unitCol])
-		}
-		if descCol != -1 && descCol < len(row) {
-			item.Description = strings.TrimSpace(row[descCol])
+			unitVal := strings.TrimSpace(row[unitCol])
+			if unitVal != "" {
+				item.Unit = unitVal
+			} else {
+				item.Unit = "Piece"
+			}
+		} else {
+			item.Unit = "Piece"
 		}
 
-		if item.Name != "" {
-			items = append(items, item)
+		baseDesc := ""
+		if descCol != -1 && descCol < len(row) {
+			baseDesc = strings.TrimSpace(row[descCol])
 		}
+
+		brandVal := ""
+		if brandCol != -1 && brandCol < len(row) {
+			brandVal = strings.TrimSpace(row[brandCol])
+		}
+
+		var extraParts []string
+		if brandVal != "" && !strings.Contains(strings.ToLower(baseDesc), strings.ToLower(brandVal)) {
+			extraParts = append(extraParts, fmt.Sprintf("Brand: %s", brandVal))
+		}
+
+		for _, ap := range attrPairs {
+			if ap.nameCol < len(row) && ap.valCol < len(row) {
+				an := strings.TrimSpace(row[ap.nameCol])
+				av := strings.TrimSpace(row[ap.valCol])
+				if an != "" && av != "" {
+					extraParts = append(extraParts, fmt.Sprintf("%s: %s", an, av))
+				}
+			}
+		}
+
+		if len(extraParts) > 0 {
+			extras := strings.Join(extraParts, " | ")
+			if baseDesc != "" {
+				item.Description = fmt.Sprintf("%s | %s", baseDesc, extras)
+			} else {
+				item.Description = extras
+			}
+		} else {
+			item.Description = baseDesc
+		}
+
+		items = append(items, item)
 	}
 
 	return items
