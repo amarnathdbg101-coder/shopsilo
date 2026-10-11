@@ -321,9 +321,14 @@ func (r *ReservationRepo) FindByShopID(ctx context.Context, shopID string, filte
 	whereClauses = append(whereClauses, "r.shop_id = $1")
 
 	if filter.Status != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("r.status = $%d", argIdx))
-		args = append(args, strings.TrimSpace(filter.Status))
-		argIdx++
+		st := strings.TrimSpace(filter.Status)
+		if st == "active" || st == "pending" {
+			whereClauses = append(whereClauses, "(r.status = 'active' OR r.status = 'pending')")
+		} else {
+			whereClauses = append(whereClauses, fmt.Sprintf("r.status = $%d", argIdx))
+			args = append(args, st)
+			argIdx++
+		}
 	}
 
 	whereSQL := strings.Join(whereClauses, " AND ")
@@ -332,11 +337,14 @@ func (r *ReservationRepo) FindByShopID(ctx context.Context, shopID string, filte
 		SELECT r.id, r.reservation_number, COALESCE(r.user_id::text, ''), r.shop_id, COALESCE(r.product_id::text, ''), r.quantity, r.pickup_code,
 		       r.status, r.expires_at, r.completed_at, COALESCE(r.notes, ''), r.created_at, r.updated_at,
 		       p.name AS product_name, p.slug AS product_slug, p.price AS product_price, p.images AS product_images,
+		       COALESCE(u.full_name, u.name, 'Customer') AS customer_name,
+		       COALESCE(u.phone, u.mobile, '') AS customer_phone,
 		       COUNT(*) OVER() AS total_count
 		FROM reservations r
 		JOIN products p ON r.product_id = p.id
+		LEFT JOIN users u ON r.user_id = u.id
 		WHERE %s
-		ORDER BY (r.status = 'active') DESC, r.created_at DESC
+		ORDER BY (r.status = 'active' OR r.status = 'pending') DESC, r.created_at DESC
 		LIMIT $%d OFFSET $%d
 	`, whereSQL, argIdx, argIdx+1)
 
@@ -375,6 +383,8 @@ func (r *ReservationRepo) FindByShopID(ctx context.Context, shopID string, filte
 			&res.Product.Slug,
 			&res.Product.Price,
 			&productImagesBytes,
+			&res.CustomerName,
+			&res.CustomerPhone,
 			&totalCount,
 		)
 		if err != nil {
@@ -386,7 +396,7 @@ func (r *ReservationRepo) FindByShopID(ctx context.Context, shopID string, filte
 			_ = json.Unmarshal(productImagesBytes, &res.Product.Images)
 		}
 
-		if res.Status == "active" {
+		if res.Status == "active" || res.Status == "pending" {
 			rem := int(time.Until(res.ExpiresAt).Minutes())
 			if rem < 0 {
 				rem = 0

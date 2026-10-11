@@ -19,7 +19,10 @@ type Reservation struct {
 	UpdatedAt              time.Time  `json:"updated_at"`
 
 	// Enriched details
+	CustomerName           string     `json:"customer_name,omitempty"`
+	CustomerPhone          string     `json:"customer_phone,omitempty"`
 	Shop                   *Shop      `json:"shop,omitempty"`
 	Product                *Product   `json:"product,omitempty"`
+	User                   *User      `json:"user,omitempty"`
 	TimeRemainingMinutes   int        `json:"time_remaining_minutes"`
 }
