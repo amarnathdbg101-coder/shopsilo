@@ -9,6 +9,7 @@ import (
 	"math"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
+	"shopMe/internal/utils"
 	"strings"
 	"sync"
 	"time"
@@ -154,8 +155,7 @@ func (r *POSRepo) CreateSaleWithTx(ctx context.Context, tx pgx.Tx, bill *model.P
 }
 
 func (r *POSRepo) GetDailySummary(ctx context.Context, shopID string, date time.Time) (*model.DailySalesSummary, error) {
-	startOfDay := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, date.Location())
-	endOfDay := startOfDay.Add(24 * time.Hour)
+	startOfDay, endOfDay := utils.IndianDayBounds(date)
 
 	query := `
 		SELECT 
@@ -273,8 +273,7 @@ func (r *POSRepo) GetBillByNumber(ctx context.Context, billNumber string) (*mode
 
 // GetDailyCloseReport computes counter sales, khata debt repayments, cash expenses, and exact expected drawer cash.
 func (r *POSRepo) GetDailyCloseReport(ctx context.Context, shopID string, targetDate time.Time) (*dto.DailyCloseReport, error) {
-	startOfDay := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, targetDate.Location())
-	endOfDay := startOfDay.Add(24 * time.Hour)
+	startOfDay, endOfDay := utils.IndianDayBounds(targetDate)
 	dateStr := targetDate.Format("2006-01-02")
 
 	query := `
@@ -866,9 +865,7 @@ func (r *POSRepo) ListBills(ctx context.Context, shopID string, page, limit int,
 	args := []interface{}{shopID}
 	argIdx := 2
 
-	now := time.Now()
-	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	endOfToday := startOfToday.Add(24 * time.Hour)
+	startOfToday, endOfToday := utils.IndianDayBounds(time.Now())
 
 	if dateFilter == "today" {
 		whereClause.WriteString(fmt.Sprintf(" AND b.created_at >= $%d AND b.created_at < $%d", argIdx, argIdx+1))
@@ -876,8 +873,7 @@ func (r *POSRepo) ListBills(ctx context.Context, shopID string, page, limit int,
 		argIdx += 2
 	} else if dateFilter != "" && dateFilter != "all" {
 		if t, err := time.Parse("2006-01-02", dateFilter); err == nil {
-			start := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, now.Location())
-			end := start.Add(24 * time.Hour)
+			start, end := utils.IndianDayBounds(t)
 			whereClause.WriteString(fmt.Sprintf(" AND b.created_at >= $%d AND b.created_at < $%d", argIdx, argIdx+1))
 			args = append(args, start, end)
 			argIdx += 2

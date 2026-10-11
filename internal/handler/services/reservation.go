@@ -11,6 +11,7 @@ import (
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
 	"shopMe/internal/handler/repository"
+	"shopMe/internal/utils"
 	"strings"
 	"time"
 )
@@ -135,7 +136,8 @@ func (s *ReservationService) CreateReservation(ctx context.Context, userID strin
 		"product_name":       prod.Name,
 		"quantity":           fullRes.Quantity,
 		"pickup_code":        fullRes.PickupCode,
-		"created_at":         time.Now().Format("02-Jan 15:04"),
+		"created_at":         utils.IndianNow().Format("02-Jan 03:04 PM"),
+		"expires_at":         fullRes.ExpiresAt.In(utils.IndianLocation).Format("03:04 PM"),
 	})
 
 	return fullRes, nil
