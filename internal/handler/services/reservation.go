@@ -129,15 +129,31 @@ func (s *ReservationService) CreateReservation(ctx context.Context, userID strin
 
 	enrichShop(fullRes.Shop)
 
-	// Broadcast Real-Time Sound Bell Alert to Shopkeeper's Counter in 0ms!
+	productImg := ""
+	if len(prod.Images) > 0 {
+		productImg = prod.Images[0]
+	}
+
+	// Broadcast Complete Real-Time Order & Pickup Alert to Counter in 0ms!
 	wsHub := GetWebSocketHub(nil)
 	wsHub.BroadcastToShop(prod.ShopID, "NEW_RESERVATION", map[string]interface{}{
+		"id":                 fullRes.ID,
 		"reservation_number": fullRes.ReservationNumber,
-		"product_name":       prod.Name,
-		"quantity":           fullRes.Quantity,
 		"pickup_code":        fullRes.PickupCode,
-		"created_at":         utils.IndianNow().Format("02-Jan 03:04 PM"),
-		"expires_at":         fullRes.ExpiresAt.In(utils.IndianLocation).Format("03:04 PM"),
+		"product_id":         prod.ID,
+		"product_name":       prod.Name,
+		"product_image":      productImg,
+		"quantity":           fullRes.Quantity,
+		"unit_price":         prod.Price,
+		"total_price":        prod.Price * float64(fullRes.Quantity),
+		"customer_name":      fullRes.CustomerName,
+		"customer_phone":     fullRes.CustomerPhone,
+		"notes":              fullRes.Notes,
+		"status":             fullRes.Status,
+		"created_at":         fullRes.CreatedAt.In(utils.IndianLocation).Format(time.RFC3339),
+		"expires_at":         fullRes.ExpiresAt.In(utils.IndianLocation).Format(time.RFC3339),
+		"created_at_display": utils.IndianNow().Format("02-Jan 03:04 PM"),
+		"expires_at_display": fullRes.ExpiresAt.In(utils.IndianLocation).Format("03:04 PM"),
 	})
 
 	return fullRes, nil

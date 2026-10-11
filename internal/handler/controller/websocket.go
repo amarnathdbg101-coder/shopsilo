@@ -2,8 +2,6 @@ package controller
 
 import (
 	"net/http"
-	"os"
-	"strings"
 	"time"
 
 	"shopMe/internal/handler/services"
@@ -18,20 +16,7 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		origin := r.Header.Get("Origin")
-		if origin == "" {
-			return true // Allow native mobile apps and non-browser clients
-		}
-		allowedEnv := os.Getenv("ALLOWED_ORIGINS")
-		if allowedEnv == "" || allowedEnv == "*" {
-			return true // Permissive mode for local development
-		}
-		for _, allowed := range strings.Split(allowedEnv, ",") {
-			if strings.EqualFold(strings.TrimSpace(origin), strings.TrimSpace(allowed)) {
-				return true
-			}
-		}
-		return false
+		return true // Allow all cross-platform clients (Flutter Mobile, Desktop, Web)
 	},
 }
 
@@ -71,9 +56,28 @@ func (c *WebSocketController) ServeShopWebSocket(w http.ResponseWriter, r *http.
 
 	c.wsHub.Register(shop.ID, conn)
 
-	// Keep-Alive Ping/Pong Loop
+	// Keep-Alive Ping/Pong & Heartbeat Loop
+	stopPing := make(chan struct{})
 	go func() {
-		defer c.wsHub.Unregister(shop.ID, conn)
+		ticker := time.NewTicker(25 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(5*time.Second)); err != nil {
+					return
+				}
+			case <-stopPing:
+				return
+			}
+		}
+	}()
+
+	go func() {
+		defer func() {
+			close(stopPing)
+			c.wsHub.Unregister(shop.ID, conn)
+		}()
 
 		conn.SetReadLimit(2048)
 		_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))

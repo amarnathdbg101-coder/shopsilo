@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
 	"strings"
@@ -138,10 +139,13 @@ func (r *ReservationRepo) FindByID(ctx context.Context, id string) (*model.Reser
 		SELECT r.id, r.reservation_number, COALESCE(r.user_id::text, ''), r.shop_id, COALESCE(r.product_id::text, ''), r.quantity, r.pickup_code,
 		       r.status, r.expires_at, r.completed_at, COALESCE(r.notes, ''), r.created_at, r.updated_at,
 		       s.name AS shop_name, s.slug AS shop_slug, s.phone AS shop_phone, s.address AS shop_address, s.latitude, s.longitude,
-		       p.name AS product_name, p.slug AS product_slug, p.price AS product_price, p.images AS product_images
+		       p.name AS product_name, p.slug AS product_slug, p.price AS product_price, p.images AS product_images,
+		       COALESCE(NULLIF(u.full_name, ''), 'Customer') AS customer_name,
+		       COALESCE(u.phone, '') AS customer_phone
 		FROM reservations r
 		JOIN shops s ON r.shop_id = s.id
 		JOIN products p ON r.product_id = p.id
+		LEFT JOIN users u ON r.user_id = u.id
 		WHERE r.id = $1
 		LIMIT 1
 	`
@@ -174,6 +178,8 @@ func (r *ReservationRepo) FindByID(ctx context.Context, id string) (*model.Reser
 		&res.Product.Slug,
 		&res.Product.Price,
 		&productImagesBytes,
+		&res.CustomerName,
+		&res.CustomerPhone,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -193,6 +199,8 @@ func (r *ReservationRepo) FindByID(ctx context.Context, id string) (*model.Reser
 		}
 		res.TimeRemainingMinutes = rem
 	}
+
+	enrichCustomerFromNotes(res)
 
 	return res, nil
 }
@@ -404,6 +412,8 @@ func (r *ReservationRepo) FindByShopID(ctx context.Context, shopID string, filte
 			res.TimeRemainingMinutes = rem
 		}
 
+		enrichCustomerFromNotes(res)
+
 		reservations = append(reservations, res)
 	}
 
@@ -510,4 +520,24 @@ func (r *ReservationRepo) CancelWithTx(ctx context.Context, tx pgx.Tx, id string
 	_, _ = tx.Exec(ctx, invQuery, res.Quantity, res.ProductID)
 
 	return res, nil
+}
+
+func enrichCustomerFromNotes(res *model.Reservation) {
+	if res == nil || res.Notes == "" {
+		return
+	}
+	re := regexp.MustCompile(`Customer:\s*([^|\(\n\r]+)(?:\(([^)]+)\))?`)
+	matches := re.FindStringSubmatch(res.Notes)
+	if len(matches) > 1 {
+		name := strings.TrimSpace(matches[1])
+		if name != "" && (res.CustomerName == "" || res.CustomerName == "Customer") {
+			res.CustomerName = name
+		}
+	}
+	if len(matches) > 2 {
+		phone := strings.TrimSpace(matches[2])
+		if phone != "" && res.CustomerPhone == "" {
+			res.CustomerPhone = phone
+		}
+	}
 }
