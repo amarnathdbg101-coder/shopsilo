@@ -76,6 +76,10 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"UPDATE customer_khata SET customer_phone = customer_mobile WHERE (customer_phone IS NULL OR customer_phone = '') AND customer_mobile IS NOT NULL;",
 		"CREATE INDEX IF NOT EXISTS idx_customer_khata_shop_mobile ON customer_khata(shop_id, customer_mobile);",
 		"CREATE INDEX IF NOT EXISTS idx_customer_khata_shop_phone ON customer_khata(shop_id, customer_phone);",
+
+		// Fix real geographic coordinates for known shop locations
+		"UPDATE shops SET latitude = 28.5828, longitude = 77.3110, city = 'Noida' WHERE (LOWER(city) LIKE '%noida%' OR LOWER(address) LIKE '%noida%' OR LOWER(slug) LIKE '%shopsilo%') AND (latitude = 26.1542 OR latitude IS NULL);",
+		"UPDATE shops SET latitude = 26.1542, longitude = 85.8918, city = 'Darbhanga' WHERE (LOWER(city) LIKE '%darbhanga%' OR LOWER(address) LIKE '%darbhanga%' OR LOWER(slug) LIKE '%om-cloth%') AND (latitude = 28.5828 OR latitude IS NULL);",
 		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS closure_status VARCHAR(20) DEFAULT 'ACTIVE';",
 		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS closure_otp VARCHAR(10);",
 		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS closure_requested_by VARCHAR(20);",

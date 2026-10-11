@@ -125,10 +125,15 @@ func (s *ShopService) CreateShop(
 	shopLat := input.Latitude
 	shopLng := input.Longitude
 	if shopLat == nil || shopLng == nil || !reuse.IsValidIndiaCoordinates(*shopLat, *shopLng) {
-		defaultLat := 26.1542
-		defaultLng := 85.8918
-		shopLat = &defaultLat
-		shopLng = &defaultLng
+		resLat, resLng := utils.ResolveCityCoordinates(input.City, input.Pincode)
+		if resLat != nil && resLng != nil {
+			shopLat = resLat
+			shopLng = resLng
+		} else {
+			// If city is completely unknown, leave nil or use safe null coordinates
+			shopLat = nil
+			shopLng = nil
+		}
 	}
 
 	shopToCreate := &model.Shop{
