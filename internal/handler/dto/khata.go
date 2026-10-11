@@ -18,7 +18,7 @@ type RecordCreditTransactionRequest struct {
 type RecordPaymentRequest struct {
 	CustomerName   string  `json:"customer_name,omitempty" validate:"omitempty,min=2,max=150"`
 	Amount         float64 `json:"amount" validate:"required,gt=0"`
-	PaymentMode    string  `json:"payment_mode" validate:"required,oneof=cash upi card other"`
+	PaymentMode    string  `json:"payment_mode" validate:"required,oneof=cash upi card cheque bank_transfer online other CASH UPI CARD CHEQUE BANK_TRANSFER ONLINE OTHER"`
 	Notes          string  `json:"notes,omitempty" validate:"omitempty,max=255"`
 }
 

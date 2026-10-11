@@ -95,7 +95,7 @@ func (s *KhataService) RecordPayment(ctx context.Context, shopOwnerUserID, custo
 		input.Amount,
 		strings.TrimSpace(input.Notes),
 		"",
-		strings.TrimSpace(input.PaymentMode),
+		strings.ToLower(strings.TrimSpace(input.PaymentMode)),
 		"",
 		"",
 	)

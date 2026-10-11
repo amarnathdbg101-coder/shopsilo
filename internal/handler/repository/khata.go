@@ -52,7 +52,8 @@ func (r *KhataRepo) GetOrCreateCustomer(ctx context.Context, shopID, customerNam
 		FROM customer_khata
 		WHERE shop_id = $1 AND (
 			customer_mobile = $2 OR
-			RIGHT(REGEXP_REPLACE(customer_mobile, '[^0-9]', '', 'g'), 10) = $2
+			customer_phone = $2 OR
+			RIGHT(REGEXP_REPLACE(COALESCE(customer_mobile, customer_phone, ''), '[^0-9]', '', 'g'), 10) = $2
 		)
 	`
 	err = r.db.QueryRow(ctx, query, shopID, cleanMobile).Scan(
@@ -91,8 +92,8 @@ func (r *KhataRepo) GetOrCreateCustomer(ctx context.Context, shopID, customerNam
 
 	// Insert new customer khata
 	insertQuery := `
-		INSERT INTO customer_khata (shop_id, customer_id, customer_name, customer_mobile, current_balance, credit_limit, closure_status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, 0.00, 0.00, 'ACTIVE', NOW(), NOW())
+		INSERT INTO customer_khata (shop_id, customer_id, customer_name, customer_mobile, customer_phone, current_balance, credit_limit, closure_status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $4, 0.00, 0.00, 'ACTIVE', NOW(), NOW())
 		RETURNING id, shop_id, customer_id, customer_name, customer_mobile, current_balance, credit_limit, closure_status, created_at, updated_at
 	`
 	err = r.db.QueryRow(ctx, insertQuery, shopID, matchedUserID, customerName, cleanMobile).Scan(
@@ -142,7 +143,8 @@ func (r *KhataRepo) RecordTransactionWithTx(ctx context.Context, tx pgx.Tx, shop
 		FROM customer_khata
 		WHERE shop_id = $1 AND (
 			customer_mobile = $2 OR
-			RIGHT(REGEXP_REPLACE(customer_mobile, '[^0-9]', '', 'g'), 10) = $2
+			customer_phone = $2 OR
+			RIGHT(REGEXP_REPLACE(COALESCE(customer_mobile, customer_phone, ''), '[^0-9]', '', 'g'), 10) = $2
 		)
 		FOR UPDATE
 	`
@@ -157,8 +159,8 @@ func (r *KhataRepo) RecordTransactionWithTx(ctx context.Context, tx pgx.Tx, shop
 
 		// Insert new khata inside this tx
 		insertQuery := `
-			INSERT INTO customer_khata (shop_id, customer_id, customer_name, customer_mobile, current_balance, credit_limit, closure_status, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, 0.00, 0.00, 'ACTIVE', NOW(), NOW())
+			INSERT INTO customer_khata (shop_id, customer_id, customer_name, customer_mobile, customer_phone, current_balance, credit_limit, closure_status, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $4, 0.00, 0.00, 'ACTIVE', NOW(), NOW())
 			RETURNING id, current_balance, credit_limit
 		`
 		err = tx.QueryRow(ctx, insertQuery, shopID, matchedUserID, customerName, cleanMobile).Scan(&khataID, &currentBalance, &creditLimit)

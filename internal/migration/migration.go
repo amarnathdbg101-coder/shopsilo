@@ -70,7 +70,12 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		// Khata table enhancements
 		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS customer_id UUID;",
 		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS customer_mobile VARCHAR(20);",
-		"UPDATE customer_khata SET customer_mobile = customer_phone WHERE customer_mobile IS NULL OR customer_mobile = '';",
+		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS customer_phone VARCHAR(20);",
+		"ALTER TABLE customer_khata ALTER COLUMN customer_phone DROP NOT NULL;",
+		"UPDATE customer_khata SET customer_mobile = customer_phone WHERE (customer_mobile IS NULL OR customer_mobile = '') AND customer_phone IS NOT NULL;",
+		"UPDATE customer_khata SET customer_phone = customer_mobile WHERE (customer_phone IS NULL OR customer_phone = '') AND customer_mobile IS NOT NULL;",
+		"CREATE INDEX IF NOT EXISTS idx_customer_khata_shop_mobile ON customer_khata(shop_id, customer_mobile);",
+		"CREATE INDEX IF NOT EXISTS idx_customer_khata_shop_phone ON customer_khata(shop_id, customer_phone);",
 		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS closure_status VARCHAR(20) DEFAULT 'ACTIVE';",
 		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS closure_otp VARCHAR(10);",
 		"ALTER TABLE customer_khata ADD COLUMN IF NOT EXISTS closure_requested_by VARCHAR(20);",
