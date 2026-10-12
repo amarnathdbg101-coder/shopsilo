@@ -912,23 +912,29 @@ func (r *POSRepo) ListBills(ctx context.Context, shopID string, page, limit int,
 			b.payment_method,
 			'completed' AS status,
 			TO_CHAR(b.created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-			COUNT(i.id) AS items_count,
-			COALESCE(json_agg(json_build_object(
-				'id', i.id,
-				'bill_id', i.bill_id,
-				'product_id', COALESCE(i.product_id::text, ''),
-				'product_name', i.product_name,
-				'product_sku', COALESCE(i.product_sku, ''),
-				'quantity', i.quantity,
-				'unit_price', i.unit_price,
-				'unit_cost', i.unit_cost,
-				'total_price', i.total_price
-			)) FILTER (WHERE i.id IS NOT NULL), '[]'::json) AS items_json
+			COALESCE((SELECT COUNT(*) FROM pos_bill_items bi WHERE bi.bill_id = b.id), 0) AS items_count,
+			COALESCE(
+				(
+					SELECT json_agg(
+						json_build_object(
+							'id', bi.id,
+							'bill_id', bi.bill_id,
+							'product_id', COALESCE(bi.product_id::text, ''),
+							'product_name', COALESCE(bi.product_name, 'Product'),
+							'product_sku', COALESCE(bi.product_sku, ''),
+							'quantity', COALESCE(bi.quantity, 1),
+							'unit_price', COALESCE(bi.unit_price, 0),
+							'unit_cost', COALESCE(bi.unit_cost, 0),
+							'total_price', COALESCE(bi.total_price, 0)
+						)
+					)
+					FROM pos_bill_items bi
+					WHERE bi.bill_id = b.id
+				), '[]'::json
+			) AS items_json
 		FROM pos_bills b
 		LEFT JOIN users u ON b.customer_user_id = u.id
-		LEFT JOIN pos_bill_items i ON b.id = i.bill_id
 		%s
-		GROUP BY b.id, u.name
 		ORDER BY b.created_at DESC
 		LIMIT $%d OFFSET $%d
 	`, whereClause.String(), argIdx, argIdx+1)
