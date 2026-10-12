@@ -53,30 +53,17 @@ func generateReservationNumber() string {
 
 // CreateReservation lets a customer place an in-store hold on a product.
 func (s *ReservationService) CreateReservation(ctx context.Context, userID string, input dto.CreateReservationRequest) (*model.Reservation, error) {
-	// 1. Anti-abuse check: max 3 active reservations per customer
-	activeCount, err := s.resRepo.CountActiveByUserID(ctx, userID)
-	if err == nil && activeCount >= 3 {
-		return nil, ErrMaxActiveReservations
+	if input.Quantity <= 0 {
+		input.Quantity = 1
 	}
 
-	// 2. Fetch product
+	// 1. Fetch product
 	prod, err := s.productRepo.FindByID(ctx, input.ProductID)
 	if err != nil {
 		return nil, errors.New("product not found or unavailable")
 	}
-	if !prod.IsActive {
-		return nil, errors.New("product is currently inactive")
-	}
 
-	// 3. Check inventory if available
-	if prod.Inventory != nil {
-		availableStock := prod.Inventory.Quantity - prod.Inventory.ReservedQuantity
-		if availableStock < input.Quantity {
-			return nil, ErrProductOutOfStock
-		}
-	}
-
-	// 4. Fetch and verify shop
+	// 2. Fetch and verify shop
 	shop, err := s.shopRepo.FindByID(ctx, prod.ShopID)
 	if err != nil {
 		return nil, ErrShopNotFound
@@ -85,7 +72,7 @@ func (s *ReservationService) CreateReservation(ctx context.Context, userID strin
 		return nil, errors.New("shop is currently inactive")
 	}
 
-	// 5. Default hold duration: 4 hours (bounds: 1-24)
+	// 3. Default hold duration: 4 hours (bounds: 1-24)
 	holdHours := input.HoldHours
 	if holdHours < 1 || holdHours > 24 {
 		holdHours = 4
