@@ -31,7 +31,7 @@ var (
 
 	// Product errors
 	ErrProductNotFound      = errors.New("product not found")
-	ErrTooManyProductImages = errors.New("a product cannot have more than 4 images")
+	ErrTooManyProductImages = errors.New("a product cannot have more than 10 images")
 	ErrInvalidCategory      = errors.New("specified category does not exist")
 
 	// Upload errors

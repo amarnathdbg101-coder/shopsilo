@@ -201,7 +201,7 @@ func (s *UploadService) UploadShopImages(
 	return newLogoURL, newBanners, nil
 }
 
-// UploadProductImages uploads up to 4 images for a product
+// UploadProductImages uploads up to 10 images for a product
 func (s *UploadService) UploadProductImages(
 	ctx context.Context,
 	userID string,
@@ -213,7 +213,7 @@ func (s *UploadService) UploadProductImages(
 		return nil, errors.New("shop not found")
 	}
 
-	if len(files) > 4 {
+	if len(files) > 10 {
 		return nil, ErrTooManyProductImages
 	}
 

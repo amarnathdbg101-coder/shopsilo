@@ -113,7 +113,7 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 	images := input.Images
 
 	// 3. Enforce max 4 images (Cost & Storage efficiency rule)
-	if len(images) > 4 {
+	if len(images) > 10 {
 		return nil, ErrTooManyProductImages
 	}
 
@@ -316,7 +316,7 @@ func (s *ProductService) UpdateProduct(ctx context.Context, userID, productID st
 
 	// Handle images update & clean orphaned images from R2
 	if input.Images != nil {
-		if len(*input.Images) > 4 {
+		if len(*input.Images) > 10 {
 			return nil, ErrTooManyProductImages
 		}
 

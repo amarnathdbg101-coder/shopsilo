@@ -73,7 +73,7 @@ func TestProductControllerValidation(t *testing.T) {
 		}
 		ctx := context.WithValue(context.Background(), middleware.ContextKeyUser, claims)
 
-		// 5 images exceeds the professional limit of 4
+		// 5 images exceeds the professional limit of 10
 		fiveImagesBody, _ := json.Marshal(dto.CreateProductRequest{
 			Name:          "Wireless Mouse",
 			SKU:           "WM-001",
@@ -86,6 +86,12 @@ func TestProductControllerValidation(t *testing.T) {
 				"https://example.com/3.jpg",
 				"https://example.com/4.jpg",
 				"https://example.com/5.jpg",
+			"https://example.com/6.jpg",
+			"https://example.com/7.jpg",
+			"https://example.com/8.jpg",
+			"https://example.com/9.jpg",
+			"https://example.com/10.jpg",
+			"https://example.com/11.jpg",
 			},
 		})
 

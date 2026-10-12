@@ -132,7 +132,7 @@ func (c *UploadController) UploadShopImages(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// UploadProductImages handles uploading up to 4 images for a product
+// UploadProductImages handles uploading up to 10 images for a product
 func (c *UploadController) UploadProductImages(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())
 	if claims == nil || claims.UserID == "" {
@@ -162,8 +162,8 @@ func (c *UploadController) UploadProductImages(w http.ResponseWriter, r *http.Re
 		reuse.Error(w, http.StatusBadRequest, "at least one image is required")
 		return
 	}
-	if len(headers) > 4 {
-		headers = headers[:4]
+	if len(headers) > 10 {
+		headers = headers[:10]
 	}
 
 	var files []multipart.File

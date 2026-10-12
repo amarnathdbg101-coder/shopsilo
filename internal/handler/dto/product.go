@@ -21,7 +21,7 @@ type CreateProductRequest struct {
 	StockQuantity     int                    `json:"stock_quantity" validate:"gte=0"`
 	MinStock          *int                   `json:"min_stock,omitempty" validate:"omitempty,gte=0"` // Shop owner configured minimum stock threshold (default 1)
 	LowStockThreshold *int                   `json:"low_stock_threshold,omitempty" validate:"omitempty,gte=0"`
-	Images            []string               `json:"images,omitempty" validate:"omitempty,max=4"` // Max 4 images professional standard
+	Images            []string               `json:"images,omitempty" validate:"omitempty,max=10"` // Max 4 images professional standard
 	Weight            float64                `json:"weight,omitempty" validate:"omitempty,gte=0"`
 	IsActive          bool                   `json:"is_active"`
 	IsFeatured        bool                   `json:"is_featured"`
@@ -44,7 +44,7 @@ type UpdateProductRequest struct {
 	StockQuantity     *int                    `json:"stock_quantity,omitempty" validate:"omitempty,gte=0"`
 	MinStock          *int                    `json:"min_stock,omitempty" validate:"omitempty,gte=0"`
 	LowStockThreshold *int                    `json:"low_stock_threshold,omitempty" validate:"omitempty,gte=0"`
-	Images            *[]string               `json:"images,omitempty" validate:"omitempty,max=4"` // Max 4 images
+	Images            *[]string               `json:"images,omitempty" validate:"omitempty,max=10"` // Max 4 images
 	Weight            *float64                `json:"weight,omitempty" validate:"omitempty,gte=0"`
 	IsActive          *bool                   `json:"is_active,omitempty"`
 	IsFeatured        *bool                   `json:"is_featured,omitempty"`
