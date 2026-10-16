@@ -157,36 +157,40 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Post("/refresh", uc.RefreshToken)                 // Both
 	})
 
-	// Public Browsing routes (customers & visitors)
-	r.Get("/catalog/home-feed", sc.GetHomeFeed)                        // Customer
-	r.Get("/home-feed", sc.GetHomeFeed)                                // Customer
-	r.Post("/ai/customer-chat", aic.CustomerChat)                      // Customer
-	r.Post("/ai/scan-product", aic.ScanProduct)                        // Both
-	r.Post("/ai/parse-parchi", aic.ParseParchi)                        // Both
-	r.Post("/ai/semantic-search", aic.SemanticSearch)                  // Customer
-	r.Post("/ai/voice-bill", aic.VoiceBill)                            // Shop
-	r.Post("/ai/marketing-campaign", aic.GenerateMarketingCampaign)   // Shop
-	r.Post("/ai/bargain-assist", aic.BargainAssist)                    // Both
-	r.Get("/categories", catc.List)                                    // Both
-	r.Get("/shops", sc.List)                                           // Customer
-	r.Get("/shops/{id}", sc.GetByID)                                   // Customer
-	r.Get("/shops/slug/{slug}", sc.GetBySlug)                          // Customer
-	r.Get("/shops/{slug}/qr", sc.GetShopQR)                            // Customer
-	r.Get("/shops/{slug}/products", pc.ListByShop)                     // Customer
-	r.Get("/shops/{slug}/reviews", revc.List)                          // Customer
-	r.Get("/shops/{slug}/offers", loyc.ListOffers)                     // Customer
-	r.Get("/offers", loyc.ListAllOffers)                               // Customer
-	r.Get("/deals", loyc.ListAllOffers)                                // Customer
-	r.Get("/products/nearby", pc.FindNearby)                           // Customer
-	r.Get("/products", pc.List)                                        // Customer
-	r.Get("/products/{id}", pc.GetByID)                                // Customer
-	r.Get("/products/slug/{slug}", pc.GetBySlug)                       // Customer
-	r.Get("/products/scan/{code}", loyc.ScanProduct)                   // Customer
-	r.Post("/products/{id}/notify-me", invc.SubscribeStockAlert)       // Customer
-	r.Post("/products/{id}/make-offer", pc.MakeOffer)                  // Customer
-	r.Get("/receipts/{bill_number}", posc.ViewPublicReceiptPDF)        // Customer
-	r.Post("/reports/telemetry-error", telc.LogFrontendError)          // Both
-	r.Get("/images/*", upc.ServeImage)                                 // Both
+	// Public Browsing routes (customers & visitors) protected by anti-scraping and DDoS Rate Limiter
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.GlobalRateLimiter.Middleware())
+
+		r.Get("/catalog/home-feed", sc.GetHomeFeed)                        // Customer
+		r.Get("/home-feed", sc.GetHomeFeed)                                // Customer
+		r.Post("/ai/customer-chat", aic.CustomerChat)                      // Customer
+		r.Post("/ai/scan-product", aic.ScanProduct)                        // Both
+		r.Post("/ai/parse-parchi", aic.ParseParchi)                        // Both
+		r.Post("/ai/semantic-search", aic.SemanticSearch)                  // Customer
+		r.Post("/ai/voice-bill", aic.VoiceBill)                            // Shop
+		r.Post("/ai/marketing-campaign", aic.GenerateMarketingCampaign)   // Shop
+		r.Post("/ai/bargain-assist", aic.BargainAssist)                    // Both
+		r.Get("/categories", catc.List)                                    // Both
+		r.Get("/shops", sc.List)                                           // Customer
+		r.Get("/shops/{id}", sc.GetByID)                                   // Customer
+		r.Get("/shops/slug/{slug}", sc.GetBySlug)                          // Customer
+		r.Get("/shops/{slug}/qr", sc.GetShopQR)                            // Customer
+		r.Get("/shops/{slug}/products", pc.ListByShop)                     // Customer
+		r.Get("/shops/{slug}/reviews", revc.List)                          // Customer
+		r.Get("/shops/{slug}/offers", loyc.ListOffers)                     // Customer
+		r.Get("/offers", loyc.ListAllOffers)                               // Customer
+		r.Get("/deals", loyc.ListAllOffers)                                // Customer
+		r.Get("/products/nearby", pc.FindNearby)                           // Customer
+		r.Get("/products", pc.List)                                        // Customer
+		r.Get("/products/{id}", pc.GetByID)                                // Customer
+		r.Get("/products/slug/{slug}", pc.GetBySlug)                       // Customer
+		r.Get("/products/scan/{code}", loyc.ScanProduct)                   // Customer
+		r.Post("/products/{id}/notify-me", invc.SubscribeStockAlert)       // Customer
+		r.With(middleware.Idempotency()).Post("/products/{id}/make-offer", pc.MakeOffer)                  // Customer
+		r.Get("/receipts/{bill_number}", posc.ViewPublicReceiptPDF)        // Customer
+		r.Post("/reports/telemetry-error", telc.LogFrontendError)          // Both
+		r.Get("/images/*", upc.ServeImage)                                 // Both
+	})
 
 	// Protected routes (JWT authentication required)
 	r.Group(func(r chi.Router) {
@@ -318,7 +322,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/shops/me/offers/history", loyc.GetOfferHistory)  // Shop
 
 		// In-Store Item Reservations (Customer)
-		r.Post("/reservations", resc.Create)                   // Customer
+		r.With(middleware.Idempotency()).Post("/reservations", resc.Create)                   // Customer
 		r.Get("/reservations", resc.ListUserReservations)      // Customer
 		r.Get("/reservations/{id}", resc.GetByID)              // Customer
 		r.Post("/reservations/{id}/cancel", resc.CancelUserReservation) // Customer

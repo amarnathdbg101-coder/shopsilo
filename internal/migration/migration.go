@@ -204,6 +204,12 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"CREATE INDEX IF NOT EXISTS idx_store_offers_shop_active ON store_offers(shop_id, is_active);",
 		"CREATE INDEX IF NOT EXISTS idx_banned_entities_banned_by ON banned_entities(banned_by);",
 		"CREATE INDEX IF NOT EXISTS idx_categories_parent_id ON categories(parent_id);",
+		// Step 2 Production Optimizations: Trigram & Geo Filtered Indexes
+		"CREATE INDEX IF NOT EXISTS idx_products_name_trgm ON products USING gin (name gin_trgm_ops);",
+		"CREATE INDEX IF NOT EXISTS idx_products_sku_trgm ON products USING gin (sku gin_trgm_ops);",
+		"CREATE INDEX IF NOT EXISTS idx_products_desc_trgm ON products USING gin (description gin_trgm_ops);",
+		"CREATE INDEX IF NOT EXISTS idx_shops_geo_active ON shops (latitude, longitude) WHERE is_active = true AND status = 'active' AND latitude IS NOT NULL AND longitude IS NOT NULL;",
+		"CREATE INDEX IF NOT EXISTS idx_inventory_in_stock ON inventory (product_id) WHERE (quantity - reserved_quantity) > 0;",
 
 		`INSERT INTO categories (name, slug, description, icon, is_active) VALUES
 		('Kirana & Grocery', 'kirana-grocery', 'Daily essentials, rice, flour, oil, pulses and spices', '🛒', true),

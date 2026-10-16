@@ -1217,8 +1217,10 @@ func (r *ProductRepo) FindNearbyProducts(
 	if page < 1 {
 		page = 1
 	}
-	if limit < 1 || limit > 50 {
-		limit = 10
+	if limit < 1 {
+		limit = 20
+	} else if limit > 100 {
+		limit = 100
 	}
 	offset := (page - 1) * limit
 
