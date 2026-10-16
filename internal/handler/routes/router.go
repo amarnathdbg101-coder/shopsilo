@@ -127,6 +127,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	r.Use(middleware.BanGuard(modRepo))
 	r.Use(chimw.Recoverer)
 	r.Use(middleware.CORS)
+	r.Use(middleware.SecurityHeaders)
 
 	// Liveness & Readiness health check for production orchestrators
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) { // Both
