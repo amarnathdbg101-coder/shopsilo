@@ -350,8 +350,10 @@ func (c *ProductController) ListByShop(w http.ResponseWriter, r *http.Request) {
 		page = 1
 	}
 	limit, _ := strconv.Atoi(query.Get("limit"))
-	if limit < 1 || limit > 100 {
-		limit = 16
+	if limit < 1 {
+		limit = 20
+	} else if limit > 100 {
+		limit = 100
 	}
 
 	search := query.Get("q")
