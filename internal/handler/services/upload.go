@@ -105,7 +105,7 @@ func (s *UploadService) UploadShopImages(
 		return "", nil, errors.New("shop not found")
 	}
 
-	if len(bannerFiles) > 2 {
+	if len(bannerFiles) > 4 {
 		return "", nil, ErrTooManyBannerImages
 	}
 
@@ -183,10 +183,13 @@ func (s *UploadService) UploadShopImages(
 			return "", nil, bannerErr
 		}
 
-		// Populate shop banners if none existed previously
-		if len(shop.Banners) == 0 {
-			shop.Banners = newBanners
+		// Delete previously uploaded banners from R2 storage before replacing
+		for _, oldBanner := range shop.Banners {
+			if oldBanner != "" {
+				_ = reuse.DeleteImage(oldBanner)
+			}
 		}
+		shop.Banners = newBanners
 	} else {
 		newBanners = shop.Banners
 	}

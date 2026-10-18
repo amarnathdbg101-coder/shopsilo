@@ -16,7 +16,7 @@ type CreateShopRequest struct {
 	Latitude       *float64  `json:"latitude,omitempty" validate:"omitempty,latitude"`
 	Longitude      *float64  `json:"longitude,omitempty" validate:"omitempty,longitude"`
 	LogoURL        string    `json:"logo_url,omitempty"`
-	Banners        []string  `json:"banners,omitempty" validate:"omitempty,max=2"` // max 2 promotional banners
+	Banners        []string  `json:"banners,omitempty" validate:"omitempty,max=4"` // max 4 promotional banners
 	Timing         string    `json:"timing,omitempty" validate:"omitempty,max=100"`
 	OpeningTime    string    `json:"opening_time,omitempty" validate:"omitempty,max=10"`
 	ClosingTime    string    `json:"closing_time,omitempty" validate:"omitempty,max=10"`
@@ -37,7 +37,7 @@ type UpdateShopRequest struct {
 	Latitude       *float64  `json:"latitude,omitempty" validate:"omitempty,latitude"`
 	Longitude      *float64  `json:"longitude,omitempty" validate:"omitempty,longitude"`
 	LogoURL        *string   `json:"logo_url,omitempty"`
-	Banners        *[]string `json:"banners,omitempty" validate:"omitempty,max=2"` // max 2 promotional banners
+	Banners        *[]string `json:"banners,omitempty" validate:"omitempty,max=4"` // max 4 promotional banners
 	Timing         *string   `json:"timing,omitempty" validate:"omitempty,max=100"`
 	OpeningTime    *string   `json:"opening_time,omitempty" validate:"omitempty,max=10"`
 	ClosingTime    *string   `json:"closing_time,omitempty" validate:"omitempty,max=10"`

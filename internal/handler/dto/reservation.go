@@ -11,7 +11,7 @@ type CreateReservationRequest struct {
 }
 
 type VerifyReservationRequest struct {
-	PickupCode        string `json:"pickup_code,omitempty" validate:"omitempty,min=4,max=10"`
+	PickupCode        string `json:"pickup_code,omitempty" validate:"omitempty,min=4,max=50"`
 	ReservationNumber string `json:"reservation_number,omitempty" validate:"omitempty,min=4,max=50"`
 }
 

@@ -19,7 +19,7 @@ type Shop struct {
 	WhatsAppNumber string    `json:"whatsapp_number,omitempty"`
 	UPIID          string    `json:"upi_id,omitempty"`
 	LogoURL        string    `json:"logo_url,omitempty"`
-	Banners        []string  `json:"banners"` // max 2 promotional banners
+	Banners        []string  `json:"banners"` // max 4 promotional banners
 	Timing         string    `json:"timing,omitempty"`
 	OpeningTime    string    `json:"opening_time,omitempty"`
 	ClosingTime    string    `json:"closing_time,omitempty"`

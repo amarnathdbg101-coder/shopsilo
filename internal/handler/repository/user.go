@@ -431,6 +431,10 @@ func (r *UserRepo) UpdateProfile(ctx context.Context, userID, fullName, phone st
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrUserNotFound
 		}
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, ErrDuplicatePhone
+		}
 		r.logger.Error("failed to update user profile", zap.Error(err), zap.String("user_id", userID))
 		return nil, err
 	}

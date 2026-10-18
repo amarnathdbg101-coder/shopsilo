@@ -58,6 +58,10 @@ func (c *ProductController) Create(w http.ResponseWriter, r *http.Request) {
 
 	product, err := c.productService.CreateProduct(r.Context(), claims.UserID, input)
 	if err != nil {
+		if errors.Is(err, services.ErrShopRequired) {
+			reuse.Error(w, http.StatusForbidden, err.Error())
+			return
+		}
 		if errors.Is(err, services.ErrTooManyProductImages) || errors.Is(err, services.ErrInvalidCategory) {
 			reuse.Error(w, http.StatusBadRequest, err.Error())
 			return
@@ -149,16 +153,34 @@ func sanitizePublicProduct(p *model.Product) {
 	if p == nil {
 		return
 	}
+	// Enterprise Privacy Shield: Zero leakage of merchant-only commercial metrics (Rule 15)
+	p.CostPrice = 0
+	p.FloorPrice = 0
+	p.SKU = ""
+	if p.Attributes != nil {
+		delete(p.Attributes, "cost_price")
+		delete(p.Attributes, "costprice")
+		delete(p.Attributes, "floor_price")
+		delete(p.Attributes, "floorprice")
+		delete(p.Attributes, "cogs")
+		delete(p.Attributes, "wholesale_price")
+		delete(p.Attributes, "purchase_price")
+		delete(p.Attributes, "kharid_price")
+		delete(p.Attributes, "supplier")
+		delete(p.Attributes, "vendor")
+		delete(p.Attributes, "dealer")
+		delete(p.Attributes, "reorder_point")
+		delete(p.Attributes, "barcode")
+		delete(p.Attributes, "sku")
+		delete(p.Attributes, "internal_id")
+	}
+
 	if !p.IsPricePublic {
 		p.Price = 0
 		p.ComparePrice = 0
-		p.CostPrice = 0
-		p.FloorPrice = 0
 		p.MRP = 0
 		if p.Attributes != nil {
 			delete(p.Attributes, "price")
-			delete(p.Attributes, "cost_price")
-			delete(p.Attributes, "floor_price")
 			delete(p.Attributes, "compare_price")
 			delete(p.Attributes, "mrp")
 			p.Attributes["is_price_public"] = false

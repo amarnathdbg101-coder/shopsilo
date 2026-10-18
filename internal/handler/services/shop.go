@@ -324,7 +324,7 @@ func (s *ShopService) UpdateMyShop(ctx context.Context, userID string, input dto
 		shop.LogoURL = strings.TrimSpace(*input.LogoURL)
 	}
 	if input.Banners != nil {
-		if len(*input.Banners) > 2 {
+		if len(*input.Banners) > 4 {
 			return nil, ErrTooManyBannerImages
 		}
 

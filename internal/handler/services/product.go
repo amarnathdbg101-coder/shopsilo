@@ -100,7 +100,7 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 	// 1. Verify user owns a shop
 	shop, err := s.shopRepo.FindByUserID(ctx, userID)
 	if err != nil {
-		return nil, errors.New("you must have a registered shop to create products")
+		return nil, ErrShopRequired
 	}
 
 	// 2. Validate category

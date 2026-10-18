@@ -383,6 +383,14 @@ func (c *UserController) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 
 	res, err := c.service.UpdateProfile(r.Context(), claims.UserID, input)
 	if err != nil {
+		if errors.Is(err, services.ErrPhoneTaken) {
+			reuse.Error(w, http.StatusConflict, err.Error())
+			return
+		}
+		if errors.Is(err, services.ErrUserNotFound) {
+			reuse.Error(w, http.StatusNotFound, err.Error())
+			return
+		}
 		reuse.Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}

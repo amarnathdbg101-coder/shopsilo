@@ -25,4 +25,12 @@ type Reservation struct {
 	Product                *Product   `json:"product,omitempty"`
 	User                   *User      `json:"user,omitempty"`
 	TimeRemainingMinutes   int        `json:"time_remaining_minutes"`
+
+	// Top-level direct access fields for seamless cross-client hydration
+	ProductName            string     `json:"product_name,omitempty"`
+	ProductImage           string     `json:"product_image,omitempty"`
+	ProductImages          []string   `json:"product_images,omitempty"`
+	ProductPrice           float64    `json:"product_price,omitempty"`
+	ProductSKU             string     `json:"product_sku,omitempty"`
+	TotalAmount            float64    `json:"total_amount,omitempty"`
 }

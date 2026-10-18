@@ -88,8 +88,8 @@ func (c *UploadController) UploadShopImages(w http.ResponseWriter, r *http.Reque
 	if len(bHeaders) == 0 {
 		bHeaders = r.MultipartForm.File["banners[]"]
 	}
-	if len(bHeaders) > 2 {
-		reuse.Error(w, http.StatusBadRequest, "cannot upload more than 2 promotional banners")
+	if len(bHeaders) > 4 {
+		reuse.Error(w, http.StatusBadRequest, "cannot upload more than 4 promotional banners")
 		return
 	}
 

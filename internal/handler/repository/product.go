@@ -215,9 +215,13 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*model.Product, 
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
 		       COALESCE(p.category_id::text, ''), COALESCE(p.images, '[]'::jsonb), COALESCE(p.weight, 0), p.is_active, p.is_featured, COALESCE(p.tags, '{}'), COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1),
+		       COALESCE(s.name, ''), COALESCE(s.slug, ''), COALESCE(s.phone, ''), COALESCE(s.address, ''), COALESCE(s.city, ''),
+		       s.latitude, s.longitude, COALESCE(c.name, ''),
 		       COALESCE(p.floor_price, 0), COALESCE(p.allow_bargain, true), COALESCE(p.is_price_public, true)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
+		LEFT JOIN shops s ON s.id = p.shop_id
+		LEFT JOIN categories c ON c.id = p.category_id
 		WHERE p.id = $1 AND p.is_active = true
 		LIMIT 1
 	`
@@ -247,6 +251,14 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*model.Product, 
 		&inv.Quantity,
 		&inv.ReservedQuantity,
 		&inv.LowStockThreshold,
+		&p.ShopName,
+		&p.ShopSlug,
+		&p.ShopPhone,
+		&p.ShopAddress,
+		&p.ShopCity,
+		&p.ShopLatitude,
+		&p.ShopLongitude,
+		&p.CategoryName,
 		&p.FloorPrice,
 		&p.AllowBargain,
 		&p.IsPricePublic,
@@ -267,6 +279,13 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*model.Product, 
 	p.Attributes = make(map[string]interface{})
 	if len(attributesBytes) > 0 {
 		_ = json.Unmarshal(attributesBytes, &p.Attributes)
+	}
+	if p.CategoryName == "" && p.Attributes != nil {
+		if cName, ok := p.Attributes["category_name"].(string); ok && cName != "" {
+			p.CategoryName = cName
+		} else if cName, ok := p.Attributes["category"].(string); ok && cName != "" {
+			p.CategoryName = cName
+		}
 	}
 
 	inv.AvailableQuantity = inv.Quantity - inv.ReservedQuantity
@@ -365,9 +384,13 @@ func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*model.Produ
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
 		       COALESCE(p.category_id::text, ''), COALESCE(p.images, '[]'::jsonb), COALESCE(p.weight, 0), p.is_active, p.is_featured, COALESCE(p.tags, '{}'), COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1),
+		       COALESCE(s.name, ''), COALESCE(s.slug, ''), COALESCE(s.phone, ''), COALESCE(s.address, ''), COALESCE(s.city, ''),
+		       s.latitude, s.longitude, COALESCE(c.name, ''),
 		       COALESCE(p.floor_price, 0), COALESCE(p.allow_bargain, true), COALESCE(p.is_price_public, true)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
+		LEFT JOIN shops s ON s.id = p.shop_id
+		LEFT JOIN categories c ON c.id = p.category_id
 		WHERE p.slug = LOWER(TRIM($1)) AND p.is_active = true
 		LIMIT 1
 	`
@@ -397,6 +420,14 @@ func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*model.Produ
 		&inv.Quantity,
 		&inv.ReservedQuantity,
 		&inv.LowStockThreshold,
+		&p.ShopName,
+		&p.ShopSlug,
+		&p.ShopPhone,
+		&p.ShopAddress,
+		&p.ShopCity,
+		&p.ShopLatitude,
+		&p.ShopLongitude,
+		&p.CategoryName,
 		&p.FloorPrice,
 		&p.AllowBargain,
 		&p.IsPricePublic,
@@ -417,6 +448,13 @@ func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*model.Produ
 	p.Attributes = make(map[string]interface{})
 	if len(attributesBytes) > 0 {
 		_ = json.Unmarshal(attributesBytes, &p.Attributes)
+	}
+	if p.CategoryName == "" && p.Attributes != nil {
+		if cName, ok := p.Attributes["category_name"].(string); ok && cName != "" {
+			p.CategoryName = cName
+		} else if cName, ok := p.Attributes["category"].(string); ok && cName != "" {
+			p.CategoryName = cName
+		}
 	}
 
 	inv.AvailableQuantity = inv.Quantity - inv.ReservedQuantity

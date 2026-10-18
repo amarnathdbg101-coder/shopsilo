@@ -139,8 +139,8 @@ func UploadImage(file multipart.File, header *multipart.FileHeader, folder strin
 		return "", fmt.Errorf("failed to upload image to storage: %w", err)
 	}
 
-	// Construct public/accessible URL
-	if cfg.PublicURL != "" {
+	// Construct public/accessible URL (fallback to backend /images proxy if public url is empty or .r2.dev returns 401)
+	if cfg.PublicURL != "" && !strings.Contains(cfg.PublicURL, ".r2.dev") {
 		return fmt.Sprintf("%s/%s", strings.TrimRight(cfg.PublicURL, "/"), key), nil
 	}
 	// Default to backend /images proxy endpoint

@@ -5,6 +5,7 @@ import "errors"
 
 var (
 	// User errors
+	ErrUserNotFound              = errors.New("user not found")
 	ErrInvalidCredentials        = errors.New("invalid email or password")
 	ErrAccountInactive           = errors.New("account is inactive or suspended")
 	ErrEmailTaken                = errors.New("email is already registered")
@@ -33,9 +34,10 @@ var (
 	ErrProductNotFound      = errors.New("product not found")
 	ErrTooManyProductImages = errors.New("a product cannot have more than 10 images")
 	ErrInvalidCategory      = errors.New("specified category does not exist")
+	ErrShopRequired         = errors.New("you must have a registered shop to create products")
 
 	// Upload errors
-	ErrTooManyBannerImages = errors.New("cannot upload more than 2 promotional banner images for a shop")
+	ErrTooManyBannerImages = errors.New("cannot upload more than 4 promotional banner images for a shop")
 
 	// Reservation errors
 	ErrReservationNotFound     = errors.New("reservation not found or already processed")

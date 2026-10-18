@@ -4,6 +4,7 @@ package services
 import (
 	"context"
 	"crypto/rand"
+	"regexp"
 	"errors"
 	"fmt"
 	"math"
@@ -272,12 +273,67 @@ func (s *ReservationService) VerifyShopReservation(ctx context.Context, shopOwne
 	}
 	defer tx.Rollback(ctx)
 
-	completed, err := s.resRepo.VerifyAndCompleteWithTx(ctx, tx, shop.ID, input.PickupCode, input.ReservationNumber)
+	code := strings.TrimSpace(input.PickupCode)
+	resNum := strings.TrimSpace(input.ReservationNumber)
+	if code != "" && resNum == "" {
+		resNum = code
+	} else if resNum != "" && code == "" {
+		code = resNum
+	}
+
+	completed, err := s.resRepo.VerifyAndCompleteWithTx(ctx, tx, shop.ID, code, resNum)
 	if err != nil {
 		if errors.Is(err, repository.ErrReservationNotFound) {
 			return nil, ErrInvalidVerificationCode
 		}
 		return nil, err
+	}
+
+	// Record completed pickup sale into pos_bills so Daily Revenue, Sales Count, and Receipts sync seamlessly
+	var prodName, prodSKU string
+	var prodPrice, prodCost float64
+	if completed.ProductID != "" {
+		_ = tx.QueryRow(ctx, `SELECT name, sku, price, cost_price FROM products WHERE id = $1`, completed.ProductID).Scan(&prodName, &prodSKU, &prodPrice, &prodCost)
+	}
+	if prodName == "" {
+		prodName = "Store Pickup Order"
+	}
+	unitPrice := prodPrice
+	if unitPrice <= 0 {
+		unitPrice = 0
+	}
+	totalAmount := unitPrice * float64(completed.Quantity)
+	totalCost := prodCost * float64(completed.Quantity)
+
+	var customerPhone string
+	if completed.UserID != "" {
+		_ = tx.QueryRow(ctx, `SELECT phone FROM users WHERE id = $1`, completed.UserID).Scan(&customerPhone)
+	}
+	if customerPhone == "" && completed.Notes != "" {
+		re := regexp.MustCompile(`[6-9]\d{9}`)
+		if m := re.FindString(completed.Notes); m != "" {
+			customerPhone = m
+		}
+	}
+
+	billNum := fmt.Sprintf("PICKUP-%s", completed.ReservationNumber)
+	var billID string
+	billQuery := `
+		INSERT INTO pos_bills (
+			shop_id, bill_number, customer_phone, subtotal, discount_amount, total_amount, total_cost, payment_method, cash_amount, online_amount, khata_amount, created_at
+		)
+		VALUES ($1, $2, $3, $4, 0, $4, $5, 'pickup_counter', $4, 0, 0, NOW())
+		RETURNING id
+	`
+	if err := tx.QueryRow(ctx, billQuery, shop.ID, billNum, customerPhone, totalAmount, totalCost).Scan(&billID); err == nil && billID != "" {
+		var pIDParam interface{} = nil
+		if completed.ProductID != "" {
+			pIDParam = completed.ProductID
+		}
+		_, _ = tx.Exec(ctx, `
+			INSERT INTO pos_bill_items (bill_id, product_id, product_name, product_sku, quantity, unit_price, unit_cost, total_price)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`, billID, pIDParam, prodName, prodSKU, completed.Quantity, unitPrice, prodCost, totalAmount)
 	}
 
 	if err := tx.Commit(ctx); err != nil {

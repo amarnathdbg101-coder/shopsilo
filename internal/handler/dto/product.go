@@ -83,6 +83,10 @@ type NearbyProductItem struct {
 	Slug              string   `json:"slug"`
 	Price             float64  `json:"price"`
 	Images            []string `json:"images"`
+	CategoryID        string   `json:"category_id,omitempty"`
+	CategoryName      string   `json:"category_name,omitempty"`
+	CategorySlug      string   `json:"category_slug,omitempty"`
+	SKU               string   `json:"sku,omitempty"`
 	AvailableQuantity int      `json:"available_quantity"`
 	ShopID            string   `json:"shop_id"`
 	ShopName          string   `json:"shop_name"`

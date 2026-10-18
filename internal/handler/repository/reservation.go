@@ -297,6 +297,15 @@ func (r *ReservationRepo) FindByUserID(ctx context.Context, userID string, filte
 			_ = json.Unmarshal(productImagesBytes, &res.Product.Images)
 		}
 
+		res.Product.ID = res.ProductID
+		res.ProductName = res.Product.Name
+		res.ProductPrice = res.Product.Price
+		res.ProductImages = res.Product.Images
+		if len(res.Product.Images) > 0 {
+			res.ProductImage = res.Product.Images[0]
+		}
+		res.TotalAmount = res.Product.Price * float64(res.Quantity)
+
 		if res.Status == "active" {
 			rem := int(time.Until(res.ExpiresAt).Minutes())
 			if rem < 0 {
@@ -344,12 +353,16 @@ func (r *ReservationRepo) FindByShopID(ctx context.Context, shopID string, filte
 	query := fmt.Sprintf(`
 		SELECT r.id, r.reservation_number, COALESCE(r.user_id::text, ''), r.shop_id, COALESCE(r.product_id::text, ''), r.quantity, r.pickup_code,
 		       r.status, r.expires_at, r.completed_at, COALESCE(r.notes, ''), r.created_at, r.updated_at,
-		       p.name AS product_name, p.slug AS product_slug, p.price AS product_price, p.images AS product_images,
+		       COALESCE(p.name, 'Product Item') AS product_name,
+		       COALESCE(p.slug, '') AS product_slug,
+		       COALESCE(p.price, 0) AS product_price,
+		       COALESCE(p.sku, '') AS product_sku,
+		       p.images AS product_images,
 		       COALESCE(u.full_name, u.name, 'Customer') AS customer_name,
 		       COALESCE(u.phone, u.mobile, '') AS customer_phone,
 		       COUNT(*) OVER() AS total_count
 		FROM reservations r
-		JOIN products p ON r.product_id = p.id
+		LEFT JOIN products p ON r.product_id = p.id
 		LEFT JOIN users u ON r.user_id = u.id
 		WHERE %s
 		ORDER BY (r.status = 'active' OR r.status = 'pending') DESC, r.created_at DESC
@@ -390,6 +403,7 @@ func (r *ReservationRepo) FindByShopID(ctx context.Context, shopID string, filte
 			&res.Product.Name,
 			&res.Product.Slug,
 			&res.Product.Price,
+			&res.Product.SKU,
 			&productImagesBytes,
 			&res.CustomerName,
 			&res.CustomerPhone,
@@ -403,6 +417,16 @@ func (r *ReservationRepo) FindByShopID(ctx context.Context, shopID string, filte
 		if len(productImagesBytes) > 0 {
 			_ = json.Unmarshal(productImagesBytes, &res.Product.Images)
 		}
+
+		res.Product.ID = res.ProductID
+		res.ProductName = res.Product.Name
+		res.ProductPrice = res.Product.Price
+		res.ProductImages = res.Product.Images
+		if len(res.Product.Images) > 0 {
+			res.ProductImage = res.Product.Images[0]
+		}
+		res.ProductSKU = res.Product.SKU
+		res.TotalAmount = res.Product.Price * float64(res.Quantity)
 
 		if res.Status == "active" || res.Status == "pending" {
 			rem := int(time.Until(res.ExpiresAt).Minutes())

@@ -835,6 +835,9 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID string, input dt
 	}
 	user, err := s.repo.UpdateProfile(ctx, userID, input.FullName, input.Phone)
 	if err != nil {
+		if errors.Is(err, repository.ErrDuplicatePhone) {
+			return nil, ErrPhoneTaken
+		}
 		return nil, err
 	}
 	return &dto.UserResponse{
