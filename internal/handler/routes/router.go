@@ -58,6 +58,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	// Reservation layer (In-Store item hold & counter pickup verification)
 	resRepo := repository.NewReservationRepo(db, logger)
 	resService := services.NewReservationService(resRepo, shopRepo, productRepo)
+	resService.SetUserRepo(userRepo)
 	resc := controller.NewReservationController(resService)
 
 	// Review layer (Shop reviews & trust ratings)

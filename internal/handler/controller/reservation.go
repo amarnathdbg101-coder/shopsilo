@@ -6,10 +6,12 @@ import (
 	"errors"
 	"net/http"
 	"shopMe/internal/handler/dto"
+	"shopMe/internal/handler/repository"
 	"shopMe/internal/handler/services"
 	"shopMe/internal/middleware"
 	"shopMe/internal/reuse"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -45,6 +47,14 @@ func (c *ReservationController) Create(w http.ResponseWriter, r *http.Request) {
 
 	res, err := c.service.CreateReservation(r.Context(), claims.UserID, input)
 	if err != nil {
+		if errors.Is(err, services.ErrUserNotFound) || errors.Is(err, repository.ErrUserNotFound) || strings.Contains(strings.ToLower(err.Error()), "user not found") {
+			reuse.Error(w, http.StatusUnauthorized, "user account not found or session expired, please sign in again")
+			return
+		}
+		if errors.Is(err, services.ErrAccountInactive) {
+			reuse.Error(w, http.StatusForbidden, "account is inactive or suspended")
+			return
+		}
 		if errors.Is(err, services.ErrMaxActiveReservations) {
 			reuse.Error(w, http.StatusTooManyRequests, err.Error())
 			return
@@ -85,6 +95,10 @@ func (c *ReservationController) ListUserReservations(w http.ResponseWriter, r *h
 
 	res, err := c.service.ListUserReservations(r.Context(), claims.UserID, filter)
 	if err != nil {
+		if errors.Is(err, services.ErrUserNotFound) || errors.Is(err, repository.ErrUserNotFound) || strings.Contains(strings.ToLower(err.Error()), "user not found") {
+			reuse.Error(w, http.StatusUnauthorized, "user account not found or session expired, please sign in again")
+			return
+		}
 		reuse.Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}

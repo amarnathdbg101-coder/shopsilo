@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
@@ -127,6 +128,10 @@ func (r *ReservationRepo) CreateWithTx(ctx context.Context, tx pgx.Tx, res *mode
 		&created.UpdatedAt,
 	)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return nil, ErrUserNotFound
+		}
 		r.logger.Error("failed to insert reservation in tx", zap.Error(err))
 		return nil, err
 	}

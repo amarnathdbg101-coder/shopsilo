@@ -21,6 +21,11 @@ type ReservationService struct {
 	resRepo     *repository.ReservationRepo
 	shopRepo    *repository.ShopRepo
 	productRepo *repository.ProductRepo
+	userRepo    *repository.UserRepo
+}
+
+func (s *ReservationService) SetUserRepo(userRepo *repository.UserRepo) {
+	s.userRepo = userRepo
 }
 
 func NewReservationService(
@@ -56,6 +61,17 @@ func generateReservationNumber() string {
 func (s *ReservationService) CreateReservation(ctx context.Context, userID string, input dto.CreateReservationRequest) (*model.Reservation, error) {
 	if input.Quantity <= 0 {
 		input.Quantity = 1
+	}
+
+	// 0. Verify customer account exists & is active
+	if s.userRepo != nil {
+		user, err := s.userRepo.FindByID(ctx, userID)
+		if err != nil || user == nil {
+			return nil, ErrUserNotFound
+		}
+		if !user.IsActive {
+			return nil, ErrAccountInactive
+		}
 	}
 
 	// 1. Fetch product

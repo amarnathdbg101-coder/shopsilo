@@ -12,6 +12,7 @@ import (
 	"shopMe/internal/reuse"
 	"shopMe/internal/utils"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -325,6 +326,10 @@ func (c *UserController) GetProfile(w http.ResponseWriter, r *http.Request) {
 
 	res, err := c.service.GetProfile(r.Context(), claims.UserID)
 	if err != nil {
+		if errors.Is(err, services.ErrUserNotFound) || errors.Is(err, repository.ErrUserNotFound) || strings.Contains(strings.ToLower(err.Error()), "user not found") {
+			reuse.Error(w, http.StatusUnauthorized, "user account not found or session expired, please sign in again")
+			return
+		}
 		reuse.Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -346,6 +351,10 @@ func (c *UserController) GetBootstrapData(w http.ResponseWriter, r *http.Request
 
 	bootstrap, err := c.service.GetBootstrapData(r.Context(), claims.UserID)
 	if err != nil {
+		if errors.Is(err, services.ErrUserNotFound) || errors.Is(err, repository.ErrUserNotFound) || strings.Contains(strings.ToLower(err.Error()), "user not found") {
+			reuse.Error(w, http.StatusUnauthorized, "user account not found or session expired, please sign in again")
+			return
+		}
 		reuse.Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -383,12 +392,12 @@ func (c *UserController) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 
 	res, err := c.service.UpdateProfile(r.Context(), claims.UserID, input)
 	if err != nil {
-		if errors.Is(err, services.ErrPhoneTaken) {
-			reuse.Error(w, http.StatusConflict, err.Error())
+		if errors.Is(err, services.ErrPhoneTaken) || errors.Is(err, repository.ErrDuplicatePhone) {
+			reuse.Error(w, http.StatusConflict, "This mobile number is already linked to another account.")
 			return
 		}
-		if errors.Is(err, services.ErrUserNotFound) {
-			reuse.Error(w, http.StatusNotFound, err.Error())
+		if errors.Is(err, services.ErrUserNotFound) || errors.Is(err, repository.ErrUserNotFound) || strings.Contains(strings.ToLower(err.Error()), "user not found") {
+			reuse.Error(w, http.StatusUnauthorized, "user account not found or session expired, please sign in again")
 			return
 		}
 		reuse.Error(w, http.StatusInternalServerError, err.Error())

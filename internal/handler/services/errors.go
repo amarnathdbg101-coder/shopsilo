@@ -1,15 +1,18 @@
 // Package services handle business logic.
 package services
 
-import "errors"
+import (
+	"errors"
+	"shopMe/internal/handler/repository"
+)
 
 var (
 	// User errors
-	ErrUserNotFound              = errors.New("user not found")
+	ErrUserNotFound              = repository.ErrUserNotFound
 	ErrInvalidCredentials        = errors.New("invalid email or password")
 	ErrAccountInactive           = errors.New("account is inactive or suspended")
-	ErrEmailTaken                = errors.New("email is already registered")
-	ErrPhoneTaken                = errors.New("phone number is already registered")
+	ErrEmailTaken                = repository.ErrDuplicateEmail
+	ErrPhoneTaken                = repository.ErrDuplicatePhone
 	ErrInvalidResetToken         = errors.New("invalid or expired password reset token")
 	ErrOTPCooldown               = errors.New("please wait 60 seconds before requesting another otp")
 	ErrOTPHourlyLimitReached     = errors.New("maximum otp limit reached for this number, please try again in 1 hour")
@@ -18,7 +21,7 @@ var (
 	ErrOTPMaxAttemptsExceeded    = errors.New("too many invalid attempts, this otp has been locked. please request a new otp")
 	ErrInvalidVerificationToken  = errors.New("invalid or expired phone verification token")
 	ErrPhoneVerificationMismatch = errors.New("phone number does not match verified token")
-	ErrTokenAlreadyUsed          = errors.New("phone verification token has already been used")
+	ErrTokenAlreadyUsed          = repository.ErrTokenAlreadyUsed
 
 	// Shop errors
 	ErrUserAlreadyHasShop     = errors.New("you already have a registered shop")
