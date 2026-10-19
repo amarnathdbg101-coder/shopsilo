@@ -16,6 +16,7 @@ import (
 	"shopMe/internal/handler/model"
 	"shopMe/internal/handler/repository"
 	"shopMe/internal/reuse"
+	"shopMe/internal/utils"
 	"strconv"
 	"strings"
 	"time"
@@ -60,6 +61,13 @@ func (s *ProductService) resolveCategoryID(ctx context.Context, value string) (s
 	// 2. Try exact slug match
 	if category, err := s.categoryRepo.FindBySlug(ctx, strings.ToLower(trimmed)); err == nil && category != nil {
 		return category.ID, nil
+	}
+
+	// 2.5. Try canonical category alias resolution (e.g., "Grocery & Staples" -> "kirana-grocery")
+	if canonSlug, ok := utils.ResolveCanonicalCategorySlug(trimmed); ok {
+		if category, err := s.categoryRepo.FindBySlug(ctx, canonSlug); err == nil && category != nil {
+			return category.ID, nil
+		}
 	}
 
 	// 3. Try slugified match

@@ -85,9 +85,21 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 	}
 
 	var catID *string
-	if strings.TrimSpace(p.CategoryID) != "" {
-		c := strings.TrimSpace(p.CategoryID)
-		catID = &c
+	trimmedCat := strings.TrimSpace(p.CategoryID)
+	if trimmedCat != "" {
+		if len(trimmedCat) == 36 && strings.Count(trimmedCat, "-") == 4 {
+			catID = &trimmedCat
+		} else {
+			lookupTerm := trimmedCat
+			if canonSlug, ok := utils.ResolveCanonicalCategorySlug(trimmedCat); ok {
+				lookupTerm = canonSlug
+			}
+			var resolvedUUID string
+			_ = tx.QueryRow(ctx, `SELECT id::text FROM categories WHERE slug ILIKE $1 OR name ILIKE $1 LIMIT 1`, lookupTerm).Scan(&resolvedUUID)
+			if resolvedUUID != "" {
+				catID = &resolvedUUID
+			}
+		}
 	}
 
 	query := `
@@ -472,7 +484,14 @@ func (r *ProductRepo) FindBySKU(ctx context.Context, shopID, sku string) (*model
 		       COALESCE(p.floor_price, 0), COALESCE(p.allow_bargain, true), COALESCE(p.is_price_public, true)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
-		WHERE p.shop_id = $1 AND UPPER(TRIM(p.sku)) = UPPER(TRIM($2))
+		WHERE p.shop_id = $1 AND (
+			UPPER(TRIM(p.sku)) = UPPER(TRIM($2))
+			OR p.attributes->>'barcode' = TRIM($2)
+			OR p.attributes->>'Barcode' = TRIM($2)
+			OR p.attributes->>'sku' = TRIM($2)
+			OR p.id::text = TRIM($2)
+			OR p.attributes::text ILIKE '%' || TRIM($2) || '%'
+		)
 		LIMIT 1
 	`
 	p := &model.Product{}
@@ -576,6 +595,38 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 			argIdx++
 		}
 
+		// Canonical slug and name synonym expansion
+		synonymSlugs := utils.GetCategorySynonymSlugs(catTerm)
+		synonymNames := utils.GetCategorySynonymNames(catTerm)
+
+		if len(synonymSlugs) > 0 {
+			catOrs = append(catOrs, fmt.Sprintf("p.category_id IN (SELECT id FROM categories WHERE slug = ANY($%d))", argIdx))
+			args = append(args, synonymSlugs)
+			argIdx++
+
+			catOrs = append(catOrs, fmt.Sprintf("LOWER(COALESCE(p.attributes->>'category_name', '')) = ANY($%d)", argIdx))
+			args = append(args, synonymSlugs)
+			argIdx++
+
+			catOrs = append(catOrs, fmt.Sprintf("LOWER(COALESCE(p.attributes->>'category', '')) = ANY($%d)", argIdx))
+			args = append(args, synonymSlugs)
+			argIdx++
+		}
+
+		if len(synonymNames) > 0 {
+			var lowerNames []string
+			for _, n := range synonymNames {
+				lowerNames = append(lowerNames, strings.ToLower(n))
+			}
+			catOrs = append(catOrs, fmt.Sprintf("LOWER(COALESCE(p.attributes->>'category_name', '')) = ANY($%d)", argIdx))
+			args = append(args, lowerNames)
+			argIdx++
+
+			catOrs = append(catOrs, fmt.Sprintf("LOWER(COALESCE(p.attributes->>'category', '')) = ANY($%d)", argIdx))
+			args = append(args, lowerNames)
+			argIdx++
+		}
+
 		// Tokenized and Hinglish keyword fallback for unassigned or legacy products
 		keywordSource := catName
 		if keywordSource == "" {
@@ -614,7 +665,7 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 				var groupOrs []string
 				for _, term := range group.Terms {
 					wild := "%" + term + "%"
-					groupOrs = append(groupOrs, fmt.Sprintf("(p.name ILIKE $%d OR p.sku ILIKE $%d OR p.description ILIKE $%d OR p.slug ILIKE $%d OR p.tags::text ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx))
+					groupOrs = append(groupOrs, fmt.Sprintf("(p.name ILIKE $%d OR p.sku ILIKE $%d OR p.description ILIKE $%d OR p.slug ILIKE $%d OR p.tags::text ILIKE $%d OR p.attributes::text ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx, argIdx))
 					args = append(args, wild)
 					argIdx++
 				}
@@ -624,7 +675,7 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 			}
 		} else {
 			searchTerm := "%" + strings.TrimSpace(filter.Search) + "%"
-			whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR p.sku ILIKE $%d OR p.description ILIKE $%d OR p.slug ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
+			whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR p.sku ILIKE $%d OR p.description ILIKE $%d OR p.slug ILIKE $%d OR p.attributes::text ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx))
 			args = append(args, searchTerm)
 			argIdx++
 		}
@@ -798,6 +849,14 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 			_ = json.Unmarshal(attributesBytes, &p.Attributes)
 		}
 
+		if p.CategoryName == "" && p.Attributes != nil {
+			if cName, ok := p.Attributes["category_name"].(string); ok && cName != "" {
+				p.CategoryName = cName
+			} else if cName, ok := p.Attributes["category"].(string); ok && cName != "" {
+				p.CategoryName = cName
+			}
+		}
+
 		inv.AvailableQuantity = inv.Quantity - inv.ReservedQuantity
 		p.Inventory = inv
 
@@ -830,9 +889,21 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 	}
 
 	var catID *string
-	if strings.TrimSpace(p.CategoryID) != "" {
-		c := strings.TrimSpace(p.CategoryID)
-		catID = &c
+	trimmedCat := strings.TrimSpace(p.CategoryID)
+	if trimmedCat != "" {
+		if len(trimmedCat) == 36 && strings.Count(trimmedCat, "-") == 4 {
+			catID = &trimmedCat
+		} else {
+			lookupTerm := trimmedCat
+			if canonSlug, ok := utils.ResolveCanonicalCategorySlug(trimmedCat); ok {
+				lookupTerm = canonSlug
+			}
+			var resolvedUUID string
+			_ = tx.QueryRow(ctx, `SELECT id::text FROM categories WHERE slug ILIKE $1 OR name ILIKE $1 LIMIT 1`, lookupTerm).Scan(&resolvedUUID)
+			if resolvedUUID != "" {
+				catID = &resolvedUUID
+			}
+		}
 	}
 
 	query := `
@@ -1301,7 +1372,7 @@ func (r *ProductRepo) FindNearbyProducts(
 				var groupOrs []string
 				for _, term := range group.Terms {
 					wild := "%" + term + "%"
-					groupOrs = append(groupOrs, fmt.Sprintf("(p.name ILIKE $%d OR p.description ILIKE $%d OR p.sku ILIKE $%d)", argIdx, argIdx, argIdx))
+					groupOrs = append(groupOrs, fmt.Sprintf("(p.name ILIKE $%d OR p.description ILIKE $%d OR p.sku ILIKE $%d OR p.attributes::text ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
 					args = append(args, wild)
 					argIdx++
 				}
@@ -1310,7 +1381,7 @@ func (r *ProductRepo) FindNearbyProducts(
 				}
 			}
 		} else {
-			whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR p.description ILIKE $%d OR p.sku ILIKE $%d)", argIdx, argIdx, argIdx))
+			whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR p.description ILIKE $%d OR p.sku ILIKE $%d OR p.attributes::text ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
 			args = append(args, "%"+trimmedQ+"%")
 			argIdx++
 		}
@@ -1318,9 +1389,43 @@ func (r *ProductRepo) FindNearbyProducts(
 
 	trimmedCat := strings.TrimSpace(category)
 	if trimmedCat != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("s.category ILIKE $%d", argIdx))
+		var catOrs []string
+		catOrs = append(catOrs, fmt.Sprintf("s.category ILIKE $%d", argIdx))
 		args = append(args, "%"+trimmedCat+"%")
 		argIdx++
+
+		synonymSlugs := utils.GetCategorySynonymSlugs(trimmedCat)
+		synonymNames := utils.GetCategorySynonymNames(trimmedCat)
+
+		if len(synonymSlugs) > 0 {
+			catOrs = append(catOrs, fmt.Sprintf("p.category_id IN (SELECT id FROM categories WHERE slug = ANY($%d))", argIdx))
+			args = append(args, synonymSlugs)
+			argIdx++
+
+			catOrs = append(catOrs, fmt.Sprintf("LOWER(COALESCE(p.attributes->>'category_name', '')) = ANY($%d)", argIdx))
+			args = append(args, synonymSlugs)
+			argIdx++
+
+			catOrs = append(catOrs, fmt.Sprintf("LOWER(COALESCE(p.attributes->>'category', '')) = ANY($%d)", argIdx))
+			args = append(args, synonymSlugs)
+			argIdx++
+		}
+
+		if len(synonymNames) > 0 {
+			var lowerNames []string
+			for _, n := range synonymNames {
+				lowerNames = append(lowerNames, strings.ToLower(n))
+			}
+			catOrs = append(catOrs, fmt.Sprintf("LOWER(COALESCE(p.attributes->>'category_name', '')) = ANY($%d)", argIdx))
+			args = append(args, lowerNames)
+			argIdx++
+
+			catOrs = append(catOrs, fmt.Sprintf("LOWER(COALESCE(p.attributes->>'category', '')) = ANY($%d)", argIdx))
+			args = append(args, lowerNames)
+			argIdx++
+		}
+
+		whereClauses = append(whereClauses, "("+strings.Join(catOrs, " OR ")+")")
 	}
 
 	whereSQL := strings.Join(whereClauses, " AND ")
@@ -1348,10 +1453,12 @@ func (r *ProductRepo) FindNearbyProducts(
 			p.id, p.name, p.slug, p.price, p.images, (i.quantity - i.reserved_quantity) AS avail_qty,
 			s.id AS shop_id, s.name AS shop_name, s.slug AS shop_slug, s.address AS shop_address, s.phone AS shop_phone,
 			s.is_open, s.opening_time, s.closing_time, s.weekly_off,
+			COALESCE(p.category_id::text, ''), COALESCE(c.name, ''), COALESCE(c.slug, ''), COALESCE(p.attributes, '{}'::jsonb),
 			%s AS distance_km
 		FROM products p
 		JOIN shops s ON p.shop_id = s.id
 		JOIN inventory i ON p.id = i.product_id
+		LEFT JOIN categories c ON p.category_id = c.id
 		WHERE %s
 		ORDER BY distance_km ASC, p.price ASC
 		LIMIT $%d OFFSET $%d
@@ -1373,6 +1480,8 @@ func (r *ProductRepo) FindNearbyProducts(
 		var imagesBytes []byte
 		var openTime, closeTime, weeklyOff string
 
+		var catID, catName, catSlug string
+		var attrsBytes []byte
 		err := rows.Scan(
 			&item.ProductID,
 			&item.Name,
@@ -1389,6 +1498,10 @@ func (r *ProductRepo) FindNearbyProducts(
 			&openTime,
 			&closeTime,
 			&weeklyOff,
+			&catID,
+			&catName,
+			&catSlug,
+			&attrsBytes,
 			&item.DistanceKm,
 		)
 		if err != nil {
@@ -1397,6 +1510,20 @@ func (r *ProductRepo) FindNearbyProducts(
 		}
 
 		item.Images = []string{}
+		item.CategoryID = catID
+		item.CategoryName = catName
+		item.CategorySlug = catSlug
+		if item.CategoryName == "" && len(attrsBytes) > 0 {
+			var attrs map[string]interface{}
+			if err := json.Unmarshal(attrsBytes, &attrs); err == nil {
+				if c, ok := attrs["category_name"].(string); ok && c != "" {
+					item.CategoryName = c
+				} else if c, ok := attrs["category"].(string); ok && c != "" {
+					item.CategoryName = c
+				}
+			}
+		}
+
 		if len(imagesBytes) > 0 {
 			_ = json.Unmarshal(imagesBytes, &item.Images)
 		}

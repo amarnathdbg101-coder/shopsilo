@@ -299,7 +299,7 @@ func (r *LoyaltyRepo) FindProductByBarcode(ctx context.Context, code string) (*m
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 10)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
-		WHERE (p.sku ILIKE $1 OR p.slug = LOWER(TRIM($1))) AND p.is_active = true
+		WHERE (p.sku ILIKE $1 OR p.slug = LOWER(TRIM($1)) OR p.attributes->>'barcode' = TRIM($1) OR p.attributes->>'Barcode' = TRIM($1) OR p.attributes::text ILIKE '%' || TRIM($1) || '%' OR p.name ILIKE '%' || TRIM($1) || '%') AND p.is_active = true
 		LIMIT 1
 	`
 	p := &model.Product{}

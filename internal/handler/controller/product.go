@@ -240,6 +240,9 @@ func (c *ProductController) List(w http.ResponseWriter, r *http.Request) {
 		search = query.Get("search")
 	}
 	categoryID := query.Get("category_id")
+	if categoryID == "" {
+		categoryID = query.Get("category")
+	}
 	shopID := query.Get("shop_id")
 	sortBy := query.Get("sort_by")
 
@@ -333,7 +336,10 @@ func (c *ProductController) ListMyShopProducts(w http.ResponseWriter, r *http.Re
 	filter := dto.ProductFilter{
 		ShopID:     shop.ID,
 		Search:     search,
-		CategoryID: query.Get("category_id"),
+		CategoryID: func() string {
+			if c := query.Get("category_id"); c != "" { return c }
+			return query.Get("category")
+		}(),
 		SortBy:     query.Get("sort_by"),
 		Page:       page,
 		Limit:      limit,
@@ -386,7 +392,10 @@ func (c *ProductController) ListByShop(w http.ResponseWriter, r *http.Request) {
 	filter := dto.ProductFilter{
 		ShopID:     shop.ID,
 		Search:     search,
-		CategoryID: query.Get("category_id"),
+		CategoryID: func() string {
+			if c := query.Get("category_id"); c != "" { return c }
+			return query.Get("category")
+		}(),
 		SortBy:     query.Get("sort_by"),
 		Page:       page,
 		Limit:      limit,
@@ -439,7 +448,10 @@ func (c *ProductController) FindNearby(w http.ResponseWriter, r *http.Request) {
 		r.Context(),
 		lat, lng, radiusKm,
 		query.Get("q"),
-		query.Get("category"),
+		func() string {
+		if c := query.Get("category"); c != "" { return c }
+		return query.Get("category_id")
+	}(),
 		openNow,
 		page, limit,
 	)
