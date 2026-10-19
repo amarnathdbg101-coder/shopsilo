@@ -374,7 +374,7 @@ func (s *ProductService) DeleteProduct(ctx context.Context, userID, productID st
 	return nil
 }
 
-// FindNearbyProducts searches for in-stock products across nearby shops.
+// FindNearbyProducts searches for in-stock products across nearby shops via full database query.
 func (s *ProductService) FindNearbyProducts(
 	ctx context.Context,
 	lat, lng, radiusKm float64,
@@ -397,12 +397,60 @@ func (s *ProductService) FindNearbyProducts(
 		limit = 100
 	}
 
-	items, totalCount, err := s.productRepo.FindNearbyProducts(ctx, lat, lng, radiusKm, query, category, openNow, page, limit)
+	filter := dto.ProductFilter{
+		Search:     query,
+		CategoryID: category,
+		Page:       page,
+		Limit:      limit,
+		Lat:        &lat,
+		Lng:        &lng,
+		RadiusKm:   &radiusKm,
+	}
+
+	products, totalCount, err := s.productRepo.FindAll(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
-	if items == nil {
-		items = []*dto.NearbyProductItem{}
+
+	nearbyItems := make([]*dto.NearbyProductItem, 0, len(products))
+	for _, p := range products {
+		if p == nil {
+			continue
+		}
+		var shopLat, shopLng float64
+		if p.ShopLatitude != nil {
+			shopLat = *p.ShopLatitude
+		}
+		if p.ShopLongitude != nil {
+			shopLng = *p.ShopLongitude
+		}
+
+		item := &dto.NearbyProductItem{
+			ID:                p.ID,
+			ProductID:         p.ID,
+			ShopID:            p.ShopID,
+			Name:              p.Name,
+			Slug:              p.Slug,
+			SKU:               p.SKU,
+			Price:             p.Price,
+			ComparePrice:      p.ComparePrice,
+			CategoryID:        p.CategoryID,
+			CategoryName:      p.CategoryName,
+			Images:            p.Images,
+			Attributes:        p.Attributes,
+			AvailableQuantity: p.StockQuantity,
+			IsInStock:         p.StockQuantity > 0,
+			IsPricePublic:     p.IsPricePublic,
+			AllowBargain:      p.AllowBargain,
+			ShopName:          p.ShopName,
+			ShopSlug:          p.ShopSlug,
+			ShopPhone:         p.ShopPhone,
+			ShopAddress:       p.ShopAddress,
+			ShopCity:          p.ShopCity,
+			ShopLatitude:      shopLat,
+			ShopLongitude:     shopLng,
+		}
+		nearbyItems = append(nearbyItems, item)
 	}
 
 	totalPages := 0
@@ -411,7 +459,7 @@ func (s *ProductService) FindNearbyProducts(
 	}
 
 	return &dto.NearbyProductResponse{
-		Products:   items,
+		Products:   nearbyItems,
 		TotalCount: totalCount,
 		Page:       page,
 		Limit:      limit,

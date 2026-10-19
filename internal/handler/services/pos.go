@@ -641,7 +641,26 @@ func (s *POSService) ParkBill(ctx context.Context, shopOwnerUserID string, input
 		label = fmt.Sprintf("Parked Cart (%s)", time.Now().Format("15:04"))
 	}
 
-	return s.posRepo.ParkBill(ctx, shop.ID, label, input.CustomerPhone, input, totalAmount)
+	parked, err := s.posRepo.ParkBill(ctx, shop.ID, label, input.CustomerPhone, input, totalAmount)
+	if err != nil {
+		return nil, err
+	}
+
+	// Real-Time WebSocket broadcast to all connected devices in the shop
+	wsHub := GetWebSocketHub(nil)
+	if wsHub != nil {
+		wsHub.BroadcastToShop(shop.ID, "POS_PARKED_BILLS_CHANGED", map[string]interface{}{
+			"id":             parked.ID,
+			"shop_id":        parked.ShopID,
+			"label":          parked.Label,
+			"customer_phone": parked.CustomerPhone,
+			"total_amount":   parked.TotalAmount,
+			"items_count":    len(input.Items),
+			"parked_at":      parked.CreatedAt.Format("02-Jan-2006 15:04:05"),
+		})
+	}
+
+	return parked, nil
 }
 
 // ListParkedBills returns all carts currently on hold.
@@ -687,7 +706,21 @@ func (s *POSService) DeleteParkedBill(ctx context.Context, shopOwnerUserID, id s
 		return err
 	}
 
-	return s.posRepo.DeleteParkedBill(ctx, shop.ID, id)
+	err = s.posRepo.DeleteParkedBill(ctx, shop.ID, id)
+	if err != nil {
+		return err
+	}
+
+	// Real-Time WebSocket broadcast of deletion to all connected floor staff & cashiers
+	wsHub := GetWebSocketHub(nil)
+	if wsHub != nil {
+		wsHub.BroadcastToShop(shop.ID, "POS_PARKED_BILL_DELETED", map[string]interface{}{
+			"id":      id,
+			"shop_id": shop.ID,
+		})
+	}
+
+	return nil
 }
 
 var (

@@ -411,8 +411,14 @@ func (r *POSRepo) ParkBill(ctx context.Context, shopID, label, customerPhone str
 	}
 
 	query := `
-		INSERT INTO pos_parked_bills (shop_id, label, customer_phone, cart_data, total_amount, created_at)
-		VALUES ($1, $2, $3, $4::jsonb, $5, NOW())
+		INSERT INTO pos_parked_bills (shop_id, label, customer_phone, cart_data, total_amount, created_at, updated_at)
+		VALUES ($1, $2, $3, $4::jsonb, $5, NOW(), NOW())
+		ON CONFLICT (shop_id, UPPER(TRIM(label))) WHERE label != ''
+		DO UPDATE SET
+			customer_phone = EXCLUDED.customer_phone,
+			cart_data = EXCLUDED.cart_data,
+			total_amount = EXCLUDED.total_amount,
+			updated_at = NOW()
 		RETURNING id, shop_id, COALESCE(label, ''), COALESCE(customer_phone, ''), total_amount, created_at
 	`
 	parked := &model.POSParkedBill{}
@@ -464,7 +470,7 @@ func (r *POSRepo) GetParkedBillByID(ctx context.Context, shopID, id string) (*dt
 	query := `
 		SELECT id, shop_id, COALESCE(label, ''), COALESCE(customer_phone, ''), cart_data, total_amount, created_at
 		FROM pos_parked_bills
-		WHERE shop_id = $1 AND id = $2
+		WHERE shop_id = $1 AND (id::text = $2 OR UPPER(TRIM(label)) = UPPER(TRIM($2)))
 		LIMIT 1
 	`
 	var resp dto.ParkedBillDetailResponse
@@ -493,7 +499,7 @@ func (r *POSRepo) GetParkedBillByID(ctx context.Context, shopID, id string) (*dt
 
 // DeleteParkedBill removes a held cart once completed or discarded.
 func (r *POSRepo) DeleteParkedBill(ctx context.Context, shopID, id string) error {
-	cmdTag, err := r.db.Exec(ctx, `DELETE FROM pos_parked_bills WHERE shop_id = $1 AND id = $2`, shopID, id)
+	cmdTag, err := r.db.Exec(ctx, `DELETE FROM pos_parked_bills WHERE shop_id = $1 AND (id::text = $2 OR UPPER(TRIM(label)) = UPPER(TRIM($2)))`, shopID, id)
 	if err != nil {
 		return err
 	}

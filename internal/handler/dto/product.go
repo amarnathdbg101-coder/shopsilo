@@ -78,24 +78,33 @@ type ProductPaginationResponse struct {
 }
 
 type NearbyProductItem struct {
-	ProductID         string   `json:"product_id"`
-	Name              string   `json:"name"`
-	Slug              string   `json:"slug"`
-	Price             float64  `json:"price"`
-	Images            []string `json:"images"`
-	CategoryID        string   `json:"category_id,omitempty"`
-	CategoryName      string   `json:"category_name,omitempty"`
-	CategorySlug      string   `json:"category_slug,omitempty"`
-	SKU               string   `json:"sku,omitempty"`
-	AvailableQuantity int      `json:"available_quantity"`
-	ShopID            string   `json:"shop_id"`
-	ShopName          string   `json:"shop_name"`
-	ShopSlug          string   `json:"shop_slug"`
-	ShopAddress       string   `json:"shop_address"`
-	ShopPhone         string   `json:"shop_phone"`
-	DistanceKm        float64  `json:"distance_km"`
-	IsOpen            bool     `json:"is_open"`
-	IsCurrentlyOpen   bool     `json:"is_currently_open"`
+	ID                string                 `json:"id"`
+	ProductID         string                 `json:"product_id"`
+	Name              string                 `json:"name"`
+	Slug              string                 `json:"slug"`
+	Price             float64                `json:"price"`
+	ComparePrice      float64                `json:"compare_price,omitempty"`
+	IsPricePublic     bool                   `json:"is_price_public"`
+	AllowBargain      bool                   `json:"allow_bargain"`
+	Images            []string               `json:"images"`
+	CategoryID        string                 `json:"category_id,omitempty"`
+	CategoryName      string                 `json:"category_name,omitempty"`
+	CategorySlug      string                 `json:"category_slug,omitempty"`
+	SKU               string                 `json:"sku,omitempty"`
+	AvailableQuantity int                    `json:"available_quantity"`
+	IsInStock         bool                   `json:"is_in_stock"`
+	Attributes        map[string]interface{} `json:"attributes,omitempty"`
+	ShopID            string                 `json:"shop_id"`
+	ShopName          string                 `json:"shop_name"`
+	ShopSlug          string                 `json:"shop_slug"`
+	ShopAddress       string                 `json:"shop_address"`
+	ShopPhone         string                 `json:"shop_phone"`
+	ShopCity          string                 `json:"shop_city,omitempty"`
+	ShopLatitude      float64                `json:"shop_latitude,omitempty"`
+	ShopLongitude     float64                `json:"shop_longitude,omitempty"`
+	DistanceKm        float64                `json:"distance_km"`
+	IsOpen            bool                   `json:"is_open"`
+	IsCurrentlyOpen   bool                   `json:"is_currently_open"`
 }
 
 type NearbyProductResponse struct {
