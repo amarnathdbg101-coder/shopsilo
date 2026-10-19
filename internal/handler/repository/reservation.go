@@ -138,13 +138,20 @@ func (r *ReservationRepo) FindByID(ctx context.Context, id string) (*model.Reser
 	query := `
 		SELECT r.id, r.reservation_number, COALESCE(r.user_id::text, ''), r.shop_id, COALESCE(r.product_id::text, ''), r.quantity, r.pickup_code,
 		       r.status, r.expires_at, r.completed_at, COALESCE(r.notes, ''), r.created_at, r.updated_at,
-		       s.name AS shop_name, s.slug AS shop_slug, s.phone AS shop_phone, s.address AS shop_address, s.latitude, s.longitude,
-		       p.name AS product_name, p.slug AS product_slug, p.price AS product_price, p.images AS product_images,
+		       COALESCE(s.name, 'Local Store') AS shop_name,
+		       COALESCE(s.slug, '') AS shop_slug,
+		       COALESCE(s.phone, '') AS shop_phone,
+		       COALESCE(s.address, '') AS shop_address,
+		       s.latitude, s.longitude,
+		       COALESCE(p.name, 'Product Item') AS product_name,
+		       COALESCE(p.slug, '') AS product_slug,
+		       COALESCE(p.price, 0) AS product_price,
+		       p.images AS product_images,
 		       COALESCE(NULLIF(u.full_name, ''), 'Customer') AS customer_name,
 		       COALESCE(u.phone, '') AS customer_phone
 		FROM reservations r
-		JOIN shops s ON r.shop_id = s.id
-		JOIN products p ON r.product_id = p.id
+		LEFT JOIN shops s ON r.shop_id = s.id
+		LEFT JOIN products p ON r.product_id = p.id
 		LEFT JOIN users u ON r.user_id = u.id
 		WHERE r.id = $1
 		LIMIT 1
@@ -192,6 +199,16 @@ func (r *ReservationRepo) FindByID(ctx context.Context, id string) (*model.Reser
 		_ = json.Unmarshal(productImagesBytes, &res.Product.Images)
 	}
 
+	res.Shop.ID = res.ShopID
+	res.Product.ID = res.ProductID
+	res.ProductName = res.Product.Name
+	res.ProductPrice = res.Product.Price
+	res.ProductImages = res.Product.Images
+	if len(res.Product.Images) > 0 {
+		res.ProductImage = res.Product.Images[0]
+	}
+	res.TotalAmount = res.Product.Price * float64(res.Quantity)
+
 	if res.Status == "active" {
 		rem := int(time.Until(res.ExpiresAt).Minutes())
 		if rem < 0 {
@@ -211,8 +228,8 @@ func (r *ReservationRepo) FindByUserID(ctx context.Context, userID string, filte
 		page = 1
 	}
 	limit := filter.Limit
-	if limit < 1 || limit > 50 {
-		limit = 10
+	if limit < 1 || limit > 100 {
+		limit = 50
 	}
 	offset := (page - 1) * limit
 
@@ -233,14 +250,21 @@ func (r *ReservationRepo) FindByUserID(ctx context.Context, userID string, filte
 	query := fmt.Sprintf(`
 		SELECT r.id, r.reservation_number, COALESCE(r.user_id::text, ''), r.shop_id, COALESCE(r.product_id::text, ''), r.quantity, r.pickup_code,
 		       r.status, r.expires_at, r.completed_at, COALESCE(r.notes, ''), r.created_at, r.updated_at,
-		       s.name AS shop_name, s.slug AS shop_slug, s.phone AS shop_phone, s.address AS shop_address, s.latitude, s.longitude,
-		       p.name AS product_name, p.slug AS product_slug, p.price AS product_price, p.images AS product_images,
+		       COALESCE(s.name, 'Local Store') AS shop_name,
+		       COALESCE(s.slug, '') AS shop_slug,
+		       COALESCE(s.phone, '') AS shop_phone,
+		       COALESCE(s.address, '') AS shop_address,
+		       s.latitude, s.longitude,
+		       COALESCE(p.name, 'Product Item') AS product_name,
+		       COALESCE(p.slug, '') AS product_slug,
+		       COALESCE(p.price, 0) AS product_price,
+		       p.images AS product_images,
 		       COUNT(*) OVER() AS total_count
 		FROM reservations r
-		JOIN shops s ON r.shop_id = s.id
-		JOIN products p ON r.product_id = p.id
+		LEFT JOIN shops s ON r.shop_id = s.id
+		LEFT JOIN products p ON r.product_id = p.id
 		WHERE %s
-		ORDER BY (r.status = 'active') DESC, r.created_at DESC
+		ORDER BY (r.status = 'active' OR r.status = 'pending') DESC, r.created_at DESC
 		LIMIT $%d OFFSET $%d
 	`, whereSQL, argIdx, argIdx+1)
 
@@ -297,13 +321,14 @@ func (r *ReservationRepo) FindByUserID(ctx context.Context, userID string, filte
 			_ = json.Unmarshal(productImagesBytes, &res.Product.Images)
 		}
 
+		res.Shop.ID = res.ShopID
 		res.Product.ID = res.ProductID
 		res.ProductName = res.Product.Name
 		res.ProductPrice = res.Product.Price
 		res.ProductImages = res.Product.Images
 		if len(res.Product.Images) > 0 {
 			res.ProductImage = res.Product.Images[0]
-		}
+			}
 		res.TotalAmount = res.Product.Price * float64(res.Quantity)
 
 		if res.Status == "active" {

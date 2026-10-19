@@ -44,6 +44,16 @@ func (r *KhataRepo) GetOrCreateCustomer(ctx context.Context, shopID, customerNam
 		cleanMobile = strings.TrimSpace(customerMobile)
 	}
 
+	digitsMobile := ""
+	for _, ch := range cleanMobile {
+		if ch >= '0' && ch <= '9' {
+			digitsMobile += string(ch)
+		}
+	}
+	if len(digitsMobile) > 10 {
+		digitsMobile = digitsMobile[len(digitsMobile)-10:]
+	}
+
 	var khata model.CustomerKhata
 	query := `
 		SELECT id, shop_id, customer_id, customer_name, customer_mobile, current_balance, COALESCE(credit_limit, 0),
@@ -53,10 +63,10 @@ func (r *KhataRepo) GetOrCreateCustomer(ctx context.Context, shopID, customerNam
 		WHERE shop_id = $1 AND (
 			customer_mobile = $2 OR
 			customer_phone = $2 OR
-			RIGHT(REGEXP_REPLACE(COALESCE(customer_mobile, customer_phone, ''), '[^0-9]', '', 'g'), 10) = $2
+			($3 != '' AND RIGHT(REGEXP_REPLACE(COALESCE(customer_mobile, customer_phone, ''), '[^0-9]', '', 'g'), 10) = $3)
 		)
 	`
-	err = r.db.QueryRow(ctx, query, shopID, cleanMobile).Scan(
+	err = r.db.QueryRow(ctx, query, shopID, cleanMobile, digitsMobile).Scan(
 		&khata.ID, &khata.ShopID, &khata.CustomerID, &khata.CustomerName, &khata.CustomerMobile,
 		&khata.CurrentBalance, &khata.CreditLimit, &khata.ClosureStatus, &khata.ClosureOTP,
 		&khata.ClosureRequestedBy, &khata.ClosureRequestedAt, &khata.ClosedAt,
@@ -69,9 +79,10 @@ func (r *KhataRepo) GetOrCreateCustomer(ctx context.Context, shopID, customerNam
 			khata.CustomerName = customerName
 		}
 		// If customer_id is null, attempt to link with registered users
-		if khata.CustomerID == nil {
+		if khata.CustomerID == nil && digitsMobile != "" {
 			var uID string
-			if uErr := r.db.QueryRow(ctx, `SELECT id FROM users WHERE RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = $1 LIMIT 1`, cleanMobile).Scan(&uID); uErr == nil {
+			userQuery := `SELECT id FROM users WHERE RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = $1 OR phone = $1 OR phone = $2 LIMIT 1`
+			if uErr := r.db.QueryRow(ctx, userQuery, digitsMobile, cleanMobile).Scan(&uID); uErr == nil {
 				_, _ = r.db.Exec(ctx, `UPDATE customer_khata SET customer_id = $1, updated_at = NOW() WHERE id = $2`, uID, khata.ID)
 				khata.CustomerID = &uID
 			}
@@ -85,9 +96,12 @@ func (r *KhataRepo) GetOrCreateCustomer(ctx context.Context, shopID, customerNam
 
 	// Lookup if user is already registered on Shopsilo
 	var matchedUserID *string
-	var uID string
-	if uErr := r.db.QueryRow(ctx, `SELECT id FROM users WHERE RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = $1 LIMIT 1`, cleanMobile).Scan(&uID); uErr == nil {
-		matchedUserID = &uID
+	if digitsMobile != "" {
+		var uID string
+		userQuery := `SELECT id FROM users WHERE RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = $1 OR phone = $1 OR phone = $2 LIMIT 1`
+		if uErr := r.db.QueryRow(ctx, userQuery, digitsMobile, cleanMobile).Scan(&uID); uErr == nil {
+			matchedUserID = &uID
+		}
 	}
 
 	// Insert new customer khata
@@ -135,6 +149,16 @@ func (r *KhataRepo) RecordTransactionWithTx(ctx context.Context, tx pgx.Tx, shop
 	}
 
 	// 1. Lock and fetch current customer khata
+	digitsMobile := ""
+	for _, ch := range cleanMobile {
+		if ch >= '0' && ch <= '9' {
+			digitsMobile += string(ch)
+		}
+	}
+	if len(digitsMobile) > 10 {
+		digitsMobile = digitsMobile[len(digitsMobile)-10:]
+	}
+
 	var khataID string
 	var currentBalance, creditLimit float64
 	var closureStatus string
@@ -144,17 +168,20 @@ func (r *KhataRepo) RecordTransactionWithTx(ctx context.Context, tx pgx.Tx, shop
 		WHERE shop_id = $1 AND (
 			customer_mobile = $2 OR
 			customer_phone = $2 OR
-			RIGHT(REGEXP_REPLACE(COALESCE(customer_mobile, customer_phone, ''), '[^0-9]', '', 'g'), 10) = $2
+			($3 != '' AND RIGHT(REGEXP_REPLACE(COALESCE(customer_mobile, customer_phone, ''), '[^0-9]', '', 'g'), 10) = $3)
 		)
 		FOR UPDATE
 	`
-	err = tx.QueryRow(ctx, lockQuery, shopID, cleanMobile).Scan(&khataID, &currentBalance, &creditLimit, &closureStatus)
+	err = tx.QueryRow(ctx, lockQuery, shopID, cleanMobile, digitsMobile).Scan(&khataID, &currentBalance, &creditLimit, &closureStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Lookup if user is already registered on Shopsilo
 		var matchedUserID *string
-		var uID string
-		if uErr := tx.QueryRow(ctx, `SELECT id FROM users WHERE RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = $1 LIMIT 1`, cleanMobile).Scan(&uID); uErr == nil {
-			matchedUserID = &uID
+		if digitsMobile != "" {
+			var uID string
+			userQuery := `SELECT id FROM users WHERE RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = $1 OR phone = $1 OR phone = $2 LIMIT 1`
+			if uErr := tx.QueryRow(ctx, userQuery, digitsMobile, cleanMobile).Scan(&uID); uErr == nil {
+				matchedUserID = &uID
+			}
 		}
 
 		// Insert new khata inside this tx
@@ -474,10 +501,16 @@ func (r *KhataRepo) GetSummary(ctx context.Context, shopID string) (*model.Khata
 
 // FindCustomerKhatasByUserIDOrPhone retrieves all khata accounts across shops where the customer owes or has credit.
 func (r *KhataRepo) FindCustomerKhatasByUserIDOrPhone(ctx context.Context, userID, phone string) ([]dto.CustomerShopKhataItem, error) {
-	cleanPhone, _ := utils.NormalizeIndianPhone(phone)
-	if cleanPhone == "" {
-		cleanPhone = strings.TrimSpace(phone)
+	digitsPhone := ""
+	for _, ch := range phone {
+		if ch >= '0' && ch <= '9' {
+			digitsPhone += string(ch)
+		}
 	}
+	if len(digitsPhone) > 10 {
+		digitsPhone = digitsPhone[len(digitsPhone)-10:]
+	}
+	cleanPhone := digitsPhone
 
 	// Proactively link customer_id if not yet linked
 	if userID != "" && cleanPhone != "" {
@@ -487,9 +520,10 @@ func (r *KhataRepo) FindCustomerKhatasByUserIDOrPhone(ctx context.Context, userI
 			WHERE customer_id IS NULL
 			  AND (
 				  customer_mobile = $2
+				  OR customer_phone = $2
 				  OR (
-					  LENGTH(REGEXP_REPLACE(customer_mobile, '[^0-9]', '', 'g')) >= 10
-					  AND RIGHT(REGEXP_REPLACE(customer_mobile, '[^0-9]', '', 'g'), 10) = $2
+					  LENGTH(REGEXP_REPLACE(COALESCE(customer_mobile, customer_phone, ''), '[^0-9]', '', 'g')) >= 10
+					  AND RIGHT(REGEXP_REPLACE(COALESCE(customer_mobile, customer_phone, ''), '[^0-9]', '', 'g'), 10) = $2
 				  )
 			  )
 		`
@@ -526,9 +560,10 @@ func (r *KhataRepo) FindCustomerKhatasByUserIDOrPhone(ctx context.Context, userI
 				$2 != '' 
 				AND (
 					ck.customer_mobile = $2
+					OR ck.customer_phone = $2
 					OR (
-						LENGTH(REGEXP_REPLACE(ck.customer_mobile, '[^0-9]', '', 'g')) >= 10
-						AND RIGHT(REGEXP_REPLACE(ck.customer_mobile, '[^0-9]', '', 'g'), 10) = $2
+						LENGTH(REGEXP_REPLACE(COALESCE(ck.customer_mobile, ck.customer_phone, ''), '[^0-9]', '', 'g')) >= 10
+						AND RIGHT(REGEXP_REPLACE(COALESCE(ck.customer_mobile, ck.customer_phone, ''), '[^0-9]', '', 'g'), 10) = $2
 					)
 				)
 			)
@@ -564,10 +599,16 @@ func (r *KhataRepo) FindCustomerKhatasByUserIDOrPhone(ctx context.Context, userI
 
 // GetCustomerKhataWithShop returns a specific shop khata and full transactions ledger for an authenticated customer.
 func (r *KhataRepo) GetCustomerKhataWithShop(ctx context.Context, khataID, userID, phone string) (*dto.CustomerShopKhataItem, string, []model.KhataTransaction, error) {
-	cleanPhone, _ := utils.NormalizeIndianPhone(phone)
-	if cleanPhone == "" {
-		cleanPhone = strings.TrimSpace(phone)
+	digitsPhone := ""
+	for _, ch := range phone {
+		if ch >= '0' && ch <= '9' {
+			digitsPhone += string(ch)
+		}
 	}
+	if len(digitsPhone) > 10 {
+		digitsPhone = digitsPhone[len(digitsPhone)-10:]
+	}
+	cleanPhone := digitsPhone
 
 	query := `
 		SELECT 

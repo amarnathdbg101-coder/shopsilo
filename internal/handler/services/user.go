@@ -840,6 +840,12 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID string, input dt
 		}
 		return nil, err
 	}
+
+	// Auto-link all existing offline khatas for this customer's phone number
+	if s.khataRepo != nil && user.Phone != "" {
+		_, _ = s.khataRepo.AutoLinkCustomerKhatas(ctx, user.ID, user.Phone)
+	}
+
 	return &dto.UserResponse{
 		ID:        user.ID,
 		Email:     user.Email,

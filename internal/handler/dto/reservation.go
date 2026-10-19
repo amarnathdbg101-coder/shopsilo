@@ -7,7 +7,7 @@ type CreateReservationRequest struct {
 	ProductID string `json:"product_id" validate:"required,uuid"`
 	Quantity  int    `json:"quantity" validate:"required,min=1,max=10"`
 	HoldHours int    `json:"hold_hours,omitempty" validate:"omitempty,min=1,max=24"`
-	Notes     string `json:"notes,omitempty" validate:"omitempty,max=300"`
+	Notes     string `json:"notes,omitempty" validate:"omitempty,max=1000"`
 }
 
 type VerifyReservationRequest struct {
