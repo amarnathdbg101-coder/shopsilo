@@ -210,7 +210,7 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 			img = images[0]
 		}
 		s.catalogService.EnrichFromProduct(
-			ctx, barcode, created.Name, brand, created.CategoryName, unit, created.MRP, created.Price, created.Description, img,
+			ctx, barcode, created.Name, brand, created.CategoryName, unit, created.MRP, created.Price, created.Description, img, attrs,
 		)
 	}
 
@@ -371,7 +371,30 @@ func (s *ProductService) UpdateProduct(ctx context.Context, userID, productID st
 		existing.Images = *input.Images
 	}
 
-	return s.productRepo.Update(ctx, existing, input.StockQuantity)
+	updated, err := s.productRepo.Update(ctx, existing, input.StockQuantity)
+	if err == nil && updated != nil && s.catalogService != nil {
+		barcode := updated.SKU
+		if b, ok := updated.Attributes["barcode"].(string); ok && b != "" {
+			barcode = b
+		}
+		brand := ""
+		if br, ok := updated.Attributes["brand"].(string); ok {
+			brand = br
+		}
+		unit := "piece"
+		if u, ok := updated.Attributes["unit"].(string); ok {
+			unit = u
+		}
+		img := ""
+		if len(updated.Images) > 0 {
+			img = updated.Images[0]
+		}
+		s.catalogService.EnrichFromProduct(
+			ctx, barcode, updated.Name, brand, updated.CategoryName, unit, updated.MRP, updated.Price, updated.Description, img, updated.Attributes,
+		)
+	}
+
+	return updated, err
 }
 
 func (s *ProductService) DeleteProduct(ctx context.Context, userID, productID string) error {

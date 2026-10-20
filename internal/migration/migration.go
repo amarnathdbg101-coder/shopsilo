@@ -206,6 +206,10 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_master_catalog_barcode ON master_catalog_products (TRIM(LOWER(barcode)));,
 		CREATE INDEX IF NOT EXISTS idx_master_catalog_brand ON master_catalog_products (TRIM(LOWER(brand)));,
 		CREATE INDEX IF NOT EXISTS idx_master_catalog_category ON master_catalog_products (category);,
+		ALTER TABLE master_catalog_products ADD COLUMN IF NOT EXISTS scan_count INT DEFAULT 1;,
+		ALTER TABLE master_catalog_products ADD COLUMN IF NOT EXISTS trust_score INT DEFAULT 100;,
+		ALTER TABLE master_catalog_products ADD COLUMN IF NOT EXISTS attributes JSONB NOT NULL DEFAULT '{}'::jsonb;,
+		CREATE INDEX IF NOT EXISTS idx_master_catalog_attributes ON master_catalog_products USING GIN (attributes);,
 
 		CREATE TABLE IF NOT EXISTS pos_parked_bills (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

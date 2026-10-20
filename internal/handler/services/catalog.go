@@ -39,7 +39,10 @@ func (s *CatalogService) Lookup(ctx context.Context, rawBarcode string) (*dto.Ca
 			SellingPrice: item.SellingPrice,
 			Description:  item.Description,
 			ImageURL:     item.ImageURL,
+			Attributes:   item.Attributes,
 			Source:       item.Source,
+			ScanCount:    item.ScanCount,
+			TrustScore:   item.TrustScore,
 			IsFound:      true,
 		}, nil
 	}
@@ -89,7 +92,7 @@ func (s *CatalogService) Lookup(ctx context.Context, rawBarcode string) (*dto.Ca
 // EnrichFromProduct is the Crowdsourcing Hook:
 // When any merchant creates or saves a product with a valid barcode and name,
 // this silently records/updates it into the global master catalog so all merchants benefit.
-func (s *CatalogService) EnrichFromProduct(ctx context.Context, barcode, name, brand, category, unit string, mrp, sellingPrice float64, description, imageURL string) {
+func (s *CatalogService) EnrichFromProduct(ctx context.Context, barcode, name, brand, category, unit string, mrp, sellingPrice float64, description, imageURL string, attributes map[string]interface{}) {
 	code := strings.TrimSpace(barcode)
 	cleanName := strings.TrimSpace(name)
 	if code == "" || cleanName == "" || len(code) < 6 {
@@ -107,6 +110,7 @@ func (s *CatalogService) EnrichFromProduct(ctx context.Context, barcode, name, b
 		SellingPrice: sellingPrice,
 		Description:  description,
 		ImageURL:     imageURL,
+		Attributes:   attributes,
 		Source:       "crowdsourced",
 	}
 
@@ -136,7 +140,10 @@ func (s *CatalogService) Search(ctx context.Context, query string, limit int) ([
 			SellingPrice: item.SellingPrice,
 			Description:  item.Description,
 			ImageURL:     item.ImageURL,
+			Attributes:   item.Attributes,
 			Source:       item.Source,
+			ScanCount:    item.ScanCount,
+			TrustScore:   item.TrustScore,
 			IsFound:      true,
 		})
 	}

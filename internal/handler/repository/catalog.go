@@ -2,6 +2,7 @@
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -59,13 +60,14 @@ func (r *CatalogRepo) FindByBarcode(ctx context.Context, rawBarcode string) (*mo
 
 	query := `
 		SELECT id, barcode, name, brand, category, unit, mrp, selling_price,
-		       COALESCE(description, ''), COALESCE(image_url, ''), source, created_at, updated_at
+		       COALESCE(description, ''), COALESCE(image_url, ''), COALESCE(attributes, '{}'::jsonb), source, COALESCE(scan_count, 1), COALESCE(trust_score, 100), created_at, updated_at
 		FROM master_catalog_products
 		WHERE barcode = $1 OR barcode = $2
 		LIMIT 1;
 	`
 
 	p := &model.MasterCatalogProduct{}
+	var attrsBytes []byte
 	err := r.db.QueryRow(ctx, query, code, stripped).Scan(
 		&p.ID,
 		&p.Barcode,
@@ -77,7 +79,10 @@ func (r *CatalogRepo) FindByBarcode(ctx context.Context, rawBarcode string) (*mo
 		&p.SellingPrice,
 		&p.Description,
 		&p.ImageURL,
+		&attrsBytes,
 		&p.Source,
+		&p.ScanCount,
+		&p.TrustScore,
 		&p.CreatedAt,
 		&p.UpdatedAt,
 	)
@@ -87,6 +92,11 @@ func (r *CatalogRepo) FindByBarcode(ctx context.Context, rawBarcode string) (*mo
 		}
 		r.logger.Error("failed to query master catalog by barcode", zap.Error(err), zap.String("barcode", code))
 		return nil, err
+	}
+
+	if len(attrsBytes) > 0 {
+		p.Attributes = make(map[string]interface{})
+		_ = json.Unmarshal(attrsBytes, &p.Attributes)
 	}
 
 	// 2. Store in In-Memory Read-Through Cache for future 0.0001ms hits
@@ -108,11 +118,16 @@ func (r *CatalogRepo) Upsert(ctx context.Context, p *model.MasterCatalogProduct)
 		return errors.New("barcode and name are required")
 	}
 
+	attrsJSON, _ := json.Marshal(p.Attributes)
+	if len(attrsJSON) == 0 {
+		attrsJSON = []byte("{}")
+	}
+
 	query := `
 		INSERT INTO master_catalog_products (
-			barcode, name, brand, category, unit, mrp, selling_price, description, image_url, source, updated_at
+			barcode, name, brand, category, unit, mrp, selling_price, description, image_url, attributes, source, scan_count, trust_score, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW()
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 1, 100, NOW()
 		)
 		ON CONFLICT (barcode) DO UPDATE SET
 			name = CASE WHEN EXCLUDED.name != '' THEN EXCLUDED.name ELSE master_catalog_products.name END,
@@ -123,8 +138,11 @@ func (r *CatalogRepo) Upsert(ctx context.Context, p *model.MasterCatalogProduct)
 			selling_price = CASE WHEN EXCLUDED.selling_price > 0 THEN EXCLUDED.selling_price ELSE master_catalog_products.selling_price END,
 			description = CASE WHEN EXCLUDED.description != '' THEN EXCLUDED.description ELSE master_catalog_products.description END,
 			image_url = CASE WHEN EXCLUDED.image_url != '' THEN EXCLUDED.image_url ELSE master_catalog_products.image_url END,
+			attributes = master_catalog_products.attributes || EXCLUDED.attributes,
+			scan_count = master_catalog_products.scan_count + 1,
+			trust_score = LEAST(100, master_catalog_products.trust_score + 1),
 			updated_at = NOW()
-		RETURNING id, created_at, updated_at;
+		RETURNING id, scan_count, trust_score, created_at, updated_at;
 	`
 
 	err := r.db.QueryRow(ctx, query,
@@ -137,8 +155,9 @@ func (r *CatalogRepo) Upsert(ctx context.Context, p *model.MasterCatalogProduct)
 		p.SellingPrice,
 		p.Description,
 		p.ImageURL,
+		attrsJSON,
 		p.Source,
-	).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
+	).Scan(&p.ID, &p.ScanCount, &p.TrustScore, &p.CreatedAt, &p.UpdatedAt)
 
 	if err == nil {
 		r.lruMu.Lock()
@@ -210,9 +229,9 @@ func (r *CatalogRepo) Search(ctx context.Context, searchTerm string, limit int) 
 
 	query := `
 		SELECT id, barcode, name, brand, category, unit, mrp, selling_price,
-		       COALESCE(description, ''), COALESCE(image_url, ''), source, created_at, updated_at
+		       COALESCE(description, ''), COALESCE(image_url, ''), COALESCE(attributes, '{}'::jsonb), source, COALESCE(scan_count, 1), COALESCE(trust_score, 100), created_at, updated_at
 		FROM master_catalog_products
-		WHERE name ILIKE $1 OR brand ILIKE $1 OR barcode ILIKE $1
+		WHERE name ILIKE $1 OR brand ILIKE $1 OR barcode ILIKE $1 OR attributes::text ILIKE $1
 		ORDER BY name ASC
 		LIMIT $2;
 	`
@@ -225,10 +244,15 @@ func (r *CatalogRepo) Search(ctx context.Context, searchTerm string, limit int) 
 	list := make([]*model.MasterCatalogProduct, 0)
 	for rows.Next() {
 		p := &model.MasterCatalogProduct{}
+		var attrsBytes []byte
 		if err := rows.Scan(
 			&p.ID, &p.Barcode, &p.Name, &p.Brand, &p.Category, &p.Unit, &p.MRP, &p.SellingPrice,
-			&p.Description, &p.ImageURL, &p.Source, &p.CreatedAt, &p.UpdatedAt,
+			&p.Description, &p.ImageURL, &attrsBytes, &p.Source, &p.ScanCount, &p.TrustScore, &p.CreatedAt, &p.UpdatedAt,
 		); err == nil {
+			if len(attrsBytes) > 0 {
+				p.Attributes = make(map[string]interface{})
+				_ = json.Unmarshal(attrsBytes, &p.Attributes)
+			}
 			list = append(list, p)
 		}
 	}
