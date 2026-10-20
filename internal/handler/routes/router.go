@@ -91,6 +91,12 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	loyaltyService := services.NewLoyaltyService(loyaltyRepo, shopRepo, productRepo)
 	loyc := controller.NewLoyaltyController(loyaltyService)
 
+	// Master Barcode Catalog layer (Global FMCG crowdsourced auto-fill engine)
+	catalogRepo := repository.NewCatalogRepo(db, logger)
+	catalogService := services.NewCatalogService(catalogRepo)
+	catalogc := controller.NewCatalogController(catalogService)
+	productService.SetCatalogService(catalogService)
+
 	// Telemetry & Error Audit layer
 	telemetryRepo := repository.NewTelemetryRepo(db, logger)
 	telemetryService := services.NewTelemetryService(telemetryRepo)
@@ -129,6 +135,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	r.Use(chimw.Recoverer)
 	r.Use(middleware.CORS)
 	r.Use(middleware.SecurityHeaders)
+	r.Use(middleware.IdempotencyGuard)
 
 	// Liveness & Readiness health check for production orchestrators
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) { // Both
@@ -164,6 +171,9 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Use(middleware.GlobalRateLimiter.Middleware())
 
 		r.Get("/catalog/home-feed", sc.GetHomeFeed)                        // Customer
+		r.Get("/catalog/barcode/{code}", catalogc.Lookup)                  // Both - Master Barcode Catalog Lookup
+		r.Get("/catalog/lookup", catalogc.Lookup)                          // Both - query param fallback ?barcode=
+		r.Get("/catalog/search", catalogc.Search)                          // Both - Master Barcode Catalog Search
 		r.Get("/home-feed", sc.GetHomeFeed)                                // Customer
 		r.Post("/ai/customer-chat", aic.CustomerChat)                      // Customer
 		r.Post("/ai/scan-product", aic.ScanProduct)                        // Both
@@ -188,7 +198,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/products/slug/{slug}", pc.GetBySlug)                       // Customer
 		r.Get("/products/scan/{code}", loyc.ScanProduct)                   // Customer
 		r.Post("/products/{id}/notify-me", invc.SubscribeStockAlert)       // Customer
-		r.With(middleware.Idempotency()).Post("/products/{id}/make-offer", pc.MakeOffer)                  // Customer
+		r.With(middleware.IdempotencyGuard).Post("/products/{id}/make-offer", pc.MakeOffer)                  // Customer
 		r.Get("/receipts/{bill_number}", posc.ViewPublicReceiptPDF)        // Customer
 		r.Post("/reports/telemetry-error", telc.LogFrontendError)          // Both
 		r.Get("/images/*", upc.ServeImage)                                 // Both
@@ -215,6 +225,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		// Shop Owner management
 		r.Post("/shops", sc.Create)                                                             // Shop
 		r.Get("/shops/me", sc.GetMyShop)                                                         // Shop
+		r.Get("/shops/me/branches", sc.ListMyBranches)                                          // Shop
 		r.Get("/shops/me/dashboard", sc.GetMerchantDashboard)                                  // Shop
 		r.Get("/shops/me/qr", sc.GetMyShopQR)                                                   // Shop
 		r.Get("/shops/me/digest", sc.GetDailyDigest)                                            // Shop
@@ -239,6 +250,8 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.With(middleware.MutationRateLimiter.Middleware()).Post("/products", pc.Create)                  // Shop
 		r.Put("/products/{id}", pc.Update)                                                                 // Shop
 		r.Delete("/products/{id}", pc.Delete)                                                              // Shop
+		r.Delete("/shops/me/products/batch", pc.BatchDelete)                                               // Shop
+		r.Patch("/shops/me/products/batch-status", pc.BatchToggleStatus)                                   // Shop
 		r.With(middleware.UploadRateLimiter.Middleware()).Post("/products/images", upc.UploadProductImages) // Shop
 		r.Post("/shops/me/products/{id}/markdown", pc.ApplyClearanceMarkdown)                              // Shop
 		r.Post("/shops/me/products/bulk-import", pc.BulkImport)                                            // Shop
@@ -263,6 +276,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Post("/shops/me/pos/sale", posc.CreateSale)
 		r.Get("/shops/me/pos/sales", posc.ListSales)                                 // Shop                               // Shop
 		r.Post("/shops/me/pos/sales/{billNumber}/cancel", posc.CancelBill)          // Shop
+		r.Get("/shops/me/pos/customer-check", posc.GetCustomerCreditCheck)          // Shop
 		r.Get("/shops/me/pos/daily-summary", posc.GetDailySummary)                  // Shop
 		r.Get("/shops/me/pos/summary", posc.GetDailySummary)                        // Shop
 		r.Get("/shops/me/pos/scan/{sku}", posc.ScanBarcode)                         // Shop
@@ -289,6 +303,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/shops/me/khata/summary", khatac.GetSummary)                      // Shop
 		r.Get("/shops/me/khata/aging", khatac.GetAgingReport)                    // Shop
 		r.Get("/shops/me/khata", khatac.ListCustomers)                           // Shop
+		r.Delete("/shops/me/khata/{khataId}", khatac.DeleteCustomer)              // Shop
 		r.Get("/shops/me/khata/{mobile}", khatac.GetCustomerHistory)             // Shop
 		r.Get("/shops/me/khata/{mobile}/statement", khatac.GetCustomerHistory)   // Shop
 		r.Get("/shops/me/khata/{mobile}/reminder", khatac.GetPaymentReminder)     // Shop
@@ -300,6 +315,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Post("/shops/me/khata/{id}/request-closure", khatac.RequestClosure)   // Shop
 		r.Post("/shops/me/khata/{id}/verify-closure-otp", khatac.VerifyClosureOTP) // Shop
 		r.Post("/shops/me/khata/{id}/transactions/{txId}/reverse", khatac.ReverseTransaction) // Shop
+		r.Patch("/shops/me/khata/transactions/{id}/notes", khatac.UpdateTransactionNotes) // Shop
 		r.Post("/shops/me/khata/{id}/dispute/{txId}/resolve", khatac.ResolveDispute) // Shop
 		r.Post("/shops/me/khata/{id}/promise-date", khatac.SetPromiseToPay)      // Shop
 		r.Get("/shops/me/khata/{mobile}/trust-score", khatac.GetCustomerTrustScore) // Shop
@@ -324,7 +340,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/shops/me/offers/history", loyc.GetOfferHistory)  // Shop
 
 		// In-Store Item Reservations (Customer)
-		r.With(middleware.Idempotency()).Post("/reservations", resc.Create)                   // Customer
+		r.With(middleware.IdempotencyGuard).Post("/reservations", resc.Create)                   // Customer
 		r.Get("/reservations", resc.ListUserReservations)      // Customer
 		r.Get("/reservations/{id}", resc.GetByID)              // Customer
 		r.Post("/reservations/{id}/cancel", resc.CancelUserReservation) // Customer
@@ -374,4 +390,5 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 
 	return r
 }
+
 

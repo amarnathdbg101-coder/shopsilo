@@ -235,6 +235,17 @@ func (s *ShopService) GetShopBySlug(ctx context.Context, slug string) (*model.Sh
 	return shop, nil
 }
 
+func (s *ShopService) ListUserShops(ctx context.Context, userID string) ([]*model.Shop, error) {
+	shops, err := s.shopRepo.ListUserShops(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	for _, sh := range shops {
+		enrichShop(sh)
+	}
+	return shops, nil
+}
+
 func (s *ShopService) ListShops(ctx context.Context, filter dto.ShopFilter) (*dto.ShopPaginationResponse, error) {
 	if filter.Page < 1 {
 		filter.Page = 1

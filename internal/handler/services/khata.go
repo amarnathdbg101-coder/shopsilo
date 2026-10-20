@@ -219,6 +219,32 @@ func (s *KhataService) GetSummary(ctx context.Context, shopOwnerUserID string) (
 	return s.khataRepo.GetSummary(ctx, shop.ID)
 }
 
+// DeleteCustomer removes a customer's khata account if balance is 0.
+func (s *KhataService) DeleteCustomer(ctx context.Context, shopOwnerUserID, khataID string, force bool) error {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return ErrShopNotFound
+		}
+		return err
+	}
+
+	return s.khataRepo.DeleteCustomer(ctx, shop.ID, khataID, force)
+}
+
+// UpdateTransactionNotes updates the notes on a transaction entry.
+func (s *KhataService) UpdateTransactionNotes(ctx context.Context, shopOwnerUserID, transactionID, notes string) error {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return ErrShopNotFound
+		}
+		return err
+	}
+
+	return s.khataRepo.UpdateTransactionNotes(ctx, shop.ID, transactionID, strings.TrimSpace(notes))
+}
+
 // GeneratePaymentReminder creates a personalized, polite WhatsApp reminder link and text for an udhar customer.
 func (s *KhataService) GeneratePaymentReminder(ctx context.Context, shopOwnerUserID, customerMobile string) (*dto.KhataReminderResponse, error) {
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)

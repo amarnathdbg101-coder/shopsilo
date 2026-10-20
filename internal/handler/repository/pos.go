@@ -271,6 +271,129 @@ func (r *POSRepo) GetBillByNumber(ctx context.Context, billNumber string) (*mode
 	return bill, nil
 }
 
+// CancelBill voids a completed POS bill, restocks inventory, and adjusts Khata balance if credit sale.
+func (r *POSRepo) CancelBill(ctx context.Context, shopID, billNumber, reason string) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin tx for cancel bill: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// 1. Fetch existing bill
+	var billID, status, customerPhone, paymentMethod string
+	var totalAmount, khataAmount float64
+	query := `
+		SELECT id, COALESCE(status, 'completed'), COALESCE(customer_phone, ''), payment_method, total_amount, COALESCE(khata_amount, 0)
+		FROM pos_bills
+		WHERE shop_id = $1 AND bill_number = $2
+		FOR UPDATE
+	`
+	err = tx.QueryRow(ctx, query, shopID, strings.TrimSpace(billNumber)).Scan(
+		&billID, &status, &customerPhone, &paymentMethod, &totalAmount, &khataAmount,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrBillNotFound
+		}
+		return err
+	}
+
+	if status == "cancelled" {
+		return errors.New("bill is already cancelled")
+	}
+
+	// 2. Mark bill as cancelled
+	updateBillQuery := `
+		UPDATE pos_bills
+		SET status = 'cancelled', cancellation_reason = $1, cancelled_at = NOW()
+		WHERE id = $2
+	`
+	if _, err := tx.Exec(ctx, updateBillQuery, reason, billID); err != nil {
+		return fmt.Errorf("failed to mark bill as cancelled: %w", err)
+	}
+
+	// 3. Fetch bill items & restock inventory
+	itemsQuery := `
+		SELECT product_id, quantity
+		FROM pos_bill_items
+		WHERE bill_id = $1 AND product_id IS NOT NULL
+	`
+	rows, err := tx.Query(ctx, itemsQuery, billID)
+	if err != nil {
+		return fmt.Errorf("failed to query bill items for cancel: %w", err)
+	}
+
+	type restockItem struct {
+		productID string
+		quantity  int
+	}
+	var itemsToRestock []restockItem
+	for rows.Next() {
+		var pid string
+		var qty int
+		if err := rows.Scan(&pid, &qty); err == nil && pid != "" && !strings.HasPrefix(pid, "custom_") {
+			itemsToRestock = append(itemsToRestock, restockItem{productID: pid, quantity: qty})
+		}
+	}
+	rows.Close()
+
+	for _, item := range itemsToRestock {
+		restockQuery := `
+			UPDATE inventory
+			SET quantity = quantity + $1, updated_at = NOW()
+			WHERE product_id = $2
+		`
+		if _, err := tx.Exec(ctx, restockQuery, item.quantity, item.productID); err != nil {
+			r.logger.Error("failed to restock inventory on bill cancellation", zap.Error(err), zap.String("product_id", item.productID))
+		}
+	}
+
+	// 4. If Khata credit sale, adjust customer khata balance
+	if (paymentMethod == "khata" || paymentMethod == "credit" || khataAmount > 0) && customerPhone != "" {
+		deductKhata := khataAmount
+		if deductKhata <= 0 {
+			deductKhata = totalAmount
+		}
+		khataAdjustQuery := `
+			UPDATE customer_khata
+			SET total_credit = GREATEST(0, total_credit - $1), updated_at = NOW()
+			WHERE shop_id = $2 AND (customer_phone = $3 OR customer_mobile = $3)
+		`
+		_, _ = tx.Exec(ctx, khataAdjustQuery, deductKhata, shopID, customerPhone)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit bill cancellation: %w", err)
+	}
+
+	return nil
+}
+
+// GetCustomerCreditStatus checks a customer's registered name, current balance, and credit limit.
+func (r *POSRepo) GetCustomerCreditStatus(ctx context.Context, shopID, phone string) (string, float64, float64, error) {
+	clean := strings.TrimSpace(phone)
+	if clean == "" {
+		return "", 0, 0, nil
+	}
+
+	query := `
+		SELECT COALESCE(customer_name, ''), COALESCE(total_credit, 0), COALESCE(credit_limit, 0)
+		FROM customer_khata
+		WHERE shop_id = $1 AND (customer_phone = $2 OR customer_mobile = $2)
+		LIMIT 1
+	`
+	var name string
+	var balance, limit float64
+	err := r.db.QueryRow(ctx, query, shopID, clean).Scan(&name, &balance, &limit)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", 0, 0, nil
+		}
+		return "", 0, 0, err
+	}
+	return name, balance, limit, nil
+}
+
 // GetDailyCloseReport computes counter sales, khata debt repayments, cash expenses, and exact expected drawer cash.
 func (r *POSRepo) GetDailyCloseReport(ctx context.Context, shopID string, targetDate time.Time) (*dto.DailyCloseReport, error) {
 	startOfDay, endOfDay := utils.IndianDayBounds(targetDate)

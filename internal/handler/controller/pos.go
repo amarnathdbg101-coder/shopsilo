@@ -173,6 +173,33 @@ func (c *POSController) CancelBill(w http.ResponseWriter, r *http.Request) {
 	reuse.Success(w, "POS Bill cancelled and inventory restocked successfully", bill)
 }
 
+// GetCustomerCreditCheck checks a customer's registered name, balance, and credit limit before billing (Protected - Shop Owner)
+func (c *POSController) GetCustomerCreditCheck(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	phone := r.URL.Query().Get("phone")
+	if phone == "" {
+		reuse.Error(w, http.StatusBadRequest, "phone parameter is required")
+		return
+	}
+
+	res, err := c.service.GetCustomerCreditCheck(r.Context(), claims.UserID, phone)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "shop not found")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Customer credit status retrieved successfully", res)
+}
+
 // ScanBarcode looks up a product by barcode/SKU during POS checkout (Protected - Shop)
 func (c *POSController) ScanBarcode(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())

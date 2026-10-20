@@ -723,6 +723,59 @@ func (r *KhataRepo) DisputeTransaction(ctx context.Context, khataID, txID, reaso
 	return nil
 }
 
+// DeleteCustomer removes a settled customer khata account if balance is 0.
+func (r *KhataRepo) DeleteCustomer(ctx context.Context, shopID, khataID string, force bool) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin tx for delete customer: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var balance float64
+	err = tx.QueryRow(ctx, `SELECT current_balance FROM customer_khata WHERE id = $1 AND shop_id = $2 FOR UPDATE`, khataID, shopID).Scan(&balance)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrKhataNotFound
+		}
+		return err
+	}
+
+	if balance != 0 && !force {
+		return ErrKhataBalanceNonZero
+	}
+
+	// Delete transactions
+	_, _ = tx.Exec(ctx, `DELETE FROM khata_transactions WHERE khata_id = $1`, khataID)
+
+	// Delete customer account
+	cmdTag, err := tx.Exec(ctx, `DELETE FROM customer_khata WHERE id = $1 AND shop_id = $2`, khataID, shopID)
+	if err != nil {
+		return fmt.Errorf("failed to delete customer khata: %w", err)
+	}
+	if cmdTag.RowsAffected() == 0 {
+		return ErrKhataNotFound
+	}
+
+	return tx.Commit(ctx)
+}
+
+// UpdateTransactionNotes updates the notes string on an existing ledger entry.
+func (r *KhataRepo) UpdateTransactionNotes(ctx context.Context, shopID, transactionID, notes string) error {
+	query := `
+		UPDATE khata_transactions
+		SET notes = $1
+		WHERE id = $2 AND shop_id = $3
+	`
+	cmdTag, err := r.db.Exec(ctx, query, notes, transactionID, shopID)
+	if err != nil {
+		return err
+	}
+	if cmdTag.RowsAffected() == 0 {
+		return errors.New("transaction not found")
+	}
+	return nil
+}
+
 // SubmitUPIPayment records a customer's direct UPI settlement with UTR reference.
 func (r *KhataRepo) SubmitUPIPayment(ctx context.Context, khataID string, amount float64, upiRef, notes string) (*model.KhataTransaction, error) {
 	tx, err := r.db.Begin(ctx)

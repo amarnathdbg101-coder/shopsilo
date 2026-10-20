@@ -149,6 +149,70 @@ func (c *ProductController) Delete(w http.ResponseWriter, r *http.Request) {
 	reuse.Success(w, "Product deleted successfully", nil)
 }
 
+// BatchDelete handles batch deleting multiple products (Protected - Shop Owner)
+func (c *ProductController) BatchDelete(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var input dto.BatchDeleteProductsRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := reuse.ValidateStruct(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	res, err := c.productService.BatchDeleteProducts(r.Context(), claims.UserID, input.ProductIDs)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "shop not found")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, res.Message, res)
+}
+
+// BatchToggleStatus handles batch activating/deactivating multiple products (Protected - Shop Owner)
+func (c *ProductController) BatchToggleStatus(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var input dto.BatchToggleProductStatusRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := reuse.ValidateStruct(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	res, err := c.productService.BatchToggleProductStatus(r.Context(), claims.UserID, input.ProductIDs, input.IsActive)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "shop not found")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, res.Message, res)
+}
+
 func sanitizePublicProduct(p *model.Product) {
 	if p == nil {
 		return

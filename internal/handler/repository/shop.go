@@ -287,6 +287,53 @@ func (r *ShopRepo) FindByUserID(ctx context.Context, userID string) (*model.Shop
 	return s, nil
 }
 
+// ListUserShops retrieves all branch outlets owned by a specific user.
+func (r *ShopRepo) ListUserShops(ctx context.Context, userID string) ([]*model.Shop, error) {
+	query := `
+		SELECT id, user_id, name, slug, COALESCE(description, ''), COALESCE(category, ''), COALESCE(phone, ''), COALESCE(address, ''),
+		       latitude, longitude, COALESCE(city, ''), COALESCE(pincode, ''), COALESCE(whatsapp_number, ''),
+		       COALESCE(upi_id, ''), COALESCE(logo_url, ''), banners, COALESCE(timing, ''),
+		       COALESCE(opening_time, '09:00'), COALESCE(closing_time, '21:00'), COALESCE(weekly_off, ''),
+		       is_open, is_active, status, flagged_count, COALESCE(suspension_reason, ''),
+		       COALESCE(creation_ip, ''), COALESCE(creation_user_agent, ''), COALESCE(device_fingerprint, ''),
+		       created_at, updated_at
+		FROM shops
+		WHERE user_id = $1
+		ORDER BY created_at ASC
+	`
+	rows, err := r.db.Query(ctx, query, userID)
+	if err != nil {
+		r.logger.Error("failed to list user shops", zap.Error(err), zap.String("user_id", userID))
+		return nil, err
+	}
+	defer rows.Close()
+
+	shops := make([]*model.Shop, 0)
+	for rows.Next() {
+		s := &model.Shop{}
+		var bannersScanned []byte
+		err := rows.Scan(
+			&s.ID, &s.UserID, &s.Name, &s.Slug, &s.Description, &s.Category, &s.Phone, &s.Address,
+			&s.Latitude, &s.Longitude, &s.City, &s.Pincode, &s.WhatsAppNumber, &s.UPIID, &s.LogoURL,
+			&bannersScanned, &s.Timing, &s.OpeningTime, &s.ClosingTime, &s.WeeklyOff, &s.IsOpen, &s.IsActive,
+			&s.Status, &s.FlaggedCount, &s.SuspensionReason, &s.CreationIP, &s.CreationUserAgent,
+			&s.DeviceFingerprint, &s.CreatedAt, &s.UpdatedAt,
+		)
+		if err != nil {
+			r.logger.Error("failed to scan user shop", zap.Error(err))
+			return nil, err
+		}
+		s.Banners = []string{}
+		if len(bannersScanned) > 0 {
+			_ = json.Unmarshal(bannersScanned, &s.Banners)
+		}
+		computeShopOpenStatus(s)
+		shops = append(shops, s)
+	}
+
+	return shops, nil
+}
+
 func (r *ShopRepo) FindByID(ctx context.Context, id string) (*model.Shop, error) {
 	query := `
 		SELECT id, user_id, name, slug, COALESCE(description, ''), COALESCE(category, ''), COALESCE(phone, ''), COALESCE(address, ''),

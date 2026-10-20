@@ -211,3 +211,18 @@ type BulkImportResponse struct {
 	Errors        []string `json:"errors,omitempty"`
 }
 
+type BatchDeleteProductsRequest struct {
+	ProductIDs []string `json:"product_ids" validate:"required,min=1,max=100"`
+}
+
+type BatchToggleProductStatusRequest struct {
+	ProductIDs []string `json:"product_ids" validate:"required,min=1,max=100"`
+	IsActive   bool     `json:"is_active"`
+}
+
+type BatchOperationResponse struct {
+	AffectedCount int      `json:"affected_count"`
+	Message       string   `json:"message"`
+	Errors        []string `json:"errors,omitempty"`
+}
+

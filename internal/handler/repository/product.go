@@ -1058,6 +1058,44 @@ func (r *ProductRepo) Delete(ctx context.Context, id, shopID string) error {
 	return nil
 }
 
+// BatchDelete soft deletes multiple products belonging to a shop in a single query.
+func (r *ProductRepo) BatchDelete(ctx context.Context, shopID string, productIDs []string) (int64, error) {
+	if len(productIDs) == 0 {
+		return 0, nil
+	}
+
+	query := `
+		UPDATE products
+		SET is_active = false, updated_at = NOW()
+		WHERE shop_id = $1 AND id::text = ANY($2)
+	`
+	cmdTag, err := r.db.Exec(ctx, query, shopID, productIDs)
+	if err != nil {
+		r.logger.Error("failed to batch delete products", zap.Error(err), zap.String("shop_id", shopID))
+		return 0, err
+	}
+	return cmdTag.RowsAffected(), nil
+}
+
+// BatchToggleStatus updates the active status for multiple products belonging to a shop in a single query.
+func (r *ProductRepo) BatchToggleStatus(ctx context.Context, shopID string, productIDs []string, isActive bool) (int64, error) {
+	if len(productIDs) == 0 {
+		return 0, nil
+	}
+
+	query := `
+		UPDATE products
+		SET is_active = $1, updated_at = NOW()
+		WHERE shop_id = $2 AND id::text = ANY($3)
+	`
+	cmdTag, err := r.db.Exec(ctx, query, isActive, shopID, productIDs)
+	if err != nil {
+		r.logger.Error("failed to batch toggle product status", zap.Error(err), zap.String("shop_id", shopID))
+		return 0, err
+	}
+	return cmdTag.RowsAffected(), nil
+}
+
 func (r *ProductRepo) AdjustInventoryStock(ctx context.Context, shopID, productID string, adjustment int, threshold *int) (*model.Inventory, error) {
 	var exists bool
 	err := r.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM products WHERE id = $1 AND shop_id = $2)`, productID, shopID).Scan(&exists)

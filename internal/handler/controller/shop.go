@@ -91,6 +91,23 @@ func (c *ShopController) GetMyShop(w http.ResponseWriter, r *http.Request) {
 	reuse.Success(w, "Shop retrieved successfully", shop)
 }
 
+// ListMyBranches retrieves all branch outlets owned by the authenticated merchant (Protected - Shop)
+func (c *ShopController) ListMyBranches(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	shops, err := c.service.ListUserShops(r.Context(), claims.UserID)
+	if err != nil {
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Branch outlets retrieved successfully", shops)
+}
+
 // UpdateMyShop handles updating current user's shop (Protected - Owner)
 func (c *ShopController) UpdateMyShop(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())

@@ -188,7 +188,26 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS items_summary TEXT;",
 
 		// POS Parked Bills & Live Multi-Customer Baskets
-		`CREATE TABLE IF NOT EXISTS pos_parked_bills (
+		`CREATE TABLE IF NOT EXISTS master_catalog_products (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			barcode VARCHAR(64) UNIQUE NOT NULL,
+			name VARCHAR(255) NOT NULL,
+			brand VARCHAR(100) NOT NULL DEFAULT '',
+			category VARCHAR(100) NOT NULL DEFAULT 'General Store',
+			unit VARCHAR(50) NOT NULL DEFAULT 'piece',
+			mrp DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+			selling_price DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+			description TEXT,
+			image_url TEXT,
+			source VARCHAR(50) NOT NULL DEFAULT 'crowdsourced',
+			created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+		);,
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_master_catalog_barcode ON master_catalog_products (TRIM(LOWER(barcode)));,
+		CREATE INDEX IF NOT EXISTS idx_master_catalog_brand ON master_catalog_products (TRIM(LOWER(brand)));,
+		CREATE INDEX IF NOT EXISTS idx_master_catalog_category ON master_catalog_products (category);,
+
+		CREATE TABLE IF NOT EXISTS pos_parked_bills (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			shop_id UUID NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
 			label VARCHAR(100) NOT NULL DEFAULT '',

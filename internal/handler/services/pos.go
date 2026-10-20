@@ -723,6 +723,55 @@ func (s *POSService) DeleteParkedBill(ctx context.Context, shopOwnerUserID, id s
 	return nil
 }
 
+// CancelBill voids a completed bill, restocks inventory, and adjusts Khata balance if credit sale.
+func (s *POSService) CancelBill(ctx context.Context, shopOwnerUserID, billNumber, reason string) error {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return ErrShopNotFound
+		}
+		return err
+	}
+
+	cleanReason := strings.TrimSpace(reason)
+	if cleanReason == "" {
+		cleanReason = "Cancelled by cashier at counter"
+	}
+
+	return s.posRepo.CancelBill(ctx, shop.ID, billNumber, cleanReason)
+}
+
+// GetCustomerCreditCheck retrieves a customer's registered name, current credit balance, and credit limit.
+func (s *POSService) GetCustomerCreditCheck(ctx context.Context, shopOwnerUserID, phone string) (map[string]interface{}, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, ErrShopNotFound
+		}
+		return nil, err
+	}
+
+	name, balance, limit, err := s.posRepo.GetCustomerCreditStatus(ctx, shop.ID, phone)
+	if err != nil {
+		return nil, err
+	}
+
+	availableCredit := limit - balance
+	if availableCredit < 0 {
+		availableCredit = 0
+	}
+
+	return map[string]interface{}{
+		"phone":             phone,
+		"customer_name":     name,
+		"current_balance":   balance,
+		"credit_limit":      limit,
+		"available_credit":  availableCredit,
+		"is_registered":     name != "",
+		"is_limit_exceeded": limit > 0 && balance >= limit,
+	}, nil
+}
+
 var (
 	prefixQtyRegex     = regexp.MustCompile(`(?i)^([0-9]+(?:\.[0-9]+)?)\s*(kgs?|g(?:ms?|rams?)?|l(?:trs?|iters?|itres?)?|ml|pkts?|packets?|pcs?|pieces?|box(?:es)?|bottles?)?\s*(?:of\s+)?(.+)$`)
 	suffixQtyRegex     = regexp.MustCompile(`(?i)^(.+?)\s+([0-9]+(?:\.[0-9]+)?)\s*(kgs?|g(?:ms?|rams?)?|l(?:trs?|iters?|itres?)?|ml|pkts?|packets?|pcs?|pieces?|box(?:es)?|bottles?)?$`)

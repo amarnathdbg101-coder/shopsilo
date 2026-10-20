@@ -525,4 +525,69 @@ func (c *KhataController) GetCustomerTrustScore(w http.ResponseWriter, r *http.R
 	reuse.Success(w, "Customer trust score retrieved", score)
 }
 
+// DeleteCustomer removes a settled customer khata account if balance is 0 (Protected - Shop)
+func (c *KhataController) DeleteCustomer(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	khataID := strings.TrimSpace(chi.URLParam(r, "khataId"))
+	if khataID == "" {
+		reuse.Error(w, http.StatusBadRequest, "khata id is required")
+		return
+	}
+
+	force := r.URL.Query().Get("force") == "true"
+
+	err := c.service.DeleteCustomer(r.Context(), claims.UserID, khataID, force)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "shop not found")
+			return
+		}
+		if errors.Is(err, services.ErrKhataCustomerNotFound) {
+			reuse.Error(w, http.StatusNotFound, "khata account not found")
+			return
+		}
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Customer khata account deleted successfully", nil)
+}
+
+// UpdateTransactionNotes updates the notes string on an entry (Protected - Shop)
+func (c *KhataController) UpdateTransactionNotes(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	txID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if txID == "" {
+		reuse.Error(w, http.StatusBadRequest, "transaction id is required")
+		return
+	}
+
+	var input struct {
+		Notes string `json:"notes"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&input)
+
+	err := c.service.UpdateTransactionNotes(r.Context(), claims.UserID, txID, input.Notes)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "shop not found")
+			return
+		}
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Transaction notes updated successfully", nil)
+}
+
 

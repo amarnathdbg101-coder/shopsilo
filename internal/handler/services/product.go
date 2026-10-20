@@ -23,9 +23,10 @@ import (
 )
 
 type ProductService struct {
-	productRepo  *repository.ProductRepo
-	shopRepo     *repository.ShopRepo
-	categoryRepo *repository.CategoryRepo
+	productRepo    *repository.ProductRepo
+	shopRepo       *repository.ShopRepo
+	categoryRepo   *repository.CategoryRepo
+	catalogService *CatalogService
 }
 
 func NewProductService(
@@ -38,6 +39,10 @@ func NewProductService(
 		shopRepo:     shopRepo,
 		categoryRepo: categoryRepo,
 	}
+}
+
+func (s *ProductService) SetCatalogService(cs *CatalogService) {
+	s.catalogService = cs
 }
 
 // resolveCategoryID accepts UUID, slug, name, or auto-creates on the fly.
@@ -186,7 +191,30 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 		LowStockThreshold: minStock,
 	}
 
-	return s.productRepo.Create(ctx, product, input.StockQuantity)
+	created, err := s.productRepo.Create(ctx, product, input.StockQuantity)
+	if err == nil && created != nil && s.catalogService != nil {
+		barcode := sku
+		if b, ok := attrs["barcode"].(string); ok && b != "" {
+			barcode = b
+		}
+		brand := ""
+		if br, ok := attrs["brand"].(string); ok {
+			brand = br
+		}
+		unit := "piece"
+		if u, ok := attrs["unit"].(string); ok {
+			unit = u
+		}
+		img := ""
+		if len(images) > 0 {
+			img = images[0]
+		}
+		s.catalogService.EnrichFromProduct(
+			ctx, barcode, created.Name, brand, created.CategoryName, unit, created.MRP, created.Price, created.Description, img,
+		)
+	}
+
+	return created, err
 }
 
 func (s *ProductService) GetProductByID(ctx context.Context, id string) (*model.Product, error) {
@@ -367,11 +395,46 @@ func (s *ProductService) DeleteProduct(ctx context.Context, userID, productID st
 		return err
 	}
 
-	// Note: We intentionally do NOT delete the images from Cloudflare R2 here.
-	// Because the product is only soft-deleted (is_active = false) so that past
-	// POS sales, receipts, and Khata bills can still display the product image.
-
 	return nil
+}
+
+func (s *ProductService) BatchDeleteProducts(ctx context.Context, userID string, productIDs []string) (*dto.BatchOperationResponse, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, userID)
+	if err != nil {
+		return nil, ErrShopNotFound
+	}
+
+	count, err := s.productRepo.BatchDelete(ctx, shop.ID, productIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch delete products: %w", err)
+	}
+
+	return &dto.BatchOperationResponse{
+		AffectedCount: int(count),
+		Message:       fmt.Sprintf("%d products deleted successfully", count),
+	}, nil
+}
+
+func (s *ProductService) BatchToggleProductStatus(ctx context.Context, userID string, productIDs []string, isActive bool) (*dto.BatchOperationResponse, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, userID)
+	if err != nil {
+		return nil, ErrShopNotFound
+	}
+
+	count, err := s.productRepo.BatchToggleStatus(ctx, shop.ID, productIDs, isActive)
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch update product status: %w", err)
+	}
+
+	statusText := "activated"
+	if !isActive {
+		statusText = "deactivated"
+	}
+
+	return &dto.BatchOperationResponse{
+		AffectedCount: int(count),
+		Message:       fmt.Sprintf("%d products %s successfully", count, statusText),
+	}, nil
 }
 
 // FindNearbyProducts searches for in-stock products across nearby shops via full database query.
