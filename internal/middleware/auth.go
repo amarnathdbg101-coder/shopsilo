@@ -74,6 +74,54 @@ func JWTAuth(secret string) func(http.Handler) http.Handler {
 	}
 }
 
+// OptionalJWTAuth validates JWT token if present, attaching Claims to request context.
+// Allows unauthenticated guest requests to proceed with claims = nil.
+func OptionalJWTAuth(secret string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				tokenStr := r.URL.Query().Get("token")
+				if tokenStr == "" {
+					tokenStr = r.URL.Query().Get("access_token")
+				}
+				if tokenStr != "" {
+					authHeader = "Bearer " + tokenStr
+				}
+			}
+
+			if authHeader == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			tokenStr := parts[1]
+			claims := &Claims{}
+
+			token, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (interface{}, error) {
+				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+				}
+				return []byte(secret), nil
+			})
+
+			if err == nil && token.Valid {
+				ctx := context.WithValue(r.Context(), ContextKeyUser, claims)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func GetUserFromContext(ctx context.Context) *Claims {
 	if claims, ok := ctx.Value(ContextKeyUser).(*Claims); ok {
 		return claims

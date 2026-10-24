@@ -204,6 +204,98 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/images/*", upc.ServeImage)                                 // Both
 	})
 
+	// 🛍️ Customer Route Group (/api/v1/customer)
+	r.Route("/api/v1/customer", func(r chi.Router) {
+		r.Use(middleware.GlobalRateLimiter.Middleware())
+		r.Use(middleware.OptionalJWTAuth(utils.MustLoad().Jwt))
+
+		r.Get("/products", pc.ListCustomerProducts)
+		r.Get("/products/nearby", pc.FindNearby)
+		r.Get("/products/{id}", pc.GetByID)
+		r.Get("/products/slug/{slug}", pc.GetBySlug)
+		r.Get("/shops", sc.List)
+		r.Get("/shops/{id}", sc.GetByID)
+		r.Get("/shops/slug/{slug}", sc.GetBySlug)
+		r.Get("/shops/{slug}/offers", loyc.ListOffers)
+		r.Get("/shops/{slug}/reviews", revc.List)
+		r.Get("/offers", loyc.ListAllOffers)
+		r.Get("/receipts/{bill_number}", posc.ViewPublicReceiptPDF)
+
+		// Customer AI Sathi
+		r.Post("/ai/chat", aic.CustomerChat)
+		r.Post("/ai/parse-parchi", aic.ParseParchi)
+		r.Post("/ai/semantic-search", aic.SemanticSearch)
+		r.Post("/ai/scan-product", aic.ScanProduct)
+		r.Post("/ai/bargain-assist", aic.BargainAssist)
+
+		// Customer Khata, Loyalty & Item Hold Reservations (JWT Required)
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.JWTAuth(utils.MustLoad().Jwt))
+			r.Get("/loyalty", loyc.GetUserLoyalty)
+			r.Post("/shops/{slug}/reviews", revc.AddOrUpdate)
+
+			r.Get("/khata", custKhatac.GetCustomerKhataSummary)
+			r.Get("/khata/{khataId}/transactions", custKhatac.GetCustomerKhataPassbook)
+			r.Post("/khata/{khataId}/dispute", custKhatac.DisputeTransaction)
+			r.Post("/khata/{khataId}/pay-upi", custKhatac.SubmitUPIPayment)
+			r.Get("/khata/{khataId}/statement.pdf", custKhatac.DownloadCustomerPDF)
+
+			r.Post("/reservations", resc.Create)
+			r.Get("/reservations", resc.ListUserReservations)
+			r.Post("/reservations/{id}/cancel", resc.CancelUserReservation)
+		})
+	})
+
+	// 🏪 Merchant / Shop Owner Route Group (/api/v1/merchant)
+	r.Route("/api/v1/merchant", func(r chi.Router) {
+		r.Use(middleware.JWTAuth(utils.MustLoad().Jwt))
+		r.Use(middleware.RequireRole("merchant", "shop_owner", "staff", "admin"))
+
+		r.Get("/products", pc.ListMerchantProducts)
+		r.Get("/shop/dashboard", sc.GetMerchantDashboard)
+		r.Get("/shop/digest", sc.GetDailyDigest)
+		r.Patch("/shop/status", sc.ToggleStatus)
+
+		// Merchant Staff Sub-Accounts
+		r.Get("/staff", staffc.ListStaff)
+		r.Post("/staff", staffc.CreateStaff)
+		r.Put("/staff/{id}", staffc.UpdateStaff)
+		r.Delete("/staff/{id}", staffc.DeleteStaff)
+
+		// Merchant Store Analytics
+		r.Get("/analytics/profit", ac.GetMonthlyProfit)
+		r.Get("/analytics/matrix", ac.GetProductMatrix)
+
+		// Merchant Inventory & Reorder Operations
+		r.Get("/inventory/low-stock", invc.GetLowStockAlerts)
+		r.Post("/inventory/adjust", invc.AdjustStock)
+		r.Get("/inventory/reorder-pdf", invc.DownloadReorderSheetPDF)
+
+		// Merchant Offers & In-Store Returns
+		r.Post("/offers", loyc.CreateOffer)
+		r.Get("/returns", loyc.ListReturns)
+		r.Post("/returns", loyc.ProcessReturn)
+
+		// Merchant In-Store Pickup Holds & Counter POS Billing
+		r.Get("/reservations", resc.ListShopReservations)
+		r.Post("/reservations/verify", resc.VerifyShopReservation)
+		r.Post("/pos/checkout", posc.CreateSale)
+		r.Get("/pos/summary", posc.GetDailySummary)
+
+		// Merchant AI Copilot
+		r.Post("/ai/copilot", aic.MerchantCopilot)
+		r.Post("/ai/voice-bill", aic.VoiceBill)
+		r.Post("/ai/marketing-campaign", aic.GenerateMarketingCampaign)
+
+		// Merchant Udhar Ledger
+		r.Get("/khata/summary", khatac.GetSummary)
+		r.Get("/khata/customers", khatac.ListCustomers)
+		r.Get("/khata/customers/{mobile}", khatac.GetCustomerHistory)
+		r.Post("/khata/credit", khatac.RecordCredit)
+		r.Post("/khata/payment/{mobile}", khatac.RecordPayment)
+		r.Get("/khata/reminder/{mobile}", khatac.GetPaymentReminder)
+	})
+
 	// Protected routes (JWT authentication required)
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.JWTAuth(utils.MustLoad().Jwt))

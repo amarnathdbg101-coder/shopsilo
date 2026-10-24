@@ -1258,6 +1258,163 @@ func (s *ProductService) BulkImportProductsFromCSV(ctx context.Context, userID s
 	return s.productRepo.BulkImportProducts(ctx, shop.ID, items, updateExisting)
 }
 
+// MapProductToCustomerDTO converts a DB Product model into a public, clean CustomerProductResponseDTO.
+func MapProductToCustomerDTO(p *model.Product) *dto.CustomerProductResponseDTO {
+	if p == nil {
+		return nil
+	}
+
+	isInStock := p.StockQuantity > 0
+	stockBadge := "Out of Stock"
+	if p.StockQuantity > 5 {
+		stockBadge = "In Stock"
+	} else if p.StockQuantity > 0 {
+		stockBadge = "Only Few Left"
+	}
+
+	var discountPct float64
+	if p.ComparePrice > p.Price && p.ComparePrice > 0 {
+		discountPct = math.Round(((p.ComparePrice - p.Price) / p.ComparePrice) * 100)
+	}
+
+	return &dto.CustomerProductResponseDTO{
+		ID:                 p.ID,
+		ShopID:             p.ShopID,
+		Name:               p.Name,
+		Slug:               p.Slug,
+		Description:        p.Description,
+		SellingPrice:       p.Price,
+		ComparePrice:       p.ComparePrice,
+		DiscountPercentage: discountPct,
+		MRP:                p.MRP,
+		CategoryID:         p.CategoryID,
+		Images:             p.Images,
+		IsInStock:          isInStock,
+		StockBadge:         stockBadge,
+		AllowBargain:       p.AllowBargain,
+		Rating:             4.8, // Default rating
+		ReviewCount:        12,  // Default count
+		Attributes:         p.Attributes,
+		CreatedAt:          p.CreatedAt,
+	}
+}
+
+// MapProductToMerchantDTO converts a DB Product model into a rich MerchantProductResponseDTO.
+func MapProductToMerchantDTO(p *model.Product) *dto.MerchantProductResponseDTO {
+	if p == nil {
+		return nil
+	}
+
+	marginAmt := p.Price - p.CostPrice
+	var marginPct float64
+	if p.Price > 0 {
+		marginPct = math.Round((marginAmt / p.Price) * 10000) / 100
+	}
+
+	isLowStock := p.StockQuantity <= p.MinStock
+
+	return &dto.MerchantProductResponseDTO{
+		ID:                  p.ID,
+		ShopID:              p.ShopID,
+		Name:                p.Name,
+		Slug:                p.Slug,
+		Description:         p.Description,
+		SKU:                 p.SKU,
+		CostPrice:           p.CostPrice,
+		SellingPrice:        p.Price,
+		FloorPrice:          p.FloorPrice,
+		ComparePrice:        p.ComparePrice,
+		MRP:                 p.MRP,
+		ProfitMarginAmount:  marginAmt,
+		ProfitMarginPercent: marginPct,
+		CategoryID:          p.CategoryID,
+		ExactStockQuantity:  p.StockQuantity,
+		MinStock:            p.MinStock,
+		LowStockThreshold:   p.LowStockThreshold,
+		IsLowStock:          isLowStock,
+		Images:              p.Images,
+		Weight:              p.Weight,
+		IsActive:            p.IsActive,
+		IsFeatured:          p.IsFeatured,
+		AllowBargain:        p.AllowBargain,
+		Tags:                p.Tags,
+		Attributes:          p.Attributes,
+		CreatedAt:           p.CreatedAt,
+		UpdatedAt:           p.UpdatedAt,
+	}
+}
+
+// ListCustomerProducts retrieves public products formatted with CustomerProductResponseDTO.
+func (s *ProductService) ListCustomerProducts(ctx context.Context, filter dto.ProductFilter) (*dto.CustomerProductPaginationResponse, error) {
+	products, totalCount, err := s.productRepo.FindAll(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+
+	page := filter.Page
+	if page < 1 {
+		page = 1
+	}
+	limit := filter.Limit
+	if limit < 1 || limit > 100 {
+		limit = 10
+	}
+	totalPages := int(math.Ceil(float64(totalCount) / float64(limit)))
+
+	customerProducts := make([]*dto.CustomerProductResponseDTO, 0, len(products))
+	for _, p := range products {
+		if p.IsActive {
+			customerProducts = append(customerProducts, MapProductToCustomerDTO(p))
+		}
+	}
+
+	return &dto.CustomerProductPaginationResponse{
+		Products:   customerProducts,
+		TotalCount: totalCount,
+		Page:       page,
+		Limit:      limit,
+		TotalPages: totalPages,
+	}, nil
+}
+
+// ListMerchantProducts retrieves full shop inventory formatted with MerchantProductResponseDTO.
+func (s *ProductService) ListMerchantProducts(ctx context.Context, userID string, filter dto.ProductFilter) (*dto.MerchantProductPaginationResponse, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, userID)
+	if err != nil {
+		return nil, ErrShopNotFound
+	}
+
+	filter.ShopID = shop.ID
+	products, totalCount, err := s.productRepo.FindAll(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+
+	page := filter.Page
+	if page < 1 {
+		page = 1
+	}
+	limit := filter.Limit
+	if limit < 1 || limit > 100 {
+		limit = 10
+	}
+	totalPages := int(math.Ceil(float64(totalCount) / float64(limit)))
+
+	merchantProducts := make([]*dto.MerchantProductResponseDTO, 0, len(products))
+	for _, p := range products {
+		merchantProducts = append(merchantProducts, MapProductToMerchantDTO(p))
+	}
+
+	return &dto.MerchantProductPaginationResponse{
+		Products:   merchantProducts,
+		TotalCount: totalCount,
+		Page:       page,
+		Limit:      limit,
+		TotalPages: totalPages,
+	}, nil
+}
+
+
 // BulkImportProductsFromExcel parses Excel (.xlsx) data and bulk imports products into shop catalog.
 func (s *ProductService) BulkImportProductsFromExcel(ctx context.Context, userID string, excelReader io.Reader, updateExisting bool) (*dto.BulkImportResponse, error) {
 	shop, err := s.shopRepo.FindByUserID(ctx, userID)

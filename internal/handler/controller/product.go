@@ -878,6 +878,79 @@ func getMapString(m map[string]interface{}, keys ...string) string {
 	return ""
 }
 
+func parseProductFilter(r *http.Request) dto.ProductFilter {
+	query := r.URL.Query()
+	search := query.Get("q")
+	if search == "" {
+		search = query.Get("search")
+	}
+	categoryID := query.Get("category_id")
+	if categoryID == "" {
+		categoryID = query.Get("category")
+	}
+	shopID := query.Get("shop_id")
+	sortBy := query.Get("sort_by")
+
+	minPrice, _ := strconv.ParseFloat(query.Get("min_price"), 64)
+	maxPrice, _ := strconv.ParseFloat(query.Get("max_price"), 64)
+
+	page, _ := strconv.Atoi(query.Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	limit, _ := strconv.Atoi(query.Get("limit"))
+	if limit < 1 || limit > 100 {
+		limit = 10
+	}
+
+	return dto.ProductFilter{
+		Search:     search,
+		CategoryID: categoryID,
+		ShopID:     shopID,
+		MinPrice:   minPrice,
+		MaxPrice:   maxPrice,
+		SortBy:     sortBy,
+		Page:       page,
+		Limit:      limit,
+	}
+}
+
+// ListCustomerProducts retrieves public products formatted with CustomerProductResponseDTO (Public / Customer).
+func (c *ProductController) ListCustomerProducts(w http.ResponseWriter, r *http.Request) {
+	filter := parseProductFilter(r)
+	filter.IsFeatured = nil
+
+	res, err := c.productService.ListCustomerProducts(r.Context(), filter)
+	if err != nil {
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Customer products retrieved successfully", res)
+}
+
+// ListMerchantProducts retrieves full shop inventory formatted with MerchantProductResponseDTO (Protected - Shop Owner).
+func (c *ProductController) ListMerchantProducts(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	filter := parseProductFilter(r)
+	res, err := c.productService.ListMerchantProducts(r.Context(), claims.UserID, filter)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you do not have a registered shop")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Merchant inventory products retrieved successfully", res)
+}
+
 func getMapFloat(m map[string]interface{}, keys ...string) float64 {
 	for _, k := range keys {
 		if val, exists := m[k]; exists && val != nil {
