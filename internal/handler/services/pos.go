@@ -373,6 +373,28 @@ case "split":
 		return nil, errors.New("failed to commit sale transaction")
 	}
 
+	wsHub := GetWebSocketHub(nil)
+	wsHub.BroadcastToShop(shop.ID, "POS_SALE_COMPLETED", map[string]interface{}{
+		"bill_number":    createdBill.BillNumber,
+		"total_amount":   createdBill.TotalAmount,
+		"payment_method": createdBill.PaymentMethod,
+		"customer_phone": createdBill.CustomerPhone,
+	})
+	if khataAmount > 0 {
+		wsHub.BroadcastToShop(shop.ID, "KHATA_MUTATED", map[string]interface{}{
+			"customer_phone": createdBill.CustomerPhone,
+			"delta":          khataAmount,
+		})
+	}
+	for _, itm := range input.Items {
+		if !strings.HasPrefix(itm.ProductID, "custom_") && itm.ProductID != "" {
+			wsHub.BroadcastToShopAndStorefront(shop.ID, shop.Slug, "STOCK_CHANGED", map[string]interface{}{
+				"product_id": itm.ProductID,
+				"shop_id":    shop.ID,
+			})
+		}
+	}
+
 	// Redeem bargain deal if applied
 	if redeemDealID != "" {
 		_ = s.productRepo.RedeemBargainDeal(ctx, redeemDealID)
@@ -1085,6 +1107,29 @@ func (s *POSService) ProcessPOSReturn(ctx context.Context, shopOwnerUserID strin
 	waMsg := fmt.Sprintf("🛍️ *Return Receipt - %s*\nReturn No: %s\nOriginal Bill: %s\nItems Returned: %d\nRefund Mode: %s\nTotal Refund: Rs.%.2f\n%s\nThank you!",
 		shop.Name, returnNumber, bill.BillNumber, restockedCount, strings.ToUpper(req.RefundMode), totalRefund, message)
 	waURL := fmt.Sprintf("https://wa.me/%s?text=%s", strings.TrimPrefix(bill.CustomerPhone, "+"), url.QueryEscape(waMsg))
+
+	wsHub := GetWebSocketHub(nil)
+	wsHub.BroadcastToShop(shop.ID, "POS_RETURN_COMPLETED", map[string]interface{}{
+		"return_number":   returnNumber,
+		"bill_number":     bill.BillNumber,
+		"total_refund":    totalRefund,
+		"refund_mode":     req.RefundMode,
+		"restocked_count": restockedCount,
+	})
+	if req.RefundMode == "khata" {
+		wsHub.BroadcastToShop(shop.ID, "KHATA_MUTATED", map[string]interface{}{
+			"customer_phone": bill.CustomerPhone,
+			"delta":          -totalRefund,
+		})
+	}
+	for _, itm := range req.Items {
+		if itm.ProductID != "" {
+			wsHub.BroadcastToShopAndStorefront(shop.ID, shop.Slug, "STOCK_CHANGED", map[string]interface{}{
+				"product_id": itm.ProductID,
+				"shop_id":    shop.ID,
+			})
+		}
+	}
 
 	return &dto.ProcessPOSReturnResponse{
 		ReturnNumber:        returnNumber,

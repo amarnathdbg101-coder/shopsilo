@@ -45,6 +45,14 @@ func (s *InventoryService) AdjustStock(ctx context.Context, shopOwnerUserID stri
 		return nil, err
 	}
 
+	wsHub := GetWebSocketHub(nil)
+	wsHub.BroadcastToShopAndStorefront(shop.ID, shop.Slug, "STOCK_CHANGED", map[string]interface{}{
+		"product_id":          input.ProductID,
+		"shop_id":             shop.ID,
+		"stock":               inv.Quantity,
+		"low_stock_threshold": inv.LowStockThreshold,
+	})
+
 	return inv, nil
 }
 

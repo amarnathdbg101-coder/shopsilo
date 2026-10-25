@@ -188,6 +188,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/shops/slug/{slug}", sc.GetBySlug)                          // Customer
 		r.Get("/shops/{slug}/qr", sc.GetShopQR)                            // Customer
 		r.Get("/shops/{slug}/products", pc.ListByShop)                     // Customer
+		r.Get("/shops/{slug}/live", wsc.ServePublicStorefrontWebSocket)    // Real-Time Storefront Live Channel
 		r.Get("/shops/{slug}/reviews", revc.List)                          // Customer
 		r.Get("/shops/{slug}/offers", loyc.ListOffers)                     // Customer
 		r.Get("/offers", loyc.ListAllOffers)                               // Customer
@@ -243,6 +244,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 			r.Post("/reservations", resc.Create)
 			r.Get("/reservations", resc.ListUserReservations)
 			r.Post("/reservations/{id}/cancel", resc.CancelUserReservation)
+			r.Get("/ws", wsc.ServeCustomerWebSocket) // Personal live orders & notifications
 		})
 	})
 

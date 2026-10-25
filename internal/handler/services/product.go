@@ -214,6 +214,11 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 		)
 	}
 
+	if err == nil && created != nil {
+		wsHub := GetWebSocketHub(nil)
+		wsHub.BroadcastToShopAndStorefront(shop.ID, shop.Slug, "PRODUCT_CREATED", created)
+	}
+
 	return created, err
 }
 
@@ -394,6 +399,11 @@ func (s *ProductService) UpdateProduct(ctx context.Context, userID, productID st
 		)
 	}
 
+	if err == nil && updated != nil {
+		wsHub := GetWebSocketHub(nil)
+		wsHub.BroadcastToShopAndStorefront(shop.ID, shop.Slug, "PRODUCT_MUTATED", updated)
+	}
+
 	return updated, err
 }
 
@@ -417,6 +427,12 @@ func (s *ProductService) DeleteProduct(ctx context.Context, userID, productID st
 	if err := s.productRepo.Delete(ctx, productID, shop.ID); err != nil {
 		return err
 	}
+
+	wsHub := GetWebSocketHub(nil)
+	wsHub.BroadcastToShopAndStorefront(shop.ID, shop.Slug, "PRODUCT_DELETED", map[string]interface{}{
+		"id":      productID,
+		"shop_id": shop.ID,
+	})
 
 	return nil
 }
