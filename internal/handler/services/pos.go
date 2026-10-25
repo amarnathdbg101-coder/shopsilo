@@ -560,7 +560,7 @@ func (s *POSService) GenerateReceiptPDF(ctx context.Context, billNumber string) 
 	}
 
 	return utils.RenderPDFWithConcurrencyLimit(ctx, func() ([]byte, error) {
-		return utils.GeneratePOSReceiptPDF(bill)
+		return utils.GenerateSmartBillPDF(ctx, bill)
 	})
 }
 

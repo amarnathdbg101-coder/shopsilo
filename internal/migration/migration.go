@@ -248,11 +248,25 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"CREATE INDEX IF NOT EXISTS idx_shops_geo_active ON shops (latitude, longitude) WHERE is_active = true AND status = 'active' AND latitude IS NOT NULL AND longitude IS NOT NULL;",
 		"CREATE INDEX IF NOT EXISTS idx_inventory_in_stock ON inventory (product_id) WHERE (quantity - reserved_quantity) > 0;",
 
+		// Step 3 Production Optimizations: Barcode, 10-Digit Phone, Khata Ledger, & Expiry Cleanup
+		"CREATE INDEX IF NOT EXISTS idx_products_shop_barcode ON products(shop_id, (attributes->>'barcode')) WHERE attributes ? 'barcode';",
+		"CREATE INDEX IF NOT EXISTS idx_products_shop_sku_upper ON products(shop_id, UPPER(TRIM(sku))) WHERE sku IS NOT NULL AND sku != '';",
+		"CREATE INDEX IF NOT EXISTS idx_products_attributes_gin ON products USING gin (attributes jsonb_path_ops);",
+		"CREATE INDEX IF NOT EXISTS idx_pos_bills_customer_phone ON pos_bills(customer_phone, created_at DESC) WHERE customer_phone IS NOT NULL AND customer_phone != '';",
+		"CREATE INDEX IF NOT EXISTS idx_pos_bills_shop_status_date ON pos_bills(shop_id, status, created_at DESC);",
+		"CREATE INDEX IF NOT EXISTS idx_customer_khata_balance ON customer_khata(shop_id, current_balance DESC) WHERE current_balance > 0;",
+		"CREATE INDEX IF NOT EXISTS idx_users_phone_last10 ON users (RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10));",
+		"CREATE INDEX IF NOT EXISTS idx_customer_khata_phone_last10 ON customer_khata (shop_id, RIGHT(REGEXP_REPLACE(COALESCE(customer_mobile, customer_phone, ''), '[^0-9]', '', 'g'), 10));",
+		"CREATE INDEX IF NOT EXISTS idx_reservations_pickup_code ON reservations(shop_id, pickup_code) WHERE status = 'active';",
+		"CREATE INDEX IF NOT EXISTS idx_reservations_active_expires ON reservations(expires_at) WHERE status = 'active';",
+		"CREATE INDEX IF NOT EXISTS idx_products_shop_cat_active ON products(shop_id, category_id, is_active) WHERE is_active = true;",
+		"CREATE INDEX IF NOT EXISTS idx_products_featured ON products(shop_id, is_featured, created_at DESC) WHERE is_featured = true AND is_active = true;",
+
 		`INSERT INTO categories (name, slug, description, icon, is_active) VALUES
 		('Kirana & Grocery', 'kirana-grocery', 'Daily essentials, rice, flour, oil, pulses and spices', '🛒', true),
 		('Dairy & Breakfast', 'dairy-breakfast', 'Milk, curd, butter, paneer, eggs and bread', '🥛', true),
 		('Snacks & Beverages', 'snacks-beverages', 'Biscuits, namkeen, cold drinks, tea and coffee', '☕', true),
-		('Fruits & Vegetables', 'fruits-vegetables', 'Fresh local farm fruits and green vegetables', '🥬', true),
+		('Fruits & Vegetables', 'fruits-vegetables', 'Fresh local farm fruits and green vegetables', '🧺', true),
 		('Personal Care', 'personal-care', 'Soaps, shampoos, toothpaste, skincare and haircare', '🧼', true),
 		('Household Cleaning', 'household-cleaning', 'Detergents, floor cleaners, dishwash and mosquito repellents', '🧹', true),
 		('Clothing & Apparel', 'clothing-apparel', 'Menswear, womenswear, kids wear and innerwear', '👕', true),

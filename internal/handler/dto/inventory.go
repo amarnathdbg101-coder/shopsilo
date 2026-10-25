@@ -62,9 +62,12 @@ type DemandWatchlistResponse struct {
 }
 
 type ProcurementPDFItem struct {
-	Name  string `json:"name"`
-	Qty   string `json:"qty"`
-	Notes string `json:"notes,omitempty"`
+	Name           string `json:"name"`
+	Category       string `json:"category,omitempty"`
+	Qty            string `json:"qty"`
+	EstimatedPrice string `json:"estimated_price,omitempty"`
+	Dealer         string `json:"dealer,omitempty"`
+	Notes          string `json:"notes,omitempty"`
 }
 
 func (p ProcurementPDFItem) IsValid() bool {
@@ -75,10 +78,14 @@ func (p ProcurementPDFItem) IsValid() bool {
 func (p *ProcurementPDFItem) UnmarshalJSON(data []byte) error {
 	type Alias ProcurementPDFItem
 	aux := &struct {
-		ProductName string `json:"product_name"`
-		ItemName    string `json:"item_name"`
-		Title       string `json:"title"`
-		Item        string `json:"item"`
+		ProductName    string `json:"product_name"`
+		ItemName       string `json:"item_name"`
+		Title          string `json:"title"`
+		Item           string `json:"item"`
+		DealerName     string `json:"dealer_name"`
+		Wholesaler     string `json:"wholesaler"`
+		Price          string `json:"price"`
+		Rate           string `json:"rate"`
 		*Alias
 	}{
 		Alias: (*Alias)(p),
@@ -97,6 +104,22 @@ func (p *ProcurementPDFItem) UnmarshalJSON(data []byte) error {
 			p.Name = aux.Title
 		} else if aux.Item != "" {
 			p.Name = aux.Item
+		}
+	}
+
+	if p.Dealer == "" {
+		if aux.DealerName != "" {
+			p.Dealer = aux.DealerName
+		} else if aux.Wholesaler != "" {
+			p.Dealer = aux.Wholesaler
+		}
+	}
+
+	if p.EstimatedPrice == "" {
+		if aux.Price != "" {
+			p.EstimatedPrice = aux.Price
+		} else if aux.Rate != "" {
+			p.EstimatedPrice = aux.Rate
 		}
 	}
 

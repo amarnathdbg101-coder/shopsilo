@@ -224,11 +224,15 @@ func GenerateCustomProcurementPDF(shop *model.Shop, title string, items []dto.Pr
 	pdf.SetFont("Arial", "B", 8)
 	pdf.SetTextColor(255, 255, 255)
 
-	colWidths := []float64{10, 92, 38, 20, 26}
-	headers := []string{"#", "Item Description", "Required Qty", "Check", "Notes"}
+	colWidths := []float64{10, 70, 28, 24, 38, 16}
+	headers := []string{"#", "Item Description & Category", "Required Qty", "Est. Rate", "Mandi Dealer / Wholesaler", "Check"}
 
 	for i, h := range headers {
-		pdf.CellFormat(colWidths[i], 7, h, "", 0, "C", true, 0, "")
+		align := "C"
+		if i == 1 {
+			align = "L"
+		}
+		pdf.CellFormat(colWidths[i], 7, h, "", 0, align, true, 0, "")
 	}
 	pdf.Ln(-1)
 
@@ -249,8 +253,12 @@ func GenerateCustomProcurementPDF(shop *model.Shop, title string, items []dto.Pr
 			if name == "" {
 				name = "Procurement Item"
 			}
-			if len(name) > 50 {
-				name = name[:47] + "..."
+			itemDesc := name
+			if strings.TrimSpace(item.Category) != "" {
+				itemDesc = fmt.Sprintf("%s (%s)", name, strings.TrimSpace(item.Category))
+			}
+			if len(itemDesc) > 42 {
+				itemDesc = itemDesc[:39] + "..."
 			}
 
 			qty := item.Qty
@@ -258,23 +266,36 @@ func GenerateCustomProcurementPDF(shop *model.Shop, title string, items []dto.Pr
 				qty = "1"
 			}
 
-			notes := item.Notes
-			if notes == "" {
-				notes = "Market Order"
+			rate := strings.TrimSpace(item.EstimatedPrice)
+			if rate == "" {
+				rate = "-"
+			}
+
+			dealer := strings.TrimSpace(item.Dealer)
+			if dealer == "" {
+				dealer = "-"
+			}
+			if len(dealer) > 22 {
+				dealer = dealer[:19] + "..."
 			}
 
 			pdf.SetTextColor(30, 41, 59)
 			pdf.CellFormat(colWidths[0], 6, fmt.Sprintf("%d", idx+1), "", 0, "C", true, 0, "")
-			pdf.CellFormat(colWidths[1], 6, fmt.Sprintf(" %s", name), "", 0, "L", true, 0, "")
+			pdf.CellFormat(colWidths[1], 6, fmt.Sprintf(" %s", itemDesc), "", 0, "L", true, 0, "")
 
 			pdf.SetFont("Arial", "B", 8)
 			pdf.SetTextColor(67, 56, 202)
 			pdf.CellFormat(colWidths[2], 6, fmt.Sprintf(" %s", qty), "", 0, "C", true, 0, "")
 
 			pdf.SetFont("Arial", "", 8)
+			pdf.SetTextColor(30, 41, 59)
+			pdf.CellFormat(colWidths[3], 6, fmt.Sprintf(" %s", rate), "", 0, "C", true, 0, "")
+
+			pdf.SetTextColor(71, 85, 105)
+			pdf.CellFormat(colWidths[4], 6, fmt.Sprintf(" %s", dealer), "", 0, "L", true, 0, "")
+
 			pdf.SetTextColor(100, 116, 139)
-			pdf.CellFormat(colWidths[3], 6, "[   ]", "", 0, "C", true, 0, "")
-			pdf.CellFormat(colWidths[4], 6, fmt.Sprintf(" %s", notes), "", 1, "L", true, 0, "")
+			pdf.CellFormat(colWidths[5], 6, "[   ]", "", 1, "C", true, 0, "")
 		}
 	}
 

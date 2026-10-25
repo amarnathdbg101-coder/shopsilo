@@ -19,7 +19,10 @@ require (
 )
 
 require (
+	github.com/chromedp/cdproto v0.157.8 // indirect
+	github.com/chromedp/chromedp v0.21.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
+	github.com/go-json-experiment/json v0.0.0-20260213210345-44df1a37e875 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
