@@ -34,11 +34,11 @@ func ConnectDB(database string) (*pgxpool.Pool, error) {
 		config.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
 	}
 
-	// Production pool tuning for low latency & concurrency
-	config.MaxConns = 30
-	config.MinConns = 5
+	// Production pool tuning for low latency & concurrency (Tuned for 1GB RAM VPS)
+	config.MaxConns = 18
+	config.MinConns = 2
 	config.MaxConnLifetime = 1 * time.Hour
-	config.MaxConnIdleTime = 30 * time.Minute
+	config.MaxConnIdleTime = 15 * time.Minute
 	config.HealthCheckPeriod = 1 * time.Minute
 
 	pool, err := pgxpool.NewWithConfig(ctx, config)
