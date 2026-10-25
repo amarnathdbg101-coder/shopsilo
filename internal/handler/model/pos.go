@@ -27,15 +27,16 @@ type POSBill struct {
 }
 
 type POSBillItem struct {
-	ID          string  `json:"id"`
-	BillID      string  `json:"bill_id"`
-	ProductID   string  `json:"product_id"`
-	ProductName string  `json:"product_name"`
-	ProductSKU  string  `json:"product_sku,omitempty"`
-	Quantity    int     `json:"quantity"`
-	UnitPrice   float64 `json:"unit_price"`
-	UnitCost    float64 `json:"unit_cost"`
-	TotalPrice  float64 `json:"total_price"`
+	ID             string  `json:"id"`
+	BillID         string  `json:"bill_id"`
+	ProductID      string  `json:"product_id"`
+	ProductName    string  `json:"product_name"`
+	ProductSKU     string  `json:"product_sku,omitempty"`
+	Quantity       int     `json:"quantity"`
+	UnitPrice      float64 `json:"unit_price"`
+	UnitCost       float64 `json:"unit_cost"`
+	TotalPrice     float64 `json:"total_price"`
+	RemainingStock int     `json:"remaining_stock,omitempty"`
 }
 
 type DailySalesSummary struct {

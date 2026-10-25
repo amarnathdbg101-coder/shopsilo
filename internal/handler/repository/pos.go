@@ -10,6 +10,7 @@ import (
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
 	"shopMe/internal/utils"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -107,6 +108,12 @@ func (r *POSRepo) CreateSaleWithTx(ctx context.Context, tx pgx.Tx, bill *model.P
 	}
 
 	// 3. Insert Bill items and deduct stock
+	// Deadlock Prevention Guardrail: Sort items deterministically by ProductID ascending
+	// so concurrent transactions across multiple counters acquire row locks in the exact same order.
+	sort.SliceStable(bill.Items, func(i, j int) bool {
+		return bill.Items[i].ProductID < bill.Items[j].ProductID
+	})
+
 	itemInsertQuery := `
 		INSERT INTO pos_bill_items (bill_id, product_id, product_name, product_sku, quantity, unit_price, unit_cost, total_price)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -116,9 +123,10 @@ func (r *POSRepo) CreateSaleWithTx(ctx context.Context, tx pgx.Tx, bill *model.P
 		UPDATE inventory
 		SET quantity = GREATEST(0, quantity - $1), updated_at = NOW()
 		WHERE product_id = $2
+		RETURNING quantity
 	`
 
-	// 3. Batch insert Bill items and deduct stock in a single network round-trip
+	// Batch insert Bill items and deduct stock in a single network round-trip
 	batch := &pgx.Batch{}
 	for _, item := range bill.Items {
 		item.BillID = bill.ID
@@ -143,10 +151,12 @@ func (r *POSRepo) CreateSaleWithTx(ctx context.Context, tx pgx.Tx, bill *model.P
 		}
 		trimmedPID := strings.TrimSpace(item.ProductID)
 		if trimmedPID != "" && !strings.HasPrefix(trimmedPID, "custom_") {
-			if _, err := br.Exec(); err != nil {
+			var remStock int
+			if err := br.QueryRow().Scan(&remStock); err != nil {
 				r.logger.Error("failed to deduct inventory on pos sale in batch", zap.Error(err), zap.String("product_id", item.ProductID))
 				return nil, 0, 0, err
 			}
+			item.RemainingStock = remStock
 		}
 	}
 

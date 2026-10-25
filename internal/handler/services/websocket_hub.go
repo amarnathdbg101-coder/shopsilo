@@ -15,11 +15,40 @@ type WSEvent struct {
 	Timestamp string      `json:"timestamp"`
 }
 
+// SafeConn wraps a gorilla websocket.Conn with a dedicated write mutex to eliminate concurrent write panics
+type SafeConn struct {
+	Conn    *websocket.Conn
+	writeMu sync.Mutex
+}
+
+func NewSafeConn(conn *websocket.Conn) *SafeConn {
+	return &SafeConn{Conn: conn}
+}
+
+func (s *SafeConn) WriteMessage(messageType int, data []byte) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	_ = s.Conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	return s.Conn.WriteMessage(messageType, data)
+}
+
+func (s *SafeConn) WriteControl(messageType int, data []byte, deadline time.Time) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.Conn.WriteControl(messageType, data, deadline)
+}
+
+func (s *SafeConn) Close() error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.Conn.Close()
+}
+
 type WebSocketHub struct {
 	mu                  sync.RWMutex
-	shopConnections     map[string][]*websocket.Conn // map[shopID][]*Conn
-	storefrontConns     map[string][]*websocket.Conn // map[shopSlug][]*Conn (customers viewing storefront)
-	customerConnections map[string][]*websocket.Conn // map[customerID][]*Conn (customers tracking personal orders)
+	shopConnections     map[string][]*SafeConn // map[shopID][]*SafeConn
+	storefrontConns     map[string][]*SafeConn // map[shopSlug][]*SafeConn (customers viewing storefront)
+	customerConnections map[string][]*SafeConn // map[customerID][]*SafeConn (customers tracking personal orders)
 	logger              *zap.Logger
 }
 
@@ -31,9 +60,9 @@ var (
 func GetWebSocketHub(logger *zap.Logger) *WebSocketHub {
 	wsHubOnce.Do(func() {
 		globalWSHub = &WebSocketHub{
-			shopConnections:     make(map[string][]*websocket.Conn),
-			storefrontConns:     make(map[string][]*websocket.Conn),
-			customerConnections: make(map[string][]*websocket.Conn),
+			shopConnections:     make(map[string][]*SafeConn),
+			storefrontConns:     make(map[string][]*SafeConn),
+			customerConnections: make(map[string][]*SafeConn),
 			logger:              logger,
 		}
 	})
@@ -41,7 +70,7 @@ func GetWebSocketHub(logger *zap.Logger) *WebSocketHub {
 }
 
 // Register connects a merchant shop counter device to shopID channel
-func (h *WebSocketHub) Register(shopID string, conn *websocket.Conn) {
+func (h *WebSocketHub) Register(shopID string, conn *SafeConn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -51,14 +80,14 @@ func (h *WebSocketHub) Register(shopID string, conn *websocket.Conn) {
 	}
 }
 
-func (h *WebSocketHub) Unregister(shopID string, conn *websocket.Conn) {
+func (h *WebSocketHub) Unregister(shopID string, conn *SafeConn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	conns := h.shopConnections[shopID]
 	for i, c := range conns {
-		if c == conn {
-			_ = conn.Close()
+		if c == conn || (c != nil && conn != nil && c.Conn == conn.Conn) {
+			_ = c.Close()
 			h.shopConnections[shopID] = append(conns[:i], conns[i+1:]...)
 			break
 		}
@@ -70,7 +99,7 @@ func (h *WebSocketHub) Unregister(shopID string, conn *websocket.Conn) {
 }
 
 // RegisterStorefront connects a customer browser session to a specific shop's live storefront channel
-func (h *WebSocketHub) RegisterStorefront(shopSlug string, conn *websocket.Conn) {
+func (h *WebSocketHub) RegisterStorefront(shopSlug string, conn *SafeConn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -80,14 +109,14 @@ func (h *WebSocketHub) RegisterStorefront(shopSlug string, conn *websocket.Conn)
 	}
 }
 
-func (h *WebSocketHub) UnregisterStorefront(shopSlug string, conn *websocket.Conn) {
+func (h *WebSocketHub) UnregisterStorefront(shopSlug string, conn *SafeConn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	conns := h.storefrontConns[shopSlug]
 	for i, c := range conns {
-		if c == conn {
-			_ = conn.Close()
+		if c == conn || (c != nil && conn != nil && c.Conn == conn.Conn) {
+			_ = c.Close()
 			h.storefrontConns[shopSlug] = append(conns[:i], conns[i+1:]...)
 			break
 		}
@@ -99,7 +128,7 @@ func (h *WebSocketHub) UnregisterStorefront(shopSlug string, conn *websocket.Con
 }
 
 // RegisterCustomer connects an authenticated customer device to their private notification channel
-func (h *WebSocketHub) RegisterCustomer(customerID string, conn *websocket.Conn) {
+func (h *WebSocketHub) RegisterCustomer(customerID string, conn *SafeConn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -109,14 +138,14 @@ func (h *WebSocketHub) RegisterCustomer(customerID string, conn *websocket.Conn)
 	}
 }
 
-func (h *WebSocketHub) UnregisterCustomer(customerID string, conn *websocket.Conn) {
+func (h *WebSocketHub) UnregisterCustomer(customerID string, conn *SafeConn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	conns := h.customerConnections[customerID]
 	for i, c := range conns {
-		if c == conn {
-			_ = conn.Close()
+		if c == conn || (c != nil && conn != nil && c.Conn == conn.Conn) {
+			_ = c.Close()
 			h.customerConnections[customerID] = append(conns[:i], conns[i+1:]...)
 			break
 		}
@@ -135,7 +164,7 @@ func (h *WebSocketHub) BroadcastToShop(shopID string, eventType string, payload 
 		h.mu.RUnlock()
 		return
 	}
-	activeConns := make([]*websocket.Conn, len(conns))
+	activeConns := make([]*SafeConn, len(conns))
 	copy(activeConns, conns)
 	h.mu.RUnlock()
 
@@ -144,13 +173,12 @@ func (h *WebSocketHub) BroadcastToShop(shopID string, eventType string, payload 
 		return
 	}
 
-	for _, conn := range activeConns {
-		go func(c *websocket.Conn) {
-			_ = c.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if err := c.WriteMessage(websocket.TextMessage, eventBytes); err != nil {
-				h.Unregister(shopID, c)
+	for _, safe := range activeConns {
+		go func(sc *SafeConn) {
+			if err := sc.WriteMessage(websocket.TextMessage, eventBytes); err != nil {
+				h.Unregister(shopID, sc)
 			}
-		}(conn)
+		}(safe)
 	}
 }
 
@@ -162,7 +190,7 @@ func (h *WebSocketHub) BroadcastToStorefront(shopSlug string, eventType string, 
 		h.mu.RUnlock()
 		return
 	}
-	activeConns := make([]*websocket.Conn, len(conns))
+	activeConns := make([]*SafeConn, len(conns))
 	copy(activeConns, conns)
 	h.mu.RUnlock()
 
@@ -171,13 +199,12 @@ func (h *WebSocketHub) BroadcastToStorefront(shopSlug string, eventType string, 
 		return
 	}
 
-	for _, conn := range activeConns {
-		go func(c *websocket.Conn) {
-			_ = c.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if err := c.WriteMessage(websocket.TextMessage, eventBytes); err != nil {
-				h.UnregisterStorefront(shopSlug, c)
+	for _, safe := range activeConns {
+		go func(sc *SafeConn) {
+			if err := sc.WriteMessage(websocket.TextMessage, eventBytes); err != nil {
+				h.UnregisterStorefront(shopSlug, sc)
 			}
-		}(conn)
+		}(safe)
 	}
 }
 
@@ -189,7 +216,7 @@ func (h *WebSocketHub) BroadcastToCustomer(customerID string, eventType string, 
 		h.mu.RUnlock()
 		return
 	}
-	activeConns := make([]*websocket.Conn, len(conns))
+	activeConns := make([]*SafeConn, len(conns))
 	copy(activeConns, conns)
 	h.mu.RUnlock()
 
@@ -198,13 +225,12 @@ func (h *WebSocketHub) BroadcastToCustomer(customerID string, eventType string, 
 		return
 	}
 
-	for _, conn := range activeConns {
-		go func(c *websocket.Conn) {
-			_ = c.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if err := c.WriteMessage(websocket.TextMessage, eventBytes); err != nil {
-				h.UnregisterCustomer(customerID, c)
+	for _, safe := range activeConns {
+		go func(sc *SafeConn) {
+			if err := sc.WriteMessage(websocket.TextMessage, eventBytes); err != nil {
+				h.UnregisterCustomer(customerID, sc)
 			}
-		}(conn)
+		}(safe)
 	}
 }
 

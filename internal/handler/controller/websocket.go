@@ -56,7 +56,8 @@ func (c *WebSocketController) ServeShopWebSocket(w http.ResponseWriter, r *http.
 		return
 	}
 
-	c.wsHub.Register(shop.ID, conn)
+	safeConn := services.NewSafeConn(conn)
+	c.wsHub.Register(shop.ID, safeConn)
 
 	// Keep-Alive Ping/Pong & Heartbeat Loop
 	stopPing := make(chan struct{})
@@ -66,7 +67,7 @@ func (c *WebSocketController) ServeShopWebSocket(w http.ResponseWriter, r *http.
 		for {
 			select {
 			case <-ticker.C:
-				if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(5*time.Second)); err != nil {
+				if err := safeConn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(5*time.Second)); err != nil {
 					return
 				}
 			case <-stopPing:
@@ -78,7 +79,7 @@ func (c *WebSocketController) ServeShopWebSocket(w http.ResponseWriter, r *http.
 	go func() {
 		defer func() {
 			close(stopPing)
-			c.wsHub.Unregister(shop.ID, conn)
+			c.wsHub.Unregister(shop.ID, safeConn)
 		}()
 
 		conn.SetReadLimit(2048)
@@ -111,7 +112,8 @@ func (c *WebSocketController) ServePublicStorefrontWebSocket(w http.ResponseWrit
 		return
 	}
 
-	c.wsHub.RegisterStorefront(slug, conn)
+	safeConn := services.NewSafeConn(conn)
+	c.wsHub.RegisterStorefront(slug, safeConn)
 
 	stopPing := make(chan struct{})
 	go func() {
@@ -120,7 +122,7 @@ func (c *WebSocketController) ServePublicStorefrontWebSocket(w http.ResponseWrit
 		for {
 			select {
 			case <-ticker.C:
-				if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(5*time.Second)); err != nil {
+				if err := safeConn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(5*time.Second)); err != nil {
 					return
 				}
 			case <-stopPing:
@@ -132,7 +134,7 @@ func (c *WebSocketController) ServePublicStorefrontWebSocket(w http.ResponseWrit
 	go func() {
 		defer func() {
 			close(stopPing)
-			c.wsHub.UnregisterStorefront(slug, conn)
+			c.wsHub.UnregisterStorefront(slug, safeConn)
 		}()
 
 		conn.SetReadLimit(2048)
@@ -165,7 +167,8 @@ func (c *WebSocketController) ServeCustomerWebSocket(w http.ResponseWriter, r *h
 		return
 	}
 
-	c.wsHub.RegisterCustomer(claims.UserID, conn)
+	safeConn := services.NewSafeConn(conn)
+	c.wsHub.RegisterCustomer(claims.UserID, safeConn)
 
 	stopPing := make(chan struct{})
 	go func() {
@@ -174,7 +177,7 @@ func (c *WebSocketController) ServeCustomerWebSocket(w http.ResponseWriter, r *h
 		for {
 			select {
 			case <-ticker.C:
-				if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(5*time.Second)); err != nil {
+				if err := safeConn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(5*time.Second)); err != nil {
 					return
 				}
 			case <-stopPing:
@@ -186,7 +189,7 @@ func (c *WebSocketController) ServeCustomerWebSocket(w http.ResponseWriter, r *h
 	go func() {
 		defer func() {
 			close(stopPing)
-			c.wsHub.UnregisterCustomer(claims.UserID, conn)
+			c.wsHub.UnregisterCustomer(claims.UserID, safeConn)
 		}()
 
 		conn.SetReadLimit(2048)

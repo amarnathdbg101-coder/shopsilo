@@ -386,11 +386,12 @@ case "split":
 			"delta":          khataAmount,
 		})
 	}
-	for _, itm := range input.Items {
+	for _, itm := range createdBill.Items {
 		if !strings.HasPrefix(itm.ProductID, "custom_") && itm.ProductID != "" {
 			wsHub.BroadcastToShopAndStorefront(shop.ID, shop.Slug, "STOCK_CHANGED", map[string]interface{}{
 				"product_id": itm.ProductID,
 				"shop_id":    shop.ID,
+				"stock":      itm.RemainingStock,
 			})
 		}
 	}

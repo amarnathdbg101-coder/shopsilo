@@ -281,7 +281,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		// Merchant In-Store Pickup Holds & Counter POS Billing
 		r.Get("/reservations", resc.ListShopReservations)
 		r.Post("/reservations/verify", resc.VerifyShopReservation)
-		r.Post("/pos/checkout", posc.CreateSale)
+		r.With(middleware.IdempotencyGuard).Post("/pos/checkout", posc.CreateSale)
 		r.Get("/pos/summary", posc.GetDailySummary)
 
 		// Merchant AI Copilot
@@ -293,8 +293,8 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/khata/summary", khatac.GetSummary)
 		r.Get("/khata/customers", khatac.ListCustomers)
 		r.Get("/khata/customers/{mobile}", khatac.GetCustomerHistory)
-		r.Post("/khata/credit", khatac.RecordCredit)
-		r.Post("/khata/payment/{mobile}", khatac.RecordPayment)
+		r.With(middleware.IdempotencyGuard).Post("/khata/credit", khatac.RecordCredit)
+		r.With(middleware.IdempotencyGuard).Post("/khata/payment/{mobile}", khatac.RecordPayment)
 		r.Get("/khata/reminder/{mobile}", khatac.GetPaymentReminder)
 	})
 
