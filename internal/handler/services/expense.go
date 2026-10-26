@@ -38,12 +38,17 @@ func (s *ExpenseService) CreateExpense(ctx context.Context, shopOwnerUserID stri
 		dateStr = time.Now().Format("2006-01-02")
 	}
 
+	payMethod := strings.ToLower(strings.TrimSpace(input.PaymentMethod))
+	if payMethod == "" {
+		payMethod = "cash"
+	}
+
 	exp := &model.ShopExpense{
 		ShopID:        shop.ID,
 		Category:      strings.TrimSpace(input.Category),
 		Amount:        input.Amount,
 		Notes:         strings.TrimSpace(input.Notes),
-		PaymentMethod: strings.TrimSpace(input.PaymentMethod),
+		PaymentMethod: payMethod,
 		ExpenseDate:   dateStr,
 	}
 
