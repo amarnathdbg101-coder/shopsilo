@@ -164,7 +164,12 @@ func (s *CategoryService) CreateShopCategory(ctx context.Context, userID string,
 		IsActive:    true,
 	}
 
-	return s.repo.CreateShopCategory(ctx, shop.ID, cat)
+	created, err := s.repo.CreateShopCategory(ctx, shop.ID, cat)
+	if err == nil && created != nil {
+		wsHub := GetWebSocketHub(nil)
+		wsHub.BroadcastToShopAndStorefront(shop.ID, shop.Slug, "CATEGORY_MUTATED", created)
+	}
+	return created, err
 }
 
 // UpdateShopCategory modifies a custom category owned by the merchant's shop.
@@ -202,7 +207,12 @@ func (s *CategoryService) UpdateShopCategory(ctx context.Context, userID, catego
 		IsActive:    isActive,
 	}
 
-	return s.repo.UpdateShopCategory(ctx, shop.ID, categoryID, cat)
+	updated, err := s.repo.UpdateShopCategory(ctx, shop.ID, categoryID, cat)
+	if err == nil && updated != nil {
+		wsHub := GetWebSocketHub(nil)
+		wsHub.BroadcastToShopAndStorefront(shop.ID, shop.Slug, "CATEGORY_MUTATED", updated)
+	}
+	return updated, err
 }
 
 // DeleteShopCategory safely deletes a custom category if no products are assigned to it.
@@ -221,6 +231,15 @@ func (s *CategoryService) DeleteShopCategory(ctx context.Context, userID, catego
 		return fmt.Errorf("cannot delete category: %d product(s) are assigned to it. Please reassign or delete those products first", count)
 	}
 
-	return s.repo.DeleteShopCategory(ctx, shop.ID, categoryID)
+	if err := s.repo.DeleteShopCategory(ctx, shop.ID, categoryID); err != nil {
+		return err
+	}
+
+	wsHub := GetWebSocketHub(nil)
+	wsHub.BroadcastToShopAndStorefront(shop.ID, shop.Slug, "CATEGORY_DELETED", map[string]interface{}{
+		"category_id": categoryID,
+		"shop_id":     shop.ID,
+	})
+	return nil
 }
 

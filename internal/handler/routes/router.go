@@ -75,6 +75,11 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	expenseService := services.NewExpenseService(expenseRepo, shopRepo)
 	expc := controller.NewExpenseController(expenseService)
 
+	// Procurement layer (Mandi purchase reorder checklists & vendor sync)
+	procurementRepo := repository.NewProcurementRepo(db, logger)
+	procurementService := services.NewProcurementService(procurementRepo, shopRepo)
+	procurementc := controller.NewProcurementController(procurementService)
+
 	// Khata layer (Customer credit & udhar book)
 	khataRepo := repository.NewKhataRepo(db, logger)
 	khataService := services.NewKhataService(khataRepo, shopRepo, userRepo)
@@ -258,6 +263,15 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Post("/categories", catc.CreateShopCategory)
 		r.Put("/categories/{id}", catc.UpdateShopCategory)
 		r.Delete("/categories/{id}", catc.DeleteShopCategory)
+
+		// Merchant Procurement & Mandi Checklists
+		r.Get("/procurement", procurementc.List)
+		r.Post("/procurement", procurementc.Create)
+		r.Put("/procurement/{id}", procurementc.Update)
+		r.Post("/procurement/toggle/{id}", procurementc.Toggle)
+		r.Delete("/procurement/{id}", procurementc.Delete)
+		r.Post("/procurement/clear-completed", procurementc.ClearCompleted)
+
 		r.Get("/shop/dashboard", sc.GetMerchantDashboard)
 		r.Get("/shop/digest", sc.GetDailyDigest)
 		r.Patch("/shop/status", sc.ToggleStatus)
@@ -400,6 +414,14 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Post("/shops/me/expenses", expc.CreateExpense)      // Shop
 		r.Get("/shops/me/expenses", expc.ListExpenses)        // Shop
 		r.Delete("/shops/me/expenses/{id}", expc.DeleteExpense) // Shop
+
+		// Shop Procurement & Mandi Purchase Checklists
+		r.Get("/shops/me/procurement", procurementc.List)
+		r.Post("/shops/me/procurement", procurementc.Create)
+		r.Put("/shops/me/procurement/{id}", procurementc.Update)
+		r.Post("/shops/me/procurement/toggle/{id}", procurementc.Toggle)
+		r.Delete("/shops/me/procurement/{id}", procurementc.Delete)
+		r.Post("/shops/me/procurement/clear-completed", procurementc.ClearCompleted)
 
 		// Shop Customer Khata (Udhar & settlement passbook)
 		r.Get("/shops/me/khata/summary", khatac.GetSummary)                      // Shop
