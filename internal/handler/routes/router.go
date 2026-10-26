@@ -171,9 +171,8 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Post("/refresh", uc.RefreshToken)                 // Both
 	})
 
-	// Public Browsing routes (customers & visitors) protected by anti-scraping and DDoS Rate Limiter
+	// Public Browsing routes (customers & visitors)
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.GlobalRateLimiter.Middleware())
 
 		r.Get("/catalog/home-feed", sc.GetHomeFeed)                        // Customer
 		r.Get("/catalog/barcode/{code}", catalogc.Lookup)                  // Both - Master Barcode Catalog Lookup
@@ -213,7 +212,6 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 
 	// 🛍️ Customer Route Group (/api/v1/customer)
 	r.Route("/api/v1/customer", func(r chi.Router) {
-		r.Use(middleware.GlobalRateLimiter.Middleware())
 		r.Use(middleware.OptionalJWTAuth(utils.MustLoad().Jwt))
 
 		r.Get("/products/search/suggestions", pc.GetSearchSuggestions)

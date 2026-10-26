@@ -1,4 +1,4 @@
-﻿// Package middleware provides HTTP interceptors and security controls.
+// Package middleware provides HTTP interceptors and security controls.
 package middleware
 
 import (
@@ -274,11 +274,14 @@ func BotGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := ExtractIP(r)
 
-		// 1. Instant quarantine check (0 DB queries, O(1) in-memory lookup)
-		if jailed, reason, retryAfter := IsIPJailed(ip); jailed {
-			w.Header().Set("Retry-After", strconv.FormatInt(retryAfter, 10))
-			reuse.Error(w, http.StatusForbidden, "Access temporarily suspended due to security violations: "+reason)
-			return
+		// 1. Instant quarantine check (exempting health check and live autocomplete suggestions)
+		isExemptPath := r.URL.Path == "/health" || strings.Contains(r.URL.Path, "/products/search/suggestions")
+		if !isExemptPath {
+			if jailed, reason, retryAfter := IsIPJailed(ip); jailed {
+				w.Header().Set("Retry-After", strconv.FormatInt(retryAfter, 10))
+				reuse.Error(w, http.StatusForbidden, "Access temporarily suspended due to security violations: "+reason)
+				return
+			}
 		}
 
 		// 2. Reject dangerous / non-standard HTTP methods (e.g. TRACE, CONNECT, TRACK)
