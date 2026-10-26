@@ -158,7 +158,7 @@ func (r *ReservationRepo) FindByID(ctx context.Context, id string) (*model.Reser
 		LEFT JOIN shops s ON r.shop_id = s.id
 		LEFT JOIN products p ON r.product_id = p.id
 		LEFT JOIN users u ON r.user_id = u.id
-		WHERE r.id = $1
+		WHERE (r.id::text = $1 OR r.reservation_number = $1 OR r.pickup_code = $1)
 		LIMIT 1
 	`
 	res := &model.Reservation{}
@@ -388,8 +388,8 @@ func (r *ReservationRepo) FindByShopID(ctx context.Context, shopID string, filte
 		       COALESCE(p.price, 0) AS product_price,
 		       COALESCE(p.sku, '') AS product_sku,
 		       p.images AS product_images,
-		       COALESCE(u.full_name, u.name, 'Customer') AS customer_name,
-		       COALESCE(u.phone, u.mobile, '') AS customer_phone,
+		       COALESCE(NULLIF(u.full_name, ''), 'Customer') AS customer_name,
+		       COALESCE(u.phone, '') AS customer_phone,
 		       COUNT(*) OVER() AS total_count
 		FROM reservations r
 		LEFT JOIN products p ON r.product_id = p.id
@@ -475,18 +475,29 @@ func (r *ReservationRepo) FindByShopID(ctx context.Context, shopID string, filte
 }
 
 func (r *ReservationRepo) VerifyAndCompleteWithTx(ctx context.Context, tx pgx.Tx, shopID, code, resNumber string) (*model.Reservation, error) {
+	cleanCode := strings.TrimSpace(code)
+	cleanResNum := strings.TrimSpace(resNumber)
+	unhashedCode := strings.TrimPrefix(cleanCode, "#")
+
 	query := `
 		UPDATE reservations
 		SET status = 'completed', completed_at = NOW(), updated_at = NOW()
 		WHERE shop_id = $1
-		  AND status = 'active'
-		  AND expires_at >= NOW()
-		  AND (pickup_code = $2 OR reservation_number = $3)
+		  AND (status = 'active' OR status = 'pending')
+		  AND (
+		      pickup_code = $2 
+		      OR pickup_code = $3
+		      OR REPLACE(pickup_code, '#', '') = $3
+		      OR reservation_number = $4
+		      OR reservation_number = $2
+		      OR id::text = $2
+		      OR id::text = $4
+		  )
 		RETURNING id, reservation_number, user_id, shop_id, product_id, quantity, pickup_code,
 		          status, expires_at, completed_at, COALESCE(notes, ''), created_at, updated_at
 	`
 	res := &model.Reservation{}
-	err := tx.QueryRow(ctx, query, shopID, strings.TrimSpace(code), strings.TrimSpace(resNumber)).Scan(
+	err := tx.QueryRow(ctx, query, shopID, cleanCode, unhashedCode, cleanResNum).Scan(
 		&res.ID,
 		&res.ReservationNumber,
 		&res.UserID,
@@ -509,29 +520,34 @@ func (r *ReservationRepo) VerifyAndCompleteWithTx(ctx context.Context, tx pgx.Tx
 	}
 
 	// Actual sale complete: reduce total inventory and reserved inventory
-	invQuery := `
-		UPDATE inventory
-		SET quantity = GREATEST(0, quantity - $1),
-		    reserved_quantity = GREATEST(0, reserved_quantity - $1)
-		WHERE product_id = $2
-	`
-	_, _ = tx.Exec(ctx, invQuery, res.Quantity, res.ProductID)
+	if res.ProductID != "" {
+		invQuery := `
+			UPDATE inventory
+			SET quantity = GREATEST(0, quantity - $1),
+			    reserved_quantity = GREATEST(0, reserved_quantity - $1)
+			WHERE product_id = $2
+		`
+		_, _ = tx.Exec(ctx, invQuery, res.Quantity, res.ProductID)
+	}
 
 	return res, nil
 }
 
 func (r *ReservationRepo) CancelWithTx(ctx context.Context, tx pgx.Tx, id string, userID, shopID string) (*model.Reservation, error) {
+	cleanID := strings.TrimSpace(id)
+	unhashedID := strings.TrimPrefix(cleanID, "#")
+
 	var whereClause string
-	args := []interface{}{id}
+	args := []interface{}{cleanID, unhashedID}
 
 	if userID != "" {
-		whereClause = "WHERE id = $1 AND user_id = $2 AND status = 'active'"
+		whereClause = "WHERE (id::text = $1 OR reservation_number = $1 OR pickup_code = $1 OR pickup_code = $2) AND user_id = $3 AND (status = 'active' OR status = 'pending')"
 		args = append(args, userID)
 	} else if shopID != "" {
-		whereClause = "WHERE id = $1 AND shop_id = $2 AND status = 'active'"
+		whereClause = "WHERE (id::text = $1 OR reservation_number = $1 OR pickup_code = $1 OR pickup_code = $2) AND shop_id = $3 AND (status = 'active' OR status = 'pending')"
 		args = append(args, shopID)
 	} else {
-		whereClause = "WHERE id = $1 AND status = 'active'"
+		whereClause = "WHERE (id::text = $1 OR reservation_number = $1 OR pickup_code = $1 OR pickup_code = $2) AND (status = 'active' OR status = 'pending')"
 	}
 
 	query := fmt.Sprintf(`
@@ -566,12 +582,14 @@ func (r *ReservationRepo) CancelWithTx(ctx context.Context, tx pgx.Tx, id string
 	}
 
 	// Release reserved inventory
-	invQuery := `
-		UPDATE inventory
-		SET reserved_quantity = GREATEST(0, reserved_quantity - $1)
-		WHERE product_id = $2
-	`
-	_, _ = tx.Exec(ctx, invQuery, res.Quantity, res.ProductID)
+	if res.ProductID != "" {
+		invQuery := `
+			UPDATE inventory
+			SET reserved_quantity = GREATEST(0, reserved_quantity - $1)
+			WHERE product_id = $2
+		`
+		_, _ = tx.Exec(ctx, invQuery, res.Quantity, res.ProductID)
+	}
 
 	return res, nil
 }

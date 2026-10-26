@@ -346,6 +346,7 @@ func (s *ReservationService) VerifyShopReservation(ctx context.Context, shopOwne
 			shop_id, bill_number, customer_phone, subtotal, discount_amount, total_amount, total_cost, payment_method, cash_amount, online_amount, khata_amount, created_at
 		)
 		VALUES ($1, $2, $3, $4, 0, $4, $5, 'pickup_counter', $4, 0, 0, NOW())
+		ON CONFLICT (bill_number) DO NOTHING
 		RETURNING id
 	`
 	if err := tx.QueryRow(ctx, billQuery, shop.ID, billNum, customerPhone, totalAmount, totalCost).Scan(&billID); err == nil && billID != "" {

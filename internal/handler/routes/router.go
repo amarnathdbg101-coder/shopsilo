@@ -306,6 +306,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		// Merchant In-Store Pickup Holds & Counter POS Billing
 		r.Get("/reservations", resc.ListShopReservations)
 		r.Post("/reservations/verify", resc.VerifyShopReservation)
+		r.Post("/reservations/{id}/cancel", resc.CancelShopReservation)
 		r.With(middleware.IdempotencyGuard).Post("/pos/checkout", posc.CreateSale)
 		r.Get("/pos/summary", posc.GetDailySummary)
 
