@@ -296,6 +296,31 @@ func (c *ProductController) GetBySlug(w http.ResponseWriter, r *http.Request) {
 	reuse.Success(w, "Product retrieved successfully", product)
 }
 
+// GetSearchSuggestions handles fast autocomplete product suggestions (Public)
+func (c *ProductController) GetSearchSuggestions(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	if q == "" {
+		q = r.URL.Query().Get("search")
+	}
+	shopID := r.URL.Query().Get("shop_id")
+	limitStr := r.URL.Query().Get("limit")
+	limit := 5
+	if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 10 {
+		limit = l
+	}
+
+	suggestions, err := c.productService.SuggestProducts(r.Context(), q, shopID, limit)
+	if err != nil {
+		reuse.Error(w, http.StatusInternalServerError, "failed to fetch search suggestions")
+		return
+	}
+
+	reuse.Success(w, "Search suggestions fetched successfully", map[string]interface{}{
+		"query":       q,
+		"suggestions": suggestions,
+	})
+}
+
 // List handles searching, filtering, and paginating products (Public)
 func (c *ProductController) List(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()

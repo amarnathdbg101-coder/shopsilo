@@ -206,9 +206,21 @@ var hinglishDictionary = map[string][]string{
 	"slipper":    {"slipper", "chappal", "flipflop"},
 }
 
-// CleanSearchQuery removes punctuation and normalizes whitespace
+// MaxSearchQueryLength caps search queries to 80 characters to prevent ReDoS / CPU exhaustion attacks on trigram matching.
+const MaxSearchQueryLength = 80
+
+// CleanSearchQuery removes punctuation, strips null bytes, truncates excessive input,
+// and normalizes whitespace to prevent wildcard injection and buffer abuse.
 func CleanSearchQuery(q string) string {
+	q = strings.TrimSpace(q)
+	// Remove null bytes and carriage control chars
+	q = strings.ReplaceAll(q, "\x00", "")
+	if len(q) > MaxSearchQueryLength {
+		q = q[:MaxSearchQueryLength]
+	}
+
 	var sb strings.Builder
+	sb.Grow(len(q))
 	for _, r := range q {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsSpace(r) {
 			sb.WriteRune(unicode.ToLower(r))

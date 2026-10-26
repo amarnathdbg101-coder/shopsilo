@@ -198,6 +198,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/shops/{slug}/offers", loyc.ListOffers)                     // Customer
 		r.Get("/offers", loyc.ListAllOffers)                               // Customer
 		r.Get("/deals", loyc.ListAllOffers)                                // Customer
+		r.Get("/products/search/suggestions", pc.GetSearchSuggestions)    // Fast Autocomplete Suggestions
 		r.Get("/products/nearby", pc.FindNearby)                           // Customer
 		r.Get("/products", pc.List)                                        // Customer
 		r.Get("/products/{id}", pc.GetByID)                                // Customer
@@ -215,6 +216,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Use(middleware.GlobalRateLimiter.Middleware())
 		r.Use(middleware.OptionalJWTAuth(utils.MustLoad().Jwt))
 
+		r.Get("/products/search/suggestions", pc.GetSearchSuggestions)
 		r.Get("/products", pc.ListCustomerProducts)
 		r.Get("/products/nearby", pc.FindNearby)
 		r.Get("/products/{id}", pc.GetByID)

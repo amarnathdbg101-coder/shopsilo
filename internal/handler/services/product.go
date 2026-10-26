@@ -45,6 +45,11 @@ func (s *ProductService) SetCatalogService(cs *CatalogService) {
 	s.catalogService = cs
 }
 
+// SuggestProducts returns fast autocomplete search suggestions using trigram index scans.
+func (s *ProductService) SuggestProducts(ctx context.Context, query string, shopID string, limit int) ([]string, error) {
+	return s.productRepo.SuggestProducts(ctx, query, shopID, limit)
+}
+
 // resolveCategoryID accepts UUID, slug, name, or auto-creates on the fly.
 // Ensures product creation & updates never fail with ErrInvalidCategory.
 func (s *ProductService) resolveCategoryID(ctx context.Context, value string) (string, error) {

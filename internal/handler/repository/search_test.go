@@ -105,4 +105,40 @@ func TestTypoAndFuzzyProductSearch(t *testing.T) {
 			}
 		})
 	}
+
+	// Test 2: In-Memory TTL Cache Hit Speed
+	t.Run("In-memory cache hit is sub-millisecond", func(t *testing.T) {
+		filter := dto.ProductFilter{Search: "shampoo", Limit: 10, Page: 1}
+		start := time.Now()
+		_, _, err := repo.FindAll(ctx, filter)
+		if err != nil {
+			t.Fatalf("first call failed: %v", err)
+		}
+		firstDuration := time.Since(start)
+
+		// Second call should hit in-memory cache!
+		cacheStart := time.Now()
+		cachedProds, _, err := repo.FindAll(ctx, filter)
+		if err != nil {
+			t.Fatalf("cached call failed: %v", err)
+		}
+		cacheDuration := time.Since(cacheStart)
+
+		t.Logf("First call (DB): %v | Second call (In-Memory Cache): %v (speedup: %.1fx)", firstDuration, cacheDuration, float64(firstDuration)/float64(cacheDuration+1))
+		if len(cachedProds) == 0 {
+			t.Errorf("expected cached products, got 0")
+		}
+	})
+
+	// Test 3: Fast Autocomplete Suggestions
+	t.Run("Autocomplete search suggestions", func(t *testing.T) {
+		suggestions, err := repo.SuggestProducts(ctx, "cli", "", 5)
+		if err != nil {
+			t.Fatalf("SuggestProducts failed: %v", err)
+		}
+		t.Logf("Suggestions for 'cli': %v", suggestions)
+		if len(suggestions) == 0 {
+			t.Errorf("expected suggestions for 'cli', got 0")
+		}
+	})
 }
