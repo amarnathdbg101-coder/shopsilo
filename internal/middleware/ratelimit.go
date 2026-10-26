@@ -202,8 +202,8 @@ var (
 	// MutationRateLimiter protects database writes like placing orders or product mutations (30/min, max 8 per 2s burst)
 	MutationRateLimiter = NewIPRateLimiter(30, 8, 1*time.Minute)
 
-	// UploadRateLimiter limits heavy image uploads to Cloudflare R2 (20 uploads/min, max 5 per 2s burst)
-	UploadRateLimiter = NewIPRateLimiter(20, 5, 1*time.Minute)
+	// UploadRateLimiter limits heavy image uploads to Cloudflare R2 (60 uploads/min, max 20 per 2s burst)
+	UploadRateLimiter = NewIPRateLimiter(60, 20, 1*time.Minute)
 
 	// GlobalRateLimiter protects the API from aggressive scraping or DoS (600 requests/min, max 120 per 2s burst)
 	GlobalRateLimiter = NewIPRateLimiter(600, 120, 1*time.Minute)

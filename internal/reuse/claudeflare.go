@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -122,8 +123,9 @@ func UploadImage(file multipart.File, header *multipart.FileHeader, folder strin
 		ext = ".jpg"
 	}
 
-	// Deterministic, collision-free filename
-	filename := fmt.Sprintf("%d%s", time.Now().UnixNano(), ext)
+	// Deterministic, collision-free filename with nano timestamp + random entropy
+	randomSuffix := rand.Intn(900000) + 100000
+	filename := fmt.Sprintf("%d_%d%s", time.Now().UnixNano(), randomSuffix, ext)
 	key := fmt.Sprintf("%s/%s", strings.Trim(folder, "/"), filename)
 
 	cfg := utils.MustLoad()

@@ -236,13 +236,31 @@ func (s *UploadService) UploadProductImages(
 	resChan := make(chan uploadResult, len(files))
 	var wg sync.WaitGroup
 
+	// Bounded Worker Semaphore (max 3 concurrent image compress & upload tasks)
+	// to prevent CPU core starvation and high RAM spikes on a 1 vCPU / 1GB RAM VPS
+	sem := make(chan struct{}, 3)
+
 	folder := fmt.Sprintf("products/%s", shop.ID)
 
 	for i, f := range files {
 		wg.Add(1)
 		go func(idx int, file multipart.File, header *multipart.FileHeader) {
 			defer wg.Done()
+
+			// Acquire semaphore slot
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			// Ensure file seek pointer is at beginning
+			_, _ = file.Seek(0, io.SeekStart)
+
 			url, uploadErr := reuse.UploadImage(file, header, folder)
+			if uploadErr != nil {
+				// 1 retry for transient Cloudflare R2 network blips
+				_, _ = file.Seek(0, io.SeekStart)
+				url, uploadErr = reuse.UploadImage(file, header, folder)
+			}
+
 			if uploadErr != nil {
 				resChan <- uploadResult{index: idx, url: "", err: uploadErr}
 				return

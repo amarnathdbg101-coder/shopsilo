@@ -255,7 +255,7 @@ func BodySizeGuard(defaultLimit int64) func(http.Handler) http.Handler {
 			maxBytes := defaultLimit
 			contentType := strings.ToLower(r.Header.Get("Content-Type"))
 			if strings.HasPrefix(contentType, "multipart/form-data") {
-				maxBytes = 40 << 20 // 40MB limit for multipart uploads (multiple HD camera images)
+				maxBytes = 120 << 20 // 120MB limit for multipart uploads (up to 10 raw HD camera images)
 			}
 
 			if r.ContentLength > maxBytes && maxBytes > 0 {

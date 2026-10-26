@@ -140,8 +140,8 @@ func (c *UploadController) UploadProductImages(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if err := r.ParseMultipartForm(40 * 1024 * 1024); err != nil {
-		reuse.Error(w, http.StatusBadRequest, "failed to parse multipart form")
+	if err := r.ParseMultipartForm(120 * 1024 * 1024); err != nil { // 120MB limit for up to 10 HD images
+		reuse.Error(w, http.StatusBadRequest, "failed to parse multipart form: payload too large")
 		return
 	}
 

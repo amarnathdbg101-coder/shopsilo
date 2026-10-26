@@ -130,7 +130,7 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 	sku := strings.TrimSpace(strings.ToUpper(input.SKU))
 	images := input.Images
 
-	// 3. Enforce max 4 images (Cost & Storage efficiency rule)
+	// 3. Enforce max 10 images (Cost & Storage efficiency rule)
 	if len(images) > 10 {
 		return nil, ErrTooManyProductImages
 	}
