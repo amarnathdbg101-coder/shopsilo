@@ -22,10 +22,18 @@ type StoreOffer struct {
 	Title             string     `json:"title"`
 	Description       string     `json:"description,omitempty"`
 	DiscountText      string     `json:"discount_text"`
+	DiscountType      string     `json:"discount_type"`   // 'percentage' or 'flat'
+	DiscountValue     float64    `json:"discount_value"`  // e.g. 10 (%) or 50 (₹)
+	MinOrderAmount    float64    `json:"min_order_amount"`
+	MaxDiscount       float64    `json:"max_discount"`
+	ApplicableDays    string     `json:"applicable_days"` // e.g. 'all' or 'sunday,tuesday'
+	BannerTag         string     `json:"banner_tag"`      // e.g. '🔥 Special Offer', '⚡ Flash Deal'
+	PromoCode         string     `json:"promo_code"`
 	MinPointsRequired int        `json:"min_points_required"`
 	IsActive          bool       `json:"is_active"`
 	ExpiresAt         *time.Time `json:"expires_at,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 	IsUnlocked        bool       `json:"is_unlocked"` // true if customer has enough points
 	ShopName          string     `json:"shop_name,omitempty"`
 	ShopSlug          string     `json:"shop_slug,omitempty"`

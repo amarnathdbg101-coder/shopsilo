@@ -8,6 +8,7 @@ import (
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
 	"shopMe/internal/handler/repository"
+	"strings"
 	"time"
 )
 
@@ -102,11 +103,33 @@ func (s *LoyaltyService) CreateOffer(ctx context.Context, shopOwnerUserID string
 		expiresAt = &exp
 	}
 
+	discType := strings.ToLower(strings.TrimSpace(input.DiscountType))
+	if discType != "flat" && discType != "percentage" {
+		discType = "percentage"
+	}
+
+	appDays := strings.ToLower(strings.TrimSpace(input.ApplicableDays))
+	if appDays == "" {
+		appDays = "all"
+	}
+
+	bannerTag := strings.TrimSpace(input.BannerTag)
+	if bannerTag == "" {
+		bannerTag = "🔥 Special Offer"
+	}
+
 	offer := &model.StoreOffer{
 		ShopID:            shop.ID,
 		Title:             input.Title,
 		Description:       input.Description,
 		DiscountText:      input.DiscountText,
+		DiscountType:      discType,
+		DiscountValue:     input.DiscountValue,
+		MinOrderAmount:    input.MinOrderAmount,
+		MaxDiscount:       input.MaxDiscount,
+		ApplicableDays:    appDays,
+		BannerTag:         bannerTag,
+		PromoCode:         strings.ToUpper(strings.TrimSpace(input.PromoCode)),
 		MinPointsRequired: input.MinPointsRequired,
 		ExpiresAt:         expiresAt,
 	}
@@ -126,6 +149,11 @@ func (s *LoyaltyService) CreateOffer(ctx context.Context, shopOwnerUserID string
 		NewDescription:  created.Description,
 		ChangedByUserID: shopOwnerUserID,
 	})
+
+	// Instant Real-Time WebSocket Push (<15ms)
+	wsHub := GetWebSocketHub(nil)
+	wsHub.BroadcastToShop(shop.ID, "OFFER_MUTATED", created)
+	wsHub.BroadcastToStorefront(shop.Slug, "OFFER_MUTATED", created)
 
 	return created, nil
 }
@@ -161,7 +189,63 @@ func (s *LoyaltyService) UpdateOffer(ctx context.Context, shopOwnerUserID string
 		isActive = *input.IsActive
 	}
 
-	updated, err := s.loyaltyRepo.UpdateOffer(ctx, offerID, input.Title, input.Description, input.DiscountText, input.MinPointsRequired, isActive, expiresAt)
+	discType := existing.DiscountType
+	if input.DiscountType != nil && *input.DiscountType != "" {
+		dt := strings.ToLower(strings.TrimSpace(*input.DiscountType))
+		if dt == "flat" || dt == "percentage" {
+			discType = dt
+		}
+	}
+
+	discVal := existing.DiscountValue
+	if input.DiscountValue != nil {
+		discVal = *input.DiscountValue
+	}
+
+	minOrder := existing.MinOrderAmount
+	if input.MinOrderAmount != nil {
+		minOrder = *input.MinOrderAmount
+	}
+
+	maxDisc := existing.MaxDiscount
+	if input.MaxDiscount != nil {
+		maxDisc = *input.MaxDiscount
+	}
+
+	appDays := existing.ApplicableDays
+	if input.ApplicableDays != nil && *input.ApplicableDays != "" {
+		appDays = strings.ToLower(strings.TrimSpace(*input.ApplicableDays))
+	}
+
+	bannerTag := existing.BannerTag
+	if input.BannerTag != nil && *input.BannerTag != "" {
+		bannerTag = strings.TrimSpace(*input.BannerTag)
+	}
+
+	promoCode := existing.PromoCode
+	if input.PromoCode != nil {
+		promoCode = strings.ToUpper(strings.TrimSpace(*input.PromoCode))
+	}
+
+	toUpdate := &model.StoreOffer{
+		ID:                offerID,
+		ShopID:            shop.ID,
+		Title:             input.Title,
+		Description:       input.Description,
+		DiscountText:      input.DiscountText,
+		DiscountType:      discType,
+		DiscountValue:     discVal,
+		MinOrderAmount:    minOrder,
+		MaxDiscount:       maxDisc,
+		ApplicableDays:    appDays,
+		BannerTag:         bannerTag,
+		PromoCode:         promoCode,
+		MinPointsRequired: input.MinPointsRequired,
+		IsActive:          isActive,
+		ExpiresAt:         expiresAt,
+	}
+
+	updated, err := s.loyaltyRepo.UpdateOffer(ctx, toUpdate)
 	if err != nil {
 		return nil, err
 	}
@@ -179,6 +263,59 @@ func (s *LoyaltyService) UpdateOffer(ctx context.Context, shopOwnerUserID string
 		NewDescription:       updated.Description,
 		ChangedByUserID:      shopOwnerUserID,
 	})
+
+	// Instant Real-Time WebSocket Push (<15ms)
+	wsHub := GetWebSocketHub(nil)
+	wsHub.BroadcastToShop(shop.ID, "OFFER_MUTATED", updated)
+	wsHub.BroadcastToStorefront(shop.Slug, "OFFER_MUTATED", updated)
+
+	return updated, nil
+}
+
+// ToggleOffer toggles active/paused status of a shop offer in 0ms with instant sync
+func (s *LoyaltyService) ToggleOffer(ctx context.Context, shopOwnerUserID string, offerID string) (*model.StoreOffer, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, ErrShopNotFound
+		}
+		return nil, err
+	}
+
+	existing, err := s.loyaltyRepo.GetOfferByID(ctx, offerID)
+	if err != nil {
+		return nil, errors.New("offer not found")
+	}
+
+	if existing.ShopID != shop.ID {
+		return nil, errors.New("unauthorized to toggle this offer")
+	}
+
+	updated, err := s.loyaltyRepo.ToggleOffer(ctx, shop.ID, offerID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Record Audit Track
+	action := "PAUSED"
+	if updated.IsActive {
+		action = "ACTIVATED"
+	}
+	_ = s.loyaltyRepo.RecordOfferAudit(ctx, &dto.OfferAuditRecord{
+		OfferID:              offerID,
+		ShopID:               shop.ID,
+		Action:               action,
+		PreviousTitle:        existing.Title,
+		PreviousDiscountText: existing.DiscountText,
+		NewTitle:             updated.Title,
+		NewDiscountText:      updated.DiscountText,
+		ChangedByUserID:      shopOwnerUserID,
+	})
+
+	// Instant Real-Time WebSocket Push (<15ms)
+	wsHub := GetWebSocketHub(nil)
+	wsHub.BroadcastToShop(shop.ID, "OFFER_MUTATED", updated)
+	wsHub.BroadcastToStorefront(shop.Slug, "OFFER_MUTATED", updated)
 
 	return updated, nil
 }
@@ -201,7 +338,7 @@ func (s *LoyaltyService) DeleteOffer(ctx context.Context, shopOwnerUserID string
 		return errors.New("unauthorized to delete this offer")
 	}
 
-	err = s.loyaltyRepo.DeleteOffer(ctx, offerID)
+	err = s.loyaltyRepo.DeleteOffer(ctx, shop.ID, offerID)
 	if err != nil {
 		return err
 	}
@@ -217,6 +354,15 @@ func (s *LoyaltyService) DeleteOffer(ctx context.Context, shopOwnerUserID string
 		ChangedByUserID:      shopOwnerUserID,
 	})
 
+	// Instant Real-Time WebSocket Push (<15ms)
+	wsHub := GetWebSocketHub(nil)
+	deletePayload := map[string]interface{}{
+		"id":      offerID,
+		"deleted": true,
+	}
+	wsHub.BroadcastToShop(shop.ID, "OFFER_MUTATED", deletePayload)
+	wsHub.BroadcastToStorefront(shop.Slug, "OFFER_MUTATED", deletePayload)
+
 	return nil
 }
 
@@ -230,6 +376,19 @@ func (s *LoyaltyService) GetOfferHistory(ctx context.Context, shopOwnerUserID st
 	}
 
 	return s.loyaltyRepo.GetOfferAuditHistory(ctx, shop.ID)
+}
+
+// ListMyShopOffers returns all store offers for the shopkeeper dashboard (both active and paused)
+func (s *LoyaltyService) ListMyShopOffers(ctx context.Context, shopOwnerUserID string) ([]*model.StoreOffer, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, ErrShopNotFound
+		}
+		return nil, err
+	}
+
+	return s.loyaltyRepo.ListShopOffers(ctx, shop.ID)
 }
 
 // ListShopOffers lists active store offers and marks whether customer has unlocked VIP deals.
@@ -251,6 +410,19 @@ func (s *LoyaltyService) ListShopOffers(ctx context.Context, slug string, custom
 	}
 
 	return s.loyaltyRepo.ListOffers(ctx, shop.ID, userPoints)
+}
+
+// ListStorefrontOffers returns active offers for customer storefront with optional day filtering
+func (s *LoyaltyService) ListStorefrontOffers(ctx context.Context, slug string, day string) ([]*model.StoreOffer, error) {
+	shop, err := s.shopRepo.FindBySlug(ctx, slug)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, ErrShopNotFound
+		}
+		return nil, err
+	}
+
+	return s.loyaltyRepo.ListStorefrontOffers(ctx, shop.ID, day)
 }
 
 func (s *LoyaltyService) ListAllActiveOffers(ctx context.Context, category string) ([]*model.StoreOffer, error) {

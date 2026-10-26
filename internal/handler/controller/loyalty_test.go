@@ -103,4 +103,26 @@ func TestLoyaltyControllerValidation(t *testing.T) {
 			t.Fatalf("expected 400 Bad Request for missing barcode, got %d", w.Code)
 		}
 	})
+
+	t.Run("ListShopOffers Unauthorized without claims", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/shops/me/offers", nil)
+		w := httptest.NewRecorder()
+
+		lc.ListShopOffers(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401 Unauthorized, got %d", w.Code)
+		}
+	})
+
+	t.Run("ToggleOffer Unauthorized without claims", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPatch, "/shops/me/offers/test-id/toggle", nil)
+		w := httptest.NewRecorder()
+
+		lc.ToggleOffer(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401 Unauthorized, got %d", w.Code)
+		}
+	})
 }

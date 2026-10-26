@@ -76,6 +76,27 @@ func (c *LoyaltyController) ListReturns(w http.ResponseWriter, r *http.Request) 
 	reuse.Success(w, "Returns history retrieved successfully", returns)
 }
 
+// ListShopOffers returns all store offers for the authenticated merchant (Protected - Shop)
+func (c *LoyaltyController) ListShopOffers(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	offers, err := c.service.ListMyShopOffers(r.Context(), claims.UserID)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Store offers retrieved successfully", offers)
+}
+
 // CreateOffer allows shopkeeper to create a new in-store offer/discount (Protected - Shop)
 func (c *LoyaltyController) CreateOffer(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())
@@ -106,6 +127,33 @@ func (c *LoyaltyController) CreateOffer(w http.ResponseWriter, r *http.Request) 
 	}
 
 	reuse.Created(w, "In-store offer created successfully", offer)
+}
+
+// ToggleOffer toggles active/inactive state of a shop offer in real-time (Protected - Shop)
+func (c *LoyaltyController) ToggleOffer(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	offerID := chi.URLParam(r, "id")
+	if offerID == "" {
+		reuse.Error(w, http.StatusBadRequest, "offer id is required")
+		return
+	}
+
+	offer, err := c.service.ToggleOffer(r.Context(), claims.UserID, offerID)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
+			return
+		}
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Offer status toggled successfully", offer)
 }
 
 // UpdateOffer updates an existing offer and records audit track (Protected - Shop)
@@ -194,11 +242,26 @@ func (c *LoyaltyController) GetOfferHistory(w http.ResponseWriter, r *http.Reque
 	reuse.Success(w, "Offer audit history retrieved successfully", history)
 }
 
-// ListOffers returns all active in-store offers for a shop, indicating VIP unlocks (Public/Customer)
+// ListOffers returns active in-store offers for a shop, with optional day-of-week filter (Public/Customer)
 func (c *LoyaltyController) ListOffers(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
 	if slug == "" {
 		reuse.Error(w, http.StatusBadRequest, "shop slug is required")
+		return
+	}
+
+	day := r.URL.Query().Get("day")
+	if day != "" {
+		offers, err := c.service.ListStorefrontOffers(r.Context(), slug, day)
+		if err != nil {
+			if errors.Is(err, services.ErrShopNotFound) {
+				reuse.Error(w, http.StatusNotFound, "shop not found")
+				return
+			}
+			reuse.Error(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		reuse.Success(w, "Storefront offers retrieved successfully", offers)
 		return
 	}
 

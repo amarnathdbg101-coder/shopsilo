@@ -12,20 +12,34 @@ type CreateReturnRequest struct {
 }
 
 type CreateOfferRequest struct {
-	Title             string `json:"title" validate:"required,min=2,max=200"`
-	Description       string `json:"description,omitempty" validate:"omitempty,max=500"`
-	DiscountText      string `json:"discount_text" validate:"required,min=2,max=100"`
-	MinPointsRequired int    `json:"min_points_required" validate:"gte=0"`
-	ExpiresInDays     int    `json:"expires_in_days,omitempty" validate:"omitempty,min=1,max=365"`
+	Title             string  `json:"title" validate:"required,min=2,max=200"`
+	Description       string  `json:"description,omitempty" validate:"omitempty,max=500"`
+	DiscountText      string  `json:"discount_text" validate:"required,min=2,max=100"`
+	DiscountType      string  `json:"discount_type,omitempty"`  // 'percentage' or 'flat'
+	DiscountValue     float64 `json:"discount_value,omitempty"` // e.g. 10 (%) or 50 (₹)
+	MinOrderAmount    float64 `json:"min_order_amount,omitempty"`
+	MaxDiscount       float64 `json:"max_discount,omitempty"`
+	ApplicableDays    string  `json:"applicable_days,omitempty"` // e.g. 'all' or 'sunday,tuesday'
+	BannerTag         string  `json:"banner_tag,omitempty"`      // e.g. '🔥 Special Offer'
+	PromoCode         string  `json:"promo_code,omitempty"`
+	MinPointsRequired int     `json:"min_points_required" validate:"gte=0"`
+	ExpiresInDays     int     `json:"expires_in_days,omitempty" validate:"omitempty,min=1,max=365"`
 }
 
 type UpdateOfferRequest struct {
-	Title             string `json:"title" validate:"required,min=2,max=200"`
-	Description       string `json:"description,omitempty" validate:"omitempty,max=500"`
-	DiscountText      string `json:"discount_text" validate:"required,min=2,max=100"`
-	MinPointsRequired int    `json:"min_points_required" validate:"gte=0"`
-	ExpiresInDays     int    `json:"expires_in_days,omitempty" validate:"omitempty,min=1,max=365"`
-	IsActive          *bool  `json:"is_active,omitempty"`
+	Title             string   `json:"title" validate:"required,min=2,max=200"`
+	Description       string   `json:"description,omitempty" validate:"omitempty,max=500"`
+	DiscountText      string   `json:"discount_text" validate:"required,min=2,max=100"`
+	DiscountType      *string  `json:"discount_type,omitempty"`
+	DiscountValue     *float64 `json:"discount_value,omitempty"`
+	MinOrderAmount    *float64 `json:"min_order_amount,omitempty"`
+	MaxDiscount       *float64 `json:"max_discount,omitempty"`
+	ApplicableDays    *string  `json:"applicable_days,omitempty"`
+	BannerTag         *string  `json:"banner_tag,omitempty"`
+	PromoCode         *string  `json:"promo_code,omitempty"`
+	MinPointsRequired int      `json:"min_points_required" validate:"gte=0"`
+	ExpiresInDays     int      `json:"expires_in_days,omitempty" validate:"omitempty,min=1,max=365"`
+	IsActive          *bool    `json:"is_active,omitempty"`
 }
 
 type OfferAuditRecord struct {

@@ -287,6 +287,16 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"CREATE INDEX IF NOT EXISTS idx_procurement_items_shop_id ON procurement_items(shop_id);",
 		"CREATE INDEX IF NOT EXISTS idx_procurement_items_completed ON procurement_items(shop_id, is_completed);",
 
+		"ALTER TABLE store_offers ADD COLUMN IF NOT EXISTS discount_type VARCHAR(20) NOT NULL DEFAULT 'percentage';",
+		"ALTER TABLE store_offers ADD COLUMN IF NOT EXISTS discount_value DECIMAL(10, 2) NOT NULL DEFAULT 0.00;",
+		"ALTER TABLE store_offers ADD COLUMN IF NOT EXISTS min_order_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00;",
+		"ALTER TABLE store_offers ADD COLUMN IF NOT EXISTS max_discount DECIMAL(10, 2) NOT NULL DEFAULT 0.00;",
+		"ALTER TABLE store_offers ADD COLUMN IF NOT EXISTS applicable_days VARCHAR(100) NOT NULL DEFAULT 'all';",
+		"ALTER TABLE store_offers ADD COLUMN IF NOT EXISTS banner_tag VARCHAR(50) NOT NULL DEFAULT '🔥 Special Offer';",
+		"ALTER TABLE store_offers ADD COLUMN IF NOT EXISTS promo_code VARCHAR(50) NOT NULL DEFAULT '';",
+		"ALTER TABLE store_offers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW();",
+		"CREATE INDEX IF NOT EXISTS idx_store_offers_shop_days ON store_offers(shop_id, is_active, applicable_days);",
+
 		`INSERT INTO categories (name, slug, description, icon, is_active) VALUES
 		('Kirana & Grocery', 'kirana-grocery', 'Daily essentials, rice, flour, oil, pulses and spices', '🛒', true),
 		('Dairy & Breakfast', 'dairy-breakfast', 'Milk, curd, butter, paneer, eggs and bread', '🥛', true),

@@ -292,7 +292,12 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/inventory/reorder-pdf", invc.DownloadReorderSheetPDF)
 
 		// Merchant Offers & In-Store Returns
+		r.Get("/offers", loyc.ListShopOffers)
 		r.Post("/offers", loyc.CreateOffer)
+		r.Put("/offers/{id}", loyc.UpdateOffer)
+		r.Patch("/offers/{id}/toggle", loyc.ToggleOffer)
+		r.Delete("/offers/{id}", loyc.DeleteOffer)
+		r.Get("/offers/history", loyc.GetOfferHistory)
 		r.Get("/returns", loyc.ListReturns)
 		r.Post("/returns", loyc.ProcessReturn)
 
@@ -456,12 +461,14 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Post("/customer/khata/{khataId}/promise-date", custKhatac.SetPromiseToPay)      // Customer
 
 		// Shop Returns & VIP Offers
-		r.Post("/shops/me/returns", loyc.ProcessReturn)          // Shop
-		r.Get("/shops/me/returns", loyc.ListReturns)            // Shop
+		r.Get("/shops/me/offers", loyc.ListShopOffers)          // Shop
 		r.Post("/shops/me/offers", loyc.CreateOffer)            // Shop
 		r.Put("/shops/me/offers/{id}", loyc.UpdateOffer)        // Shop
+		r.Patch("/shops/me/offers/{id}/toggle", loyc.ToggleOffer) // Shop
 		r.Delete("/shops/me/offers/{id}", loyc.DeleteOffer)     // Shop
 		r.Get("/shops/me/offers/history", loyc.GetOfferHistory)  // Shop
+		r.Post("/shops/me/returns", loyc.ProcessReturn)          // Shop
+		r.Get("/shops/me/returns", loyc.ListReturns)            // Shop
 
 		// In-Store Item Reservations (Customer)
 		r.With(middleware.IdempotencyGuard).Post("/reservations", resc.Create)                   // Customer

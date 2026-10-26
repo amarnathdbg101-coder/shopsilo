@@ -121,10 +121,28 @@ func (r *LoyaltyRepo) ListShopReturns(ctx context.Context, shopID string) ([]*mo
 }
 
 func (r *LoyaltyRepo) CreateOffer(ctx context.Context, off *model.StoreOffer) (*model.StoreOffer, error) {
+	if off.DiscountType == "" {
+		off.DiscountType = "percentage"
+	}
+	if off.ApplicableDays == "" {
+		off.ApplicableDays = "all"
+	}
+	if off.BannerTag == "" {
+		off.BannerTag = "🔥 Special Offer"
+	}
+
 	query := `
-		INSERT INTO store_offers (shop_id, title, description, discount_text, min_points_required, is_active, expires_at, created_at)
-		VALUES ($1, $2, $3, $4, $5, true, $6, NOW())
-		RETURNING id, shop_id, title, COALESCE(description, ''), discount_text, min_points_required, is_active, expires_at, created_at
+		INSERT INTO store_offers (
+			shop_id, title, description, discount_text, discount_type, discount_value,
+			min_order_amount, max_discount, applicable_days, banner_tag, promo_code,
+			min_points_required, is_active, expires_at, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true, $13, NOW(), NOW())
+		RETURNING id, shop_id, title, COALESCE(description, ''), discount_text,
+			COALESCE(discount_type, 'percentage'), COALESCE(discount_value, 0),
+			COALESCE(min_order_amount, 0), COALESCE(max_discount, 0),
+			COALESCE(applicable_days, 'all'), COALESCE(banner_tag, '🔥 Special Offer'),
+			COALESCE(promo_code, ''), min_points_required, is_active, expires_at, created_at, updated_at
 	`
 	created := &model.StoreOffer{}
 	err := r.db.QueryRow(
@@ -134,6 +152,13 @@ func (r *LoyaltyRepo) CreateOffer(ctx context.Context, off *model.StoreOffer) (*
 		strings.TrimSpace(off.Title),
 		strings.TrimSpace(off.Description),
 		strings.TrimSpace(off.DiscountText),
+		off.DiscountType,
+		off.DiscountValue,
+		off.MinOrderAmount,
+		off.MaxDiscount,
+		off.ApplicableDays,
+		off.BannerTag,
+		off.PromoCode,
 		off.MinPointsRequired,
 		off.ExpiresAt,
 	).Scan(
@@ -142,10 +167,18 @@ func (r *LoyaltyRepo) CreateOffer(ctx context.Context, off *model.StoreOffer) (*
 		&created.Title,
 		&created.Description,
 		&created.DiscountText,
+		&created.DiscountType,
+		&created.DiscountValue,
+		&created.MinOrderAmount,
+		&created.MaxDiscount,
+		&created.ApplicableDays,
+		&created.BannerTag,
+		&created.PromoCode,
 		&created.MinPointsRequired,
 		&created.IsActive,
 		&created.ExpiresAt,
 		&created.CreatedAt,
+		&created.UpdatedAt,
 	)
 	if err != nil {
 		r.logger.Error("failed to create store offer", zap.Error(err), zap.String("shop_id", off.ShopID))
@@ -157,7 +190,11 @@ func (r *LoyaltyRepo) CreateOffer(ctx context.Context, off *model.StoreOffer) (*
 
 func (r *LoyaltyRepo) ListOffers(ctx context.Context, shopID string, userPoints int) ([]*model.StoreOffer, error) {
 	query := `
-		SELECT id, shop_id, title, COALESCE(description, ''), discount_text, min_points_required, is_active, expires_at, created_at
+		SELECT id, shop_id, title, COALESCE(description, ''), discount_text,
+		       COALESCE(discount_type, 'percentage'), COALESCE(discount_value, 0),
+		       COALESCE(min_order_amount, 0), COALESCE(max_discount, 0),
+		       COALESCE(applicable_days, 'all'), COALESCE(banner_tag, '🔥 Special Offer'),
+		       COALESCE(promo_code, ''), min_points_required, is_active, expires_at, created_at, updated_at
 		FROM store_offers
 		WHERE shop_id = $1 AND is_active = true AND (expires_at IS NULL OR expires_at > NOW())
 		ORDER BY min_points_required DESC, created_at DESC
@@ -178,16 +215,135 @@ func (r *LoyaltyRepo) ListOffers(ctx context.Context, shopID string, userPoints 
 			&off.Title,
 			&off.Description,
 			&off.DiscountText,
+			&off.DiscountType,
+			&off.DiscountValue,
+			&off.MinOrderAmount,
+			&off.MaxDiscount,
+			&off.ApplicableDays,
+			&off.BannerTag,
+			&off.PromoCode,
 			&off.MinPointsRequired,
 			&off.IsActive,
 			&off.ExpiresAt,
 			&off.CreatedAt,
+			&off.UpdatedAt,
 		)
 		if err != nil {
 			r.logger.Error("failed to scan offer row", zap.Error(err))
 			return nil, err
 		}
 		off.IsUnlocked = userPoints >= off.MinPointsRequired
+		offers = append(offers, off)
+	}
+
+	return offers, nil
+}
+
+// ListShopOffers lists all offers belonging to a shop (both active & paused) for the merchant dashboard
+func (r *LoyaltyRepo) ListShopOffers(ctx context.Context, shopID string) ([]*model.StoreOffer, error) {
+	query := `
+		SELECT id, shop_id, title, COALESCE(description, ''), discount_text,
+		       COALESCE(discount_type, 'percentage'), COALESCE(discount_value, 0),
+		       COALESCE(min_order_amount, 0), COALESCE(max_discount, 0),
+		       COALESCE(applicable_days, 'all'), COALESCE(banner_tag, '🔥 Special Offer'),
+		       COALESCE(promo_code, ''), min_points_required, is_active, expires_at, created_at, updated_at
+		FROM store_offers
+		WHERE shop_id = $1
+		ORDER BY is_active DESC, created_at DESC
+	`
+	rows, err := r.db.Query(ctx, query, shopID)
+	if err != nil {
+		r.logger.Error("failed to list shop offers for merchant", zap.Error(err), zap.String("shop_id", shopID))
+		return nil, err
+	}
+	defer rows.Close()
+
+	var offers []*model.StoreOffer
+	for rows.Next() {
+		off := &model.StoreOffer{}
+		err := rows.Scan(
+			&off.ID,
+			&off.ShopID,
+			&off.Title,
+			&off.Description,
+			&off.DiscountText,
+			&off.DiscountType,
+			&off.DiscountValue,
+			&off.MinOrderAmount,
+			&off.MaxDiscount,
+			&off.ApplicableDays,
+			&off.BannerTag,
+			&off.PromoCode,
+			&off.MinPointsRequired,
+			&off.IsActive,
+			&off.ExpiresAt,
+			&off.CreatedAt,
+			&off.UpdatedAt,
+		)
+		if err != nil {
+			r.logger.Error("failed to scan merchant offer row", zap.Error(err))
+			return nil, err
+		}
+		off.IsUnlocked = true
+		offers = append(offers, off)
+	}
+
+	return offers, nil
+}
+
+// ListStorefrontOffers lists active offers for customer storefront, filtered by day of week if specified
+func (r *LoyaltyRepo) ListStorefrontOffers(ctx context.Context, shopID string, day string) ([]*model.StoreOffer, error) {
+	day = strings.ToLower(strings.TrimSpace(day))
+	query := `
+		SELECT id, shop_id, title, COALESCE(description, ''), discount_text,
+		       COALESCE(discount_type, 'percentage'), COALESCE(discount_value, 0),
+		       COALESCE(min_order_amount, 0), COALESCE(max_discount, 0),
+		       COALESCE(applicable_days, 'all'), COALESCE(banner_tag, '🔥 Special Offer'),
+		       COALESCE(promo_code, ''), min_points_required, is_active, expires_at, created_at, updated_at
+		FROM store_offers
+		WHERE shop_id = $1 AND is_active = true AND (expires_at IS NULL OR expires_at > NOW())
+	`
+	args := []interface{}{shopID}
+	if day != "" && day != "all" {
+		query += ` AND (applicable_days = 'all' OR applicable_days ILIKE '%' || $2 || '%')`
+		args = append(args, day)
+	}
+	query += ` ORDER BY created_at DESC`
+
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		r.logger.Error("failed to list storefront offers", zap.Error(err), zap.String("shop_id", shopID))
+		return nil, err
+	}
+	defer rows.Close()
+
+	var offers []*model.StoreOffer
+	for rows.Next() {
+		off := &model.StoreOffer{}
+		err := rows.Scan(
+			&off.ID,
+			&off.ShopID,
+			&off.Title,
+			&off.Description,
+			&off.DiscountText,
+			&off.DiscountType,
+			&off.DiscountValue,
+			&off.MinOrderAmount,
+			&off.MaxDiscount,
+			&off.ApplicableDays,
+			&off.BannerTag,
+			&off.PromoCode,
+			&off.MinPointsRequired,
+			&off.IsActive,
+			&off.ExpiresAt,
+			&off.CreatedAt,
+			&off.UpdatedAt,
+		)
+		if err != nil {
+			r.logger.Error("failed to scan storefront offer row", zap.Error(err))
+			return nil, err
+		}
+		off.IsUnlocked = true
 		offers = append(offers, off)
 	}
 
@@ -201,8 +357,11 @@ func (r *LoyaltyRepo) ListAllActiveOffers(ctx context.Context, category string, 
 
 	query := `
 		SELECT 
-			so.id, so.shop_id, so.title, COALESCE(so.description, ''), so.discount_text, 
-			so.min_points_required, so.is_active, so.expires_at, so.created_at,
+			so.id, so.shop_id, so.title, COALESCE(so.description, ''), so.discount_text,
+			COALESCE(so.discount_type, 'percentage'), COALESCE(so.discount_value, 0),
+			COALESCE(so.min_order_amount, 0), COALESCE(so.max_discount, 0),
+			COALESCE(so.applicable_days, 'all'), COALESCE(so.banner_tag, '🔥 Special Offer'),
+			COALESCE(so.promo_code, ''), so.min_points_required, so.is_active, so.expires_at, so.created_at, so.updated_at,
 			s.name, s.slug, COALESCE(s.category, 'Store'), s.logo_url, s.latitude, s.longitude
 		FROM store_offers so
 		JOIN shops s ON s.id = so.shop_id
@@ -235,10 +394,18 @@ func (r *LoyaltyRepo) ListAllActiveOffers(ctx context.Context, category string, 
 			&off.Title,
 			&off.Description,
 			&off.DiscountText,
+			&off.DiscountType,
+			&off.DiscountValue,
+			&off.MinOrderAmount,
+			&off.MaxDiscount,
+			&off.ApplicableDays,
+			&off.BannerTag,
+			&off.PromoCode,
 			&off.MinPointsRequired,
 			&off.IsActive,
 			&off.ExpiresAt,
 			&off.CreatedAt,
+			&off.UpdatedAt,
 			&off.ShopName,
 			&off.ShopSlug,
 			&off.ShopCategory,
@@ -348,7 +515,11 @@ func (r *LoyaltyRepo) FindProductByBarcode(ctx context.Context, code string) (*m
 
 func (r *LoyaltyRepo) GetOfferByID(ctx context.Context, offerID string) (*model.StoreOffer, error) {
 	query := `
-		SELECT id, shop_id, title, COALESCE(description, ''), discount_text, min_points_required, is_active, expires_at, created_at
+		SELECT id, shop_id, title, COALESCE(description, ''), discount_text,
+		       COALESCE(discount_type, 'percentage'), COALESCE(discount_value, 0),
+		       COALESCE(min_order_amount, 0), COALESCE(max_discount, 0),
+		       COALESCE(applicable_days, 'all'), COALESCE(banner_tag, '🔥 Special Offer'),
+		       COALESCE(promo_code, ''), min_points_required, is_active, expires_at, created_at, updated_at
 		FROM store_offers
 		WHERE id = $1
 	`
@@ -359,10 +530,18 @@ func (r *LoyaltyRepo) GetOfferByID(ctx context.Context, offerID string) (*model.
 		&off.Title,
 		&off.Description,
 		&off.DiscountText,
+		&off.DiscountType,
+		&off.DiscountValue,
+		&off.MinOrderAmount,
+		&off.MaxDiscount,
+		&off.ApplicableDays,
+		&off.BannerTag,
+		&off.PromoCode,
 		&off.MinPointsRequired,
 		&off.IsActive,
 		&off.ExpiresAt,
 		&off.CreatedAt,
+		&off.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -370,45 +549,116 @@ func (r *LoyaltyRepo) GetOfferByID(ctx context.Context, offerID string) (*model.
 	return off, nil
 }
 
-func (r *LoyaltyRepo) UpdateOffer(ctx context.Context, offerID string, title, description, discountText string, minPoints int, isActive bool, expiresAt *time.Time) (*model.StoreOffer, error) {
+func (r *LoyaltyRepo) UpdateOffer(ctx context.Context, off *model.StoreOffer) (*model.StoreOffer, error) {
+	if off.DiscountType == "" {
+		off.DiscountType = "percentage"
+	}
+	if off.ApplicableDays == "" {
+		off.ApplicableDays = "all"
+	}
+	if off.BannerTag == "" {
+		off.BannerTag = "🔥 Special Offer"
+	}
+
 	query := `
 		UPDATE store_offers
-		SET title = $1, description = $2, discount_text = $3, min_points_required = $4, is_active = $5, expires_at = $6
-		WHERE id = $7
-		RETURNING id, shop_id, title, COALESCE(description, ''), discount_text, min_points_required, is_active, expires_at, created_at
+		SET title = $1, description = $2, discount_text = $3, discount_type = $4,
+		    discount_value = $5, min_order_amount = $6, max_discount = $7,
+		    applicable_days = $8, banner_tag = $9, promo_code = $10,
+		    min_points_required = $11, is_active = $12, expires_at = $13, updated_at = NOW()
+		WHERE id = $14 AND shop_id = $15
+		RETURNING id, shop_id, title, COALESCE(description, ''), discount_text,
+		          COALESCE(discount_type, 'percentage'), COALESCE(discount_value, 0),
+		          COALESCE(min_order_amount, 0), COALESCE(max_discount, 0),
+		          COALESCE(applicable_days, 'all'), COALESCE(banner_tag, '🔥 Special Offer'),
+		          COALESCE(promo_code, ''), min_points_required, is_active, expires_at, created_at, updated_at
 	`
 	updated := &model.StoreOffer{}
 	err := r.db.QueryRow(
 		ctx,
 		query,
-		strings.TrimSpace(title),
-		strings.TrimSpace(description),
-		strings.TrimSpace(discountText),
-		minPoints,
-		isActive,
-		expiresAt,
-		offerID,
+		strings.TrimSpace(off.Title),
+		strings.TrimSpace(off.Description),
+		strings.TrimSpace(off.DiscountText),
+		off.DiscountType,
+		off.DiscountValue,
+		off.MinOrderAmount,
+		off.MaxDiscount,
+		off.ApplicableDays,
+		off.BannerTag,
+		off.PromoCode,
+		off.MinPointsRequired,
+		off.IsActive,
+		off.ExpiresAt,
+		off.ID,
+		off.ShopID,
 	).Scan(
 		&updated.ID,
 		&updated.ShopID,
 		&updated.Title,
 		&updated.Description,
 		&updated.DiscountText,
+		&updated.DiscountType,
+		&updated.DiscountValue,
+		&updated.MinOrderAmount,
+		&updated.MaxDiscount,
+		&updated.ApplicableDays,
+		&updated.BannerTag,
+		&updated.PromoCode,
 		&updated.MinPointsRequired,
 		&updated.IsActive,
 		&updated.ExpiresAt,
 		&updated.CreatedAt,
+		&updated.UpdatedAt,
 	)
 	if err != nil {
-		r.logger.Error("failed to update offer", zap.Error(err), zap.String("offer_id", offerID))
+		r.logger.Error("failed to update offer", zap.Error(err), zap.String("offer_id", off.ID))
 		return nil, err
 	}
 	return updated, nil
 }
 
-func (r *LoyaltyRepo) DeleteOffer(ctx context.Context, offerID string) error {
-	query := `UPDATE store_offers SET is_active = false WHERE id = $1`
-	_, err := r.db.Exec(ctx, query, offerID)
+func (r *LoyaltyRepo) ToggleOffer(ctx context.Context, shopID string, offerID string) (*model.StoreOffer, error) {
+	query := `
+		UPDATE store_offers
+		SET is_active = NOT is_active, updated_at = NOW()
+		WHERE id = $1 AND shop_id = $2
+		RETURNING id, shop_id, title, COALESCE(description, ''), discount_text,
+		          COALESCE(discount_type, 'percentage'), COALESCE(discount_value, 0),
+		          COALESCE(min_order_amount, 0), COALESCE(max_discount, 0),
+		          COALESCE(applicable_days, 'all'), COALESCE(banner_tag, '🔥 Special Offer'),
+		          COALESCE(promo_code, ''), min_points_required, is_active, expires_at, created_at, updated_at
+	`
+	updated := &model.StoreOffer{}
+	err := r.db.QueryRow(ctx, query, offerID, shopID).Scan(
+		&updated.ID,
+		&updated.ShopID,
+		&updated.Title,
+		&updated.Description,
+		&updated.DiscountText,
+		&updated.DiscountType,
+		&updated.DiscountValue,
+		&updated.MinOrderAmount,
+		&updated.MaxDiscount,
+		&updated.ApplicableDays,
+		&updated.BannerTag,
+		&updated.PromoCode,
+		&updated.MinPointsRequired,
+		&updated.IsActive,
+		&updated.ExpiresAt,
+		&updated.CreatedAt,
+		&updated.UpdatedAt,
+	)
+	if err != nil {
+		r.logger.Error("failed to toggle offer status", zap.Error(err), zap.String("offer_id", offerID))
+		return nil, err
+	}
+	return updated, nil
+}
+
+func (r *LoyaltyRepo) DeleteOffer(ctx context.Context, shopID string, offerID string) error {
+	query := `DELETE FROM store_offers WHERE id = $1 AND shop_id = $2`
+	_, err := r.db.Exec(ctx, query, offerID, shopID)
 	return err
 }
 
