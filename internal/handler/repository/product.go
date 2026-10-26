@@ -664,20 +664,37 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 			for _, group := range groups {
 				var groupOrs []string
 				for _, term := range group.Terms {
-					wild := "%" + term + "%"
-					groupOrs = append(groupOrs, fmt.Sprintf("(p.name ILIKE $%d OR p.sku ILIKE $%d OR p.description ILIKE $%d OR p.slug ILIKE $%d OR p.tags::text ILIKE $%d OR p.attributes::text ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx, argIdx))
-					args = append(args, wild)
-					argIdx++
+					cleanTerm := strings.TrimSpace(term)
+					if cleanTerm == "" {
+						continue
+					}
+					wild := "%" + cleanTerm + "%"
+					if len(cleanTerm) >= 3 {
+						groupOrs = append(groupOrs, fmt.Sprintf("(p.name ILIKE $%d OR word_similarity($%d, p.name) >= 0.35 OR p.name %% $%d OR COALESCE(p.sku, '') ILIKE $%d OR COALESCE(p.description, '') ILIKE $%d OR p.slug ILIKE $%d OR COALESCE(p.tags::text, '') ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx+1, argIdx+1, argIdx, argIdx, argIdx, argIdx, argIdx))
+						args = append(args, wild, cleanTerm)
+						argIdx += 2
+					} else {
+						groupOrs = append(groupOrs, fmt.Sprintf("(p.name ILIKE $%d OR COALESCE(p.sku, '') ILIKE $%d OR COALESCE(p.description, '') ILIKE $%d OR p.slug ILIKE $%d OR COALESCE(p.tags::text, '') ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx, argIdx))
+						args = append(args, wild)
+						argIdx++
+					}
 				}
 				if len(groupOrs) > 0 {
 					whereClauses = append(whereClauses, "("+strings.Join(groupOrs, " OR ")+")")
 				}
 			}
 		} else {
-			searchTerm := "%" + strings.TrimSpace(filter.Search) + "%"
-			whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR p.sku ILIKE $%d OR p.description ILIKE $%d OR p.slug ILIKE $%d OR p.attributes::text ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx))
-			args = append(args, searchTerm)
-			argIdx++
+			cleanTerm := strings.TrimSpace(filter.Search)
+			wild := "%" + cleanTerm + "%"
+			if len(cleanTerm) >= 3 {
+				whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR word_similarity($%d, p.name) >= 0.35 OR p.name %% $%d OR COALESCE(p.sku, '') ILIKE $%d OR COALESCE(p.description, '') ILIKE $%d OR p.slug ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx+1, argIdx+1, argIdx, argIdx, argIdx, argIdx))
+				args = append(args, wild, cleanTerm)
+				argIdx += 2
+			} else {
+				whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR COALESCE(p.sku, '') ILIKE $%d OR COALESCE(p.description, '') ILIKE $%d OR p.slug ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx))
+				args = append(args, wild)
+				argIdx++
+			}
 		}
 	}
 
@@ -766,6 +783,19 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 		orderBy = "p.created_at ASC"
 	case "stock_desc":
 		orderBy = "COALESCE(i.quantity, 0) DESC, p.created_at DESC"
+	default:
+		if filter.Search != "" {
+			cleanSearch := strings.TrimSpace(filter.Search)
+			if len(cleanSearch) >= 3 {
+				if hasGeoFilter {
+					orderBy = fmt.Sprintf("GREATEST(word_similarity($%d, p.name), similarity(p.name, $%d)) DESC, ((s.latitude - %f)*(s.latitude - %f) + (s.longitude - %f)*(s.longitude - %f)) ASC, p.created_at DESC", argIdx, argIdx, *filter.Lat, *filter.Lat, *filter.Lng, *filter.Lng)
+				} else {
+					orderBy = fmt.Sprintf("GREATEST(word_similarity($%d, p.name), similarity(p.name, $%d)) DESC, p.is_featured DESC, p.created_at DESC", argIdx, argIdx)
+				}
+				args = append(args, cleanSearch)
+				argIdx++
+			}
+		}
 	}
 
 	query := fmt.Sprintf(`
@@ -1409,19 +1439,37 @@ func (r *ProductRepo) FindNearbyProducts(
 			for _, group := range groups {
 				var groupOrs []string
 				for _, term := range group.Terms {
-					wild := "%" + term + "%"
-					groupOrs = append(groupOrs, fmt.Sprintf("(p.name ILIKE $%d OR p.description ILIKE $%d OR p.sku ILIKE $%d OR p.attributes::text ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
-					args = append(args, wild)
-					argIdx++
+					cleanTerm := strings.TrimSpace(term)
+					if cleanTerm == "" {
+						continue
+					}
+					wild := "%" + cleanTerm + "%"
+					if len(cleanTerm) >= 3 {
+						groupOrs = append(groupOrs, fmt.Sprintf("(p.name ILIKE $%d OR word_similarity($%d, p.name) >= 0.35 OR p.name %% $%d OR COALESCE(p.description, '') ILIKE $%d OR COALESCE(p.sku, '') ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx+1, argIdx+1, argIdx, argIdx, argIdx))
+						args = append(args, wild, cleanTerm)
+						argIdx += 2
+					} else {
+						groupOrs = append(groupOrs, fmt.Sprintf("(p.name ILIKE $%d OR COALESCE(p.description, '') ILIKE $%d OR COALESCE(p.sku, '') ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
+						args = append(args, wild)
+						argIdx++
+					}
 				}
 				if len(groupOrs) > 0 {
 					whereClauses = append(whereClauses, "("+strings.Join(groupOrs, " OR ")+")")
 				}
 			}
 		} else {
-			whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR p.description ILIKE $%d OR p.sku ILIKE $%d OR p.attributes::text ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
-			args = append(args, "%"+trimmedQ+"%")
-			argIdx++
+			cleanTerm := trimmedQ
+			wild := "%" + cleanTerm + "%"
+			if len(cleanTerm) >= 3 {
+				whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR word_similarity($%d, p.name) >= 0.35 OR p.name %% $%d OR COALESCE(p.description, '') ILIKE $%d OR COALESCE(p.sku, '') ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx+1, argIdx+1, argIdx, argIdx, argIdx))
+				args = append(args, wild, cleanTerm)
+				argIdx += 2
+			} else {
+				whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR COALESCE(p.description, '') ILIKE $%d OR COALESCE(p.sku, '') ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
+				args = append(args, wild)
+				argIdx++
+			}
 		}
 	}
 
@@ -1486,6 +1534,13 @@ func (r *ProductRepo) FindNearbyProducts(
 		return []*dto.NearbyProductItem{}, 0, nil
 	}
 
+	orderBy := "distance_km ASC, p.price ASC"
+	if trimmedQ != "" && len(trimmedQ) >= 3 {
+		orderBy = fmt.Sprintf("GREATEST(word_similarity($%d, p.name), similarity(p.name, $%d)) DESC, distance_km ASC, p.price ASC", argIdx, argIdx)
+		args = append(args, trimmedQ)
+		argIdx++
+	}
+
 	sqlQuery := fmt.Sprintf(`
 		SELECT
 			p.id, p.name, p.slug, p.price, p.images, (i.quantity - i.reserved_quantity) AS avail_qty,
@@ -1498,9 +1553,9 @@ func (r *ProductRepo) FindNearbyProducts(
 		JOIN inventory i ON p.id = i.product_id
 		LEFT JOIN categories c ON p.category_id = c.id
 		WHERE %s
-		ORDER BY distance_km ASC, p.price ASC
+		ORDER BY %s
 		LIMIT $%d OFFSET $%d
-	`, distanceFormula, whereSQL, argIdx, argIdx+1)
+	`, distanceFormula, whereSQL, orderBy, argIdx, argIdx+1)
 
 	args = append(args, limit, offset)
 

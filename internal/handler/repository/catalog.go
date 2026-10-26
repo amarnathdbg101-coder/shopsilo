@@ -1,4 +1,4 @@
-﻿package repository
+package repository
 
 import (
 	"context"
@@ -227,7 +227,21 @@ func (r *CatalogRepo) Search(ctx context.Context, searchTerm string, limit int) 
 		limit = 20
 	}
 
-	query := `
+	var query string
+	var rows pgx.Rows
+	var err error
+	if len(q) >= 3 {
+		query = `
+		SELECT id, barcode, name, brand, category, unit, mrp, selling_price,
+		       COALESCE(description, ''), COALESCE(image_url, ''), COALESCE(attributes, '{}'::jsonb), source, COALESCE(scan_count, 1), COALESCE(trust_score, 100), created_at, updated_at
+		FROM master_catalog_products
+		WHERE name ILIKE $1 OR word_similarity($2, name) >= 0.35 OR name % $2 OR brand ILIKE $1 OR word_similarity($2, brand) >= 0.35 OR barcode ILIKE $1 OR attributes::text ILIKE $1
+		ORDER BY GREATEST(word_similarity($2, name), similarity(name, $2)) DESC, name ASC
+		LIMIT $3;
+	`
+		rows, err = r.db.Query(ctx, query, "%"+q+"%", q, limit)
+	} else {
+		query = `
 		SELECT id, barcode, name, brand, category, unit, mrp, selling_price,
 		       COALESCE(description, ''), COALESCE(image_url, ''), COALESCE(attributes, '{}'::jsonb), source, COALESCE(scan_count, 1), COALESCE(trust_score, 100), created_at, updated_at
 		FROM master_catalog_products
@@ -235,7 +249,8 @@ func (r *CatalogRepo) Search(ctx context.Context, searchTerm string, limit int) 
 		ORDER BY name ASC
 		LIMIT $2;
 	`
-	rows, err := r.db.Query(ctx, query, "%"+q+"%", limit)
+		rows, err = r.db.Query(ctx, query, "%"+q+"%", limit)
+	}
 	if err != nil {
 		return nil, err
 	}

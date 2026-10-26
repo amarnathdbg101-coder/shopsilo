@@ -488,20 +488,37 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 			for _, group := range groups {
 				var groupOrs []string
 				for _, term := range group.Terms {
-					wild := "%" + term + "%"
-					groupOrs = append(groupOrs, fmt.Sprintf("(name ILIKE $%d OR category ILIKE $%d OR description ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
-					args = append(args, wild)
-					argIdx++
+					cleanTerm := strings.TrimSpace(term)
+					if cleanTerm == "" {
+						continue
+					}
+					wild := "%" + cleanTerm + "%"
+					if len(cleanTerm) >= 3 {
+						groupOrs = append(groupOrs, fmt.Sprintf("(name ILIKE $%d OR word_similarity($%d, name) >= 0.35 OR name %% $%d OR category ILIKE $%d OR COALESCE(description, '') ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx+1, argIdx+1, argIdx, argIdx, argIdx))
+						args = append(args, wild, cleanTerm)
+						argIdx += 2
+					} else {
+						groupOrs = append(groupOrs, fmt.Sprintf("(name ILIKE $%d OR category ILIKE $%d OR COALESCE(description, '') ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
+						args = append(args, wild)
+						argIdx++
+					}
 				}
 				if len(groupOrs) > 0 {
 					innerWhereClauses = append(innerWhereClauses, "("+strings.Join(groupOrs, " OR ")+")")
 				}
 			}
 		} else {
-			searchTerm := "%" + strings.TrimSpace(filter.Search) + "%"
-			innerWhereClauses = append(innerWhereClauses, fmt.Sprintf("(name ILIKE $%d OR category ILIKE $%d OR description ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
-			args = append(args, searchTerm)
-			argIdx++
+			cleanTerm := strings.TrimSpace(filter.Search)
+			wild := "%" + cleanTerm + "%"
+			if len(cleanTerm) >= 3 {
+				innerWhereClauses = append(innerWhereClauses, fmt.Sprintf("(name ILIKE $%d OR word_similarity($%d, name) >= 0.35 OR name %% $%d OR category ILIKE $%d OR COALESCE(description, '') ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx+1, argIdx+1, argIdx, argIdx, argIdx))
+				args = append(args, wild, cleanTerm)
+				argIdx += 2
+			} else {
+				innerWhereClauses = append(innerWhereClauses, fmt.Sprintf("(name ILIKE $%d OR category ILIKE $%d OR COALESCE(description, '') ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
+				args = append(args, wild)
+				argIdx++
+			}
 		}
 	}
 
