@@ -287,6 +287,7 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"CREATE INDEX IF NOT EXISTS idx_procurement_items_shop_id ON procurement_items(shop_id);",
 		"CREATE INDEX IF NOT EXISTS idx_procurement_items_completed ON procurement_items(shop_id, is_completed);",
 
+		"ALTER TABLE store_offers ADD COLUMN IF NOT EXISTS discount_text VARCHAR(100) NOT NULL DEFAULT '';",
 		"ALTER TABLE store_offers ADD COLUMN IF NOT EXISTS discount_type VARCHAR(20) NOT NULL DEFAULT 'percentage';",
 		"ALTER TABLE store_offers ADD COLUMN IF NOT EXISTS discount_value DECIMAL(10, 2) NOT NULL DEFAULT 0.00;",
 		"ALTER TABLE store_offers ADD COLUMN IF NOT EXISTS min_order_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00;",
@@ -294,8 +295,24 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"ALTER TABLE store_offers ADD COLUMN IF NOT EXISTS applicable_days VARCHAR(100) NOT NULL DEFAULT 'all';",
 		"ALTER TABLE store_offers ADD COLUMN IF NOT EXISTS banner_tag VARCHAR(50) NOT NULL DEFAULT '🔥 Special Offer';",
 		"ALTER TABLE store_offers ADD COLUMN IF NOT EXISTS promo_code VARCHAR(50) NOT NULL DEFAULT '';",
+		"ALTER TABLE store_offers ADD COLUMN IF NOT EXISTS min_points_required INT NOT NULL DEFAULT 0;",
 		"ALTER TABLE store_offers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW();",
 		"CREATE INDEX IF NOT EXISTS idx_store_offers_shop_days ON store_offers(shop_id, is_active, applicable_days);",
+		`CREATE TABLE IF NOT EXISTS shop_offers_audit (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			offer_id VARCHAR(100) NOT NULL,
+			shop_id UUID NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+			action VARCHAR(50) NOT NULL,
+			previous_title VARCHAR(200),
+			previous_discount_text VARCHAR(100),
+			previous_description TEXT,
+			new_title VARCHAR(200),
+			new_discount_text VARCHAR(100),
+			new_description TEXT,
+			changed_by_user_id VARCHAR(100),
+			created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+		);`,
+		"CREATE INDEX IF NOT EXISTS idx_shop_offers_audit_shop ON shop_offers_audit(shop_id, created_at DESC);",
 
 		`INSERT INTO categories (name, slug, description, icon, is_active) VALUES
 		('Kirana & Grocery', 'kirana-grocery', 'Daily essentials, rice, flour, oil, pulses and spices', '🛒', true),
