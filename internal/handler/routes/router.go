@@ -39,7 +39,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 
 	// Category layer
 	categoryRepo := repository.NewCategoryRepo(db, logger)
-	categoryService := services.NewCategoryService(categoryRepo)
+	categoryService := services.NewCategoryService(categoryRepo, shopRepo)
 	catc := controller.NewCategoryController(categoryService)
 
 	// Wire repos to userService for consolidated bootstrap initial state
@@ -254,6 +254,10 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Use(middleware.RequireRole("merchant", "shop_owner", "staff", "admin"))
 
 		r.Get("/products", pc.ListMerchantProducts)
+		r.Get("/categories", catc.ListMyShopCategories)
+		r.Post("/categories", catc.CreateShopCategory)
+		r.Put("/categories/{id}", catc.UpdateShopCategory)
+		r.Delete("/categories/{id}", catc.DeleteShopCategory)
 		r.Get("/shop/dashboard", sc.GetMerchantDashboard)
 		r.Get("/shop/digest", sc.GetDailyDigest)
 		r.Patch("/shop/status", sc.ToggleStatus)
@@ -339,7 +343,11 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Put("/shops/me/staff/{id}", staffc.UpdateStaff)       // Shop
 		r.Delete("/shops/me/staff/{id}", staffc.DeleteStaff)    // Shop
 
-		// Shop Product management
+		// Shop Product & Category management
+		r.Get("/shops/me/categories", catc.ListMyShopCategories)                                           // Shop
+		r.Post("/shops/me/categories", catc.CreateShopCategory)                                            // Shop
+		r.Put("/shops/me/categories/{id}", catc.UpdateShopCategory)                                        // Shop
+		r.Delete("/shops/me/categories/{id}", catc.DeleteShopCategory)                                     // Shop
 		r.Get("/shops/me/products", pc.ListMyShopProducts)                                                 // Shop
 		r.With(middleware.MutationRateLimiter.Middleware()).Post("/products", pc.Create)                  // Shop
 		r.Put("/products/{id}", pc.Update)                                                                 // Shop

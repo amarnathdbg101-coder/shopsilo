@@ -128,7 +128,14 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"ALTER TABLE shops ALTER COLUMN city DROP NOT NULL;",
 		"ALTER TABLE categories ADD COLUMN IF NOT EXISTS image_url VARCHAR(500) DEFAULT '';",
 		"ALTER TABLE categories ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES categories(id) ON DELETE SET NULL;",
-		"INSERT INTO categories (name, slug, description, icon, is_active) VALUES ('General Store', 'general-store', 'All grocery and general store everyday items', '🛒', true) ON CONFLICT (slug) DO NOTHING;",
+		"ALTER TABLE categories ADD COLUMN IF NOT EXISTS shop_id UUID REFERENCES shops(id) ON DELETE CASCADE;",
+		"ALTER TABLE categories ADD COLUMN IF NOT EXISTS icon VARCHAR(50) DEFAULT '📦';",
+		"ALTER TABLE categories ADD COLUMN IF NOT EXISTS is_custom BOOLEAN DEFAULT false;",
+		"ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_slug_key;",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_global_slug ON categories(slug) WHERE shop_id IS NULL;",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_shop_slug ON categories(shop_id, slug) WHERE shop_id IS NOT NULL;",
+		"CREATE INDEX IF NOT EXISTS idx_categories_shop_lookup ON categories(shop_id, is_active);",
+		"INSERT INTO categories (name, slug, description, icon, is_active) VALUES ('General Store', 'general-store', 'All grocery and general store everyday items', '🛒', true) ON CONFLICT DO NOTHING;",
 
 		// POS Bills & Sales table enhancements
 		"ALTER TABLE pos_bills ADD COLUMN IF NOT EXISTS customer_user_id UUID REFERENCES users(id) ON DELETE SET NULL;",

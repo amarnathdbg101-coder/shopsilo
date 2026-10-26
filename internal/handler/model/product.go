@@ -10,6 +10,9 @@ type Category struct {
     Slug        string     `json:"slug"`
     Description string     `json:"description"`
     ImageURL    string     `json:"image_url"`
+    Icon        string     `json:"icon,omitempty"`
+    ShopID      *string    `json:"shop_id,omitempty"`
+    IsCustom    bool       `json:"is_custom"`
     ParentID    *string    `json:"parent_id,omitempty"`
     IsActive    bool       `json:"is_active"`
     CreatedAt   time.Time  `json:"created_at"`
