@@ -332,7 +332,11 @@ func (s *ShopService) UpdateMyShop(ctx context.Context, userID string, input dto
 		}
 	}
 	if input.LogoURL != nil {
-		shop.LogoURL = strings.TrimSpace(*input.LogoURL)
+		newLogo := strings.TrimSpace(*input.LogoURL)
+		if shop.LogoURL != "" && shop.LogoURL != newLogo {
+			_ = reuse.DeleteImage(shop.LogoURL)
+		}
+		shop.LogoURL = newLogo
 	}
 	if input.Banners != nil {
 		if len(*input.Banners) > 4 {

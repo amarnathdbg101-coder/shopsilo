@@ -449,6 +449,15 @@ func (s *ProductService) DeleteProduct(ctx context.Context, userID, productID st
 		return err
 	}
 
+	// 4. Asynchronously clean up orphaned images from Cloudflare R2 storage
+	if len(existing.Images) > 0 {
+		go func(imgs []string) {
+			for _, img := range imgs {
+				_ = reuse.DeleteImage(img)
+			}
+		}(existing.Images)
+	}
+
 	wsHub := GetWebSocketHub(nil)
 	wsHub.BroadcastToShopAndStorefront(shop.ID, shop.Slug, "PRODUCT_DELETED", map[string]interface{}{
 		"id":      productID,
