@@ -437,6 +437,49 @@ func (r *CategoryRepo) FindShopCategoryBySlug(ctx context.Context, shopID, slug 
 	return c, nil
 }
 
+// FindShopCategoryByNameOrSlug looks up a category by slug or name, checking the shop's
+// custom categories first, and then falling back to active global default categories.
+func (r *CategoryRepo) FindShopCategoryByNameOrSlug(ctx context.Context, shopID, term string) (*model.Category, error) {
+	trimmed := strings.TrimSpace(term)
+	if trimmed == "" {
+		return nil, ErrCategoryNotFound
+	}
+	slug := reuse.Slugify(trimmed)
+
+	query := `
+		SELECT id, name, slug, COALESCE(description, ''), COALESCE(image_url, ''), parent_id, is_active, created_at
+		FROM categories
+		WHERE (shop_id = $1 OR shop_id IS NULL) AND is_active = true AND (
+			slug = $2 OR 
+			slug = $3 OR 
+			LOWER(name) = $4 OR 
+			name ILIKE $5
+		)
+		ORDER BY 
+			(shop_id IS NOT NULL) DESC,
+			CASE WHEN slug = $2 THEN 1 WHEN slug = $3 THEN 2 WHEN LOWER(name) = $4 THEN 3 ELSE 4 END ASC
+		LIMIT 1
+	`
+	c := &model.Category{}
+	err := r.db.QueryRow(ctx, query, shopID, strings.ToLower(trimmed), slug, strings.ToLower(trimmed), "%"+trimmed+"%").Scan(
+		&c.ID,
+		&c.Name,
+		&c.Slug,
+		&c.Description,
+		&c.ImageURL,
+		&c.ParentID,
+		&c.IsActive,
+		&c.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrCategoryNotFound
+		}
+		return nil, err
+	}
+	return c, nil
+}
+
 // CreateShopCategory inserts a custom category belonging specifically to a shop.
 func (r *CategoryRepo) CreateShopCategory(ctx context.Context, shopID string, c *model.Category) (*model.Category, error) {
 	icon := strings.TrimSpace(c.Icon)

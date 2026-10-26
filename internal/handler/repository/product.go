@@ -191,7 +191,7 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 				lookupTerm = canonSlug
 			}
 			var resolvedUUID string
-			_ = tx.QueryRow(ctx, `SELECT id::text FROM categories WHERE slug ILIKE $1 OR name ILIKE $1 LIMIT 1`, lookupTerm).Scan(&resolvedUUID)
+			_ = tx.QueryRow(ctx, `SELECT id::text FROM categories WHERE (slug ILIKE $1 OR name ILIKE $1) AND (shop_id = $2 OR shop_id IS NULL) ORDER BY (shop_id IS NOT NULL) DESC LIMIT 1`, lookupTerm, p.ShopID).Scan(&resolvedUUID)
 			if resolvedUUID != "" {
 				catID = &resolvedUUID
 			}

@@ -10,6 +10,7 @@ import (
 	"shopMe/internal/handler/model"
 	"shopMe/internal/handler/repository"
 	"shopMe/internal/reuse"
+	"shopMe/internal/utils"
 	"strings"
 	"time"
 )
@@ -37,9 +38,14 @@ func (s *CategoryService) AdminListCategories(ctx context.Context) ([]*dto.Admin
 }
 
 func (s *CategoryService) CreateCategory(ctx context.Context, input dto.CreateCategoryRequest) (*model.Category, error) {
+	name := utils.FormatCategoryTitle(input.Name)
+	if name == "" {
+		return nil, errors.New("category name is required")
+	}
+
 	slug := strings.TrimSpace(input.Slug)
 	if slug == "" {
-		slug = reuse.Slugify(input.Name)
+		slug = reuse.Slugify(name)
 	} else {
 		slug = reuse.Slugify(slug)
 	}
@@ -68,7 +74,7 @@ func (s *CategoryService) UpdateCategory(ctx context.Context, id string, input d
 		return nil, ErrCategoryNotFound
 	}
 
-	name := strings.TrimSpace(input.Name)
+	name := utils.FormatCategoryTitle(input.Name)
 	if name == "" {
 		name = existing.Name
 	}
@@ -131,7 +137,7 @@ func (s *CategoryService) CreateShopCategory(ctx context.Context, userID string,
 		return nil, ErrShopRequired
 	}
 
-	name := strings.TrimSpace(input.Name)
+	name := utils.FormatCategoryTitle(input.Name)
 	if name == "" {
 		return nil, errors.New("category name is required")
 	}
@@ -179,7 +185,7 @@ func (s *CategoryService) UpdateShopCategory(ctx context.Context, userID, catego
 		return nil, ErrShopRequired
 	}
 
-	name := strings.TrimSpace(input.Name)
+	name := utils.FormatCategoryTitle(input.Name)
 	slug := strings.TrimSpace(input.Slug)
 	if slug == "" && name != "" {
 		slug = reuse.Slugify(name)

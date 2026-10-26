@@ -35,3 +35,29 @@ func TestResolveCanonicalCategorySlug(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatCategoryTitle(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"spices", "Spices"},
+		{"pooja samagri", "Pooja Samagri"},
+		{"DAIRY PRODUCTS", "Dairy Products"},
+		{"atta-dal", "Atta-Dal"},
+		{"dry fruits & nuts", "Dry Fruits & Nuts"},
+		{"oil/ghee", "Oil/Ghee"},
+		{"  organic   pulses  ", "Organic Pulses"},
+		{"kirana (ration)", "Kirana (Ration)"},
+		{"", ""},
+		{"a", "A"},
+	}
+
+	for _, tt := range tests {
+		got := FormatCategoryTitle(tt.input)
+		if got != tt.expected {
+			t.Errorf("FormatCategoryTitle(%q) = %q, want %q", tt.input, got, tt.expected)
+		}
+	}
+}
+

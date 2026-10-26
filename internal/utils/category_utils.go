@@ -3,6 +3,7 @@ package utils
 import (
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // CanonicalCategoryInfo defines standard metadata and synonyms for a canonical category.
@@ -395,3 +396,42 @@ func GetCategorySynonymNames(raw string) []string {
 	}
 	return []string{raw}
 }
+
+// FormatCategoryTitle formats any category string into clean Title Case where the first
+// letter of each word is capitalized and all subsequent letters are lowercased.
+// Automatically handles spaces, hyphens, slashes, brackets, ampersands, and extra whitespace.
+// Examples:
+//   "spices" -> "Spices"
+//   "pooja samagri" -> "Pooja Samagri"
+//   "dairy & sweets" -> "Dairy & Sweets"
+//   "dry fruits/nuts" -> "Dry Fruits/Nuts"
+func FormatCategoryTitle(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+
+	fields := strings.Fields(s)
+	s = strings.Join(fields, " ")
+
+	runes := []rune(s)
+	capitalizeNext := true
+
+	for i, r := range runes {
+		if unicode.IsLetter(r) {
+			if capitalizeNext {
+				runes[i] = unicode.ToUpper(r)
+				capitalizeNext = false
+			} else {
+				runes[i] = unicode.ToLower(r)
+			}
+		} else {
+			// Delimiters that trigger capitalization on next letter
+			if unicode.IsSpace(r) || r == '-' || r == '/' || r == '(' || r == ')' || r == '&' || r == '_' || r == '+' || r == '.' {
+				capitalizeNext = true
+			}
+		}
+	}
+	return string(runes)
+}
+

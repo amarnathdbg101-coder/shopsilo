@@ -50,9 +50,10 @@ func (s *ProductService) SuggestProducts(ctx context.Context, query string, shop
 	return s.productRepo.SuggestProducts(ctx, query, shopID, limit)
 }
 
-// resolveCategoryID accepts UUID, slug, name, or auto-creates on the fly.
-// Ensures product creation & updates never fail with ErrInvalidCategory.
-func (s *ProductService) resolveCategoryID(ctx context.Context, value string) (string, error) {
+// resolveCategoryID accepts UUID, slug, name, or auto-creates a permanent shop category on the fly.
+// Ensures product creation & updates never fail with ErrInvalidCategory, and custom categories
+// are permanently persisted in PostgreSQL under the merchant's shop with proper Title Case capitalization.
+func (s *ProductService) resolveCategoryID(ctx context.Context, shopID string, value string) (string, error) {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		if def, err := s.categoryRepo.FindDefault(ctx); err == nil && def != nil {
@@ -68,45 +69,60 @@ func (s *ProductService) resolveCategoryID(ctx context.Context, value string) (s
 		}
 	}
 
-	// 2. Try exact slug match
-	if category, err := s.categoryRepo.FindBySlug(ctx, strings.ToLower(trimmed)); err == nil && category != nil {
+	// 2. Try looking up in shop's custom categories or global categories by exact/slugified name
+	if category, err := s.categoryRepo.FindShopCategoryByNameOrSlug(ctx, shopID, trimmed); err == nil && category != nil {
 		return category.ID, nil
 	}
 
-	// 2.5. Try canonical category alias resolution (e.g., "Grocery & Staples" -> "kirana-grocery")
+	// 3. Try canonical category alias resolution (e.g., "Grocery & Staples" -> "kirana-grocery")
 	if canonSlug, ok := utils.ResolveCanonicalCategorySlug(trimmed); ok {
-		if category, err := s.categoryRepo.FindBySlug(ctx, canonSlug); err == nil && category != nil {
+		if category, err := s.categoryRepo.FindShopCategoryBySlug(ctx, shopID, canonSlug); err == nil && category != nil {
 			return category.ID, nil
 		}
 	}
 
-	// 3. Try slugified match
+	// 4. Try slugified match directly
 	slugified := reuse.Slugify(trimmed)
 	if slugified != "" && slugified != strings.ToLower(trimmed) {
-		if category, err := s.categoryRepo.FindBySlug(ctx, slugified); err == nil && category != nil {
+		if category, err := s.categoryRepo.FindShopCategoryBySlug(ctx, shopID, slugified); err == nil && category != nil {
 			return category.ID, nil
 		}
 	}
 
-	// 4. Try name or partial search
-	if category, err := s.categoryRepo.FindByNameOrSlug(ctx, trimmed); err == nil && category != nil {
-		return category.ID, nil
-	}
-
-	// 5. If category is not in DB yet, dynamically insert it so merchant is never blocked
+	// 5. If category is not in DB yet, dynamically insert it as a permanent custom category for THIS shop!
 	if len(trimmed) >= 2 {
-		catName := strings.Title(strings.ReplaceAll(trimmed, "-", " "))
-		newCat, err := s.categoryRepo.Create(ctx, &model.Category{
-			Name:     catName,
-			Slug:     reuse.Slugify(trimmed),
-			IsActive: true,
+		catName := utils.FormatCategoryTitle(trimmed)
+		slug := reuse.Slugify(trimmed)
+		if slug == "" {
+			slug = fmt.Sprintf("category-%d", time.Now().UnixNano()%100000)
+		}
+
+		// Ensure slug uniqueness within this shop's scope
+		if existing, err := s.categoryRepo.FindShopCategoryBySlug(ctx, shopID, slug); err == nil && existing != nil {
+			r := rand.New(rand.NewSource(time.Now().UnixNano()))
+			slug = fmt.Sprintf("%s-%d", slug, r.Intn(9000)+1000)
+		}
+
+		newCat, err := s.categoryRepo.CreateShopCategory(ctx, shopID, &model.Category{
+			Name:        catName,
+			Slug:        slug,
+			Icon:        "📦",
+			Description: fmt.Sprintf("Category for %s", catName),
+			IsActive:    true,
 		})
 		if err == nil && newCat != nil {
+			// Broadcast WebSocket mutation so merchant frontend & customer storefront immediately sync the new category
+			wsHub := GetWebSocketHub(nil)
+			if wsHub != nil {
+				if shop, sErr := s.shopRepo.FindByID(ctx, shopID); sErr == nil && shop != nil {
+					wsHub.BroadcastToShopAndStorefront(shop.ID, shop.Slug, "CATEGORY_MUTATED", newCat)
+				}
+			}
 			return newCat.ID, nil
 		}
 	}
 
-	// 6. Fallback to default category
+	// 6. Fallback to default category if all else fails
 	if def, err := s.categoryRepo.FindDefault(ctx); err == nil && def != nil {
 		return def.ID, nil
 	}
@@ -122,7 +138,7 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 	}
 
 	// 2. Validate category
-	categoryID, err := s.resolveCategoryID(ctx, input.CategoryID)
+	categoryID, err := s.resolveCategoryID(ctx, shop.ID, input.CategoryID)
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +315,7 @@ func (s *ProductService) UpdateProduct(ctx context.Context, userID, productID st
 		existing.ComparePrice = *input.ComparePrice
 	}
 	if input.CategoryID != nil {
-		categoryID, err := s.resolveCategoryID(ctx, *input.CategoryID)
+		categoryID, err := s.resolveCategoryID(ctx, shop.ID, *input.CategoryID)
 		if err != nil {
 			return nil, err
 		}
