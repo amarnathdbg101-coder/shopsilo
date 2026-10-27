@@ -23,9 +23,21 @@ func CORS(next http.Handler) http.Handler {
 		origin := r.Header.Get("Origin")
 
 		// 1. CORS Configuration
-		if allowedOriginsEnv == "" || allowedOriginsEnv == "*" {
-			// Permissive mode for local development
-			w.Header().Set("Access-Control-Allow-Origin", "*")
+		isLocalhost := origin == "" ||
+			strings.HasPrefix(origin, "http://localhost") ||
+			strings.HasPrefix(origin, "https://localhost") ||
+			strings.HasPrefix(origin, "http://127.0.0.1") ||
+			strings.HasPrefix(origin, "https://127.0.0.1") ||
+			strings.HasPrefix(origin, "http://10.0.2.2")
+
+		if allowedOriginsEnv == "" || allowedOriginsEnv == "*" || isLocalhost {
+			if origin != "" {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				w.Header().Set("Vary", "Origin")
+			} else {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			}
 		} else {
 			// Production whitelist mode
 			matched := false
