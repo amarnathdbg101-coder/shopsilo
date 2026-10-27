@@ -112,12 +112,10 @@ func NewAIService(shopRepo *repository.ShopRepo) AIService {
 func getGeminiModels() []string {
 	custom := strings.TrimSpace(os.Getenv("GEMINI_MODEL"))
 	models := []string{
-		"gemini-2.5-flash",
-		"gemini-2.0-flash",
-		"gemini-1.5-flash",
-		"gemini-1.5-pro",
-		"gemini-3.8-flash",
+		"gemini-flash-lite-latest",
 		"gemini-3.5-flash-lite",
+		"gemini-3.8-flash",
+		"gemini-flash-latest",
 	}
 	if custom != "" {
 		return append([]string{custom}, models...)
@@ -126,9 +124,9 @@ func getGeminiModels() []string {
 }
 
 func getGeminiAPIKey() string {
-	k := os.Getenv("GEMINI_API_KEY")
-	if strings.TrimSpace(k) != "" {
-		return strings.Trim(strings.TrimSpace(k), `"`)
+	k := strings.TrimSpace(os.Getenv("GEMINI_API_KEY"))
+	if k != "" && !strings.Contains(k, ",") {
+		return strings.Trim(k, `"'`)
 	}
 	return ""
 }
@@ -479,18 +477,10 @@ Rules:
 		return nil, fmt.Errorf("gemini vision scanning failed: %w", err)
 	}
 
+	cleanedJSON := extractCleanJSON(rawText)
 	var resp dto.AIScanProductResponse
-	if parseErr := json.Unmarshal([]byte(rawText), &resp); parseErr != nil {
-		cleaned := rawText
-		if idx := strings.Index(cleaned, "{"); idx != -1 {
-			cleaned = cleaned[idx:]
-		}
-		if idx := strings.LastIndex(cleaned, "}"); idx != -1 {
-			cleaned = cleaned[:idx+1]
-		}
-		if err2 := json.Unmarshal([]byte(cleaned), &resp); err2 != nil {
-			return nil, fmt.Errorf("failed to parse product scanner result: %w", parseErr)
-		}
+	if parseErr := json.Unmarshal([]byte(cleanedJSON), &resp); parseErr != nil {
+		return nil, fmt.Errorf("failed to parse product scanner result: %w", parseErr)
 	}
 
 	setAICache(cacheKey, rawText, 30*time.Minute)
@@ -554,18 +544,10 @@ Return pure valid JSON:
 		return nil, fmt.Errorf("parchi parser failed: %w", err)
 	}
 
+	cleanedJSON := extractCleanJSON(rawReply)
 	var resp dto.ParseParchiResponse
-	if parseErr := json.Unmarshal([]byte(rawReply), &resp); parseErr != nil {
-		cleaned := rawReply
-		if idx := strings.Index(cleaned, "{"); idx != -1 {
-			cleaned = cleaned[idx:]
-		}
-		if idx := strings.LastIndex(cleaned, "}"); idx != -1 {
-			cleaned = cleaned[:idx+1]
-		}
-		if err2 := json.Unmarshal([]byte(cleaned), &resp); err2 != nil {
-			return nil, fmt.Errorf("failed to parse parchi JSON: %w", parseErr)
-		}
+	if parseErr := json.Unmarshal([]byte(cleanedJSON), &resp); parseErr != nil {
+		return nil, fmt.Errorf("failed to parse parchi JSON: %w", parseErr)
 	}
 
 	setAICache(cacheKey, rawReply, 15*time.Minute)
@@ -716,18 +698,10 @@ Return JSON:
 		return nil, fmt.Errorf("marketing campaign generation failed: %w", err)
 	}
 
+	cleanedJSON := extractCleanJSON(rawText)
 	var resp dto.AIMarketingCampaignResponse
-	if err := json.Unmarshal([]byte(rawText), &resp); err != nil {
-		cleaned := rawText
-		if idx := strings.Index(cleaned, "{"); idx != -1 {
-			cleaned = cleaned[idx:]
-		}
-		if idx := strings.LastIndex(cleaned, "}"); idx != -1 {
-			cleaned = cleaned[:idx+1]
-		}
-		if err2 := json.Unmarshal([]byte(cleaned), &resp); err2 != nil {
-			return nil, fmt.Errorf("failed to parse campaign JSON: %w", err)
-		}
+	if err := json.Unmarshal([]byte(cleanedJSON), &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse campaign JSON: %w", err)
 	}
 
 	return &resp, nil
@@ -761,18 +735,10 @@ Return JSON:
 		return nil, fmt.Errorf("bargain assist failed: %w", err)
 	}
 
+	cleanedJSON := extractCleanJSON(rawText)
 	var resp dto.AIBargainAssistResponse
-	if err := json.Unmarshal([]byte(rawText), &resp); err != nil {
-		cleaned := rawText
-		if idx := strings.Index(cleaned, "{"); idx != -1 {
-			cleaned = cleaned[idx:]
-		}
-		if idx := strings.LastIndex(cleaned, "}"); idx != -1 {
-			cleaned = cleaned[:idx+1]
-		}
-		if err2 := json.Unmarshal([]byte(cleaned), &resp); err2 != nil {
-			return nil, fmt.Errorf("failed to parse bargain assist JSON: %w", err)
-		}
+	if err := json.Unmarshal([]byte(cleanedJSON), &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse bargain assist JSON: %w", err)
 	}
 
 	return &resp, nil
@@ -813,9 +779,12 @@ func (s *aiService) callGeminiWithFallback(ctx context.Context, explicitKey stri
 			if statusCode == http.StatusTooManyRequests {
 				s.rotator.MarkRateLimited(apiKey, 60*time.Second)
 				break // Switch to next key in keyAttempts
-			} else if statusCode >= 400 {
-				s.rotator.MarkError(apiKey)
+			} else if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
+				s.rotator.MarkRateLimited(apiKey, 10*time.Minute)
+				break // Switch to next key in keyAttempts
 			}
+			// Note: 404 is model deprecation / unavailable for tier, and 503 is temporary high demand.
+			// Do NOT penalize the API key for model-specific errors; continue to next fallback model.
 		}
 	}
 
@@ -894,6 +863,26 @@ func generateMerchantGracefulFallback(prompt string) string {
 func hashString(s string) string {
 	h := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(h[:8])
+}
+
+func extractCleanJSON(raw string) string {
+	cleaned := strings.TrimSpace(raw)
+	if strings.HasPrefix(cleaned, "```json") {
+		cleaned = strings.TrimPrefix(cleaned, "```json")
+	} else if strings.HasPrefix(cleaned, "```") {
+		cleaned = strings.TrimPrefix(cleaned, "```")
+	}
+	if strings.HasSuffix(cleaned, "```") {
+		cleaned = strings.TrimSuffix(cleaned, "```")
+	}
+	cleaned = strings.TrimSpace(cleaned)
+
+	start := strings.Index(cleaned, "{")
+	end := strings.LastIndex(cleaned, "}")
+	if start != -1 && end != -1 && end > start {
+		return cleaned[start : end+1]
+	}
+	return cleaned
 }
 
 func parseCustomerActions(raw string) (string, []dto.AIAction) {

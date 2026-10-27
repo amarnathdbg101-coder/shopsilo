@@ -75,19 +75,28 @@ func MustLoad() Config {
 			SecretKey:     secertKey,
 			Bucket:        bucket,
 			PublicURL:     os.Getenv("R2_PUBLIC_URL"),
-			GeminiAPIKeys: parseCommaList(getEnvFallback("GEMINI_API_KEYS", "GEMINI_API_KEY")),
+			GeminiAPIKeys: getCombinedGeminiKeys(),
 		}
 	})
 
 	return cachedConfig
 }
 
-func getEnvFallback(primary, fallback string) string {
-	v := os.Getenv(primary)
-	if strings.TrimSpace(v) != "" {
-		return v
+func getCombinedGeminiKeys() []string {
+	k1 := os.Getenv("GEMINI_API_KEYS")
+	k2 := os.Getenv("GEMINI_API_KEY")
+	var combined []string
+	seen := make(map[string]bool)
+
+	for _, raw := range []string{k1, k2} {
+		for _, k := range parseCommaList(raw) {
+			if k != "" && !seen[k] {
+				seen[k] = true
+				combined = append(combined, k)
+			}
+		}
 	}
-	return os.Getenv(fallback)
+	return combined
 }
 
 func parseCommaList(raw string) []string {
