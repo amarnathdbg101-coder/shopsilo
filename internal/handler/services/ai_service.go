@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,8 @@ import (
 
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/repository"
+	"shopMe/internal/reuse/ai"
+	"shopMe/internal/utils"
 )
 
 type AIService interface {
@@ -78,6 +81,7 @@ func setAICache(key, resp string, ttl time.Duration) {
 type aiService struct {
 	shopRepo *repository.ShopRepo
 	client   *http.Client
+	rotator  *ai.KeyRotator
 }
 
 func NewAIService(shopRepo *repository.ShopRepo) AIService {
@@ -86,24 +90,34 @@ func NewAIService(shopRepo *repository.ShopRepo) AIService {
 		MaxIdleConnsPerHost: 50,
 		IdleConnTimeout:     120 * time.Second,
 	}
+
+	keys := utils.MustLoad().GeminiAPIKeys
+	if len(keys) == 0 {
+		fallbackKey := os.Getenv("GEMINI_API_KEY")
+		if fallbackKey != "" {
+			keys = ai.ParseCommaList(fallbackKey)
+		}
+	}
+
 	return &aiService{
 		shopRepo: shopRepo,
 		client: &http.Client{
 			Transport: transport,
-			Timeout:   25 * time.Second,
+			Timeout:   30 * time.Second,
 		},
+		rotator: ai.NewKeyRotator(keys),
 	}
 }
 
 func getGeminiModels() []string {
 	custom := strings.TrimSpace(os.Getenv("GEMINI_MODEL"))
 	models := []string{
+		"gemini-2.5-flash",
+		"gemini-2.0-flash",
+		"gemini-1.5-flash",
+		"gemini-1.5-pro",
 		"gemini-3.8-flash",
-		"gemini-3.7-flash",
-		"gemini-3.6-flash",
-		"gemini-3.5-flash",
 		"gemini-3.5-flash-lite",
-		"gemini-3.1-pro-preview",
 	}
 	if custom != "" {
 		return append([]string{custom}, models...)
@@ -119,34 +133,13 @@ func getGeminiAPIKey() string {
 	return ""
 }
 
-// Token Engineering Helper: Downsamples base64 payload to optimal 512px tile size (~40KB)
-func cleanAndDownsampleBase64(rawBase64 string, maxChars int) string {
-	clean := strings.TrimPrefix(rawBase64, "data:image/jpeg;base64,")
-	clean = strings.TrimPrefix(clean, "data:image/png;base64,")
-	clean = strings.TrimSpace(clean)
-
-	if len(clean) <= maxChars {
-		return clean
+// CleanBase64String extracts pure base64 payload from data URI scheme if present.
+func cleanBase64String(rawBase64 string) string {
+	clean := strings.TrimSpace(rawBase64)
+	if idx := strings.Index(clean, ","); idx != -1 {
+		clean = clean[idx+1:]
 	}
-
-	factor := float64(len(clean)) / float64(maxChars)
-	if factor <= 1.0 {
-		return clean
-	}
-
-	sampledLength := int(float64(len(clean)) / factor)
-	var buf strings.Builder
-	buf.Grow(sampledLength)
-
-	step := float64(len(clean)) / float64(sampledLength)
-	for i := 0; i < sampledLength; i++ {
-		idx := int(float64(i) * step)
-		if idx < len(clean) {
-			buf.WriteByte(clean[idx])
-		}
-	}
-
-	return buf.String()
+	return strings.TrimSpace(clean)
 }
 
 type geminiInlineData struct {
@@ -253,7 +246,7 @@ ACTIONS INSTRUCTION:
 
 	userParts := []geminiPart{{Text: req.Prompt}}
 	if req.ImageBase64 != "" {
-		cleanBase64 := cleanAndDownsampleBase64(req.ImageBase64, 80000)
+		cleanBase64 := cleanBase64String(req.ImageBase64)
 		userParts = append(userParts, geminiPart{
 			InlineData: &geminiInlineData{
 				MimeType: "image/jpeg",
@@ -354,7 +347,7 @@ ACTIONS:
 
 	userParts := []geminiPart{{Text: req.Prompt}}
 	if req.ImageBase64 != "" {
-		cleanBase64 := cleanAndDownsampleBase64(req.ImageBase64, 80000)
+		cleanBase64 := cleanBase64String(req.ImageBase64)
 		userParts = append(userParts, geminiPart{
 			InlineData: &geminiInlineData{
 				MimeType: "image/jpeg",
@@ -393,15 +386,24 @@ ACTIONS:
 	}, nil
 }
 
-// ── 1. Packet Vision Scanner ──
+// ── 1. Packet & Product Vision Scanner (10+ Attributes Extraction) ──
 func (s *aiService) ScanProduct(ctx context.Context, req dto.AIScanProductRequest) (*dto.AIScanProductResponse, error) {
 	mimeType := req.MimeType
 	if mimeType == "" {
 		mimeType = "image/jpeg"
 	}
 
-	cleanBase64 := cleanAndDownsampleBase64(req.ImageBase64, 80000) // Downsample to ~40KB (saves 90% vision tokens)
-	cacheKey := fmt.Sprintf("scan:%s", hashString(cleanBase64))
+	cleanBase64 := cleanBase64String(req.ImageBase64)
+	if cleanBase64 == "" {
+		return nil, fmt.Errorf("empty or invalid image data")
+	}
+
+	// Cache key using hash of base64 snippet to prevent duplicate billing on identical images
+	subLen := len(cleanBase64)
+	if subLen > 512 {
+		subLen = 512
+	}
+	cacheKey := fmt.Sprintf("scan:%d:%s", len(cleanBase64), hashString(cleanBase64[:subLen]))
 
 	if cached, ok := getAICache(cacheKey); ok {
 		var resp dto.AIScanProductResponse
@@ -410,24 +412,44 @@ func (s *aiService) ScanProduct(ctx context.Context, req dto.AIScanProductReques
 		}
 	}
 
-	scanPrompt := `
-Analyze retail product packaging photo. Extract product details in pure JSON.
+	scanPrompt := `You are an expert AI retail cataloging assistant for Indian retail stores, supermarkets, grocery/kirana, clothing/saree, footwear, personal care, and local retail shops.
+Inspect this product image carefully. The product could be FMCG packaged goods, garments/textiles (e.g. saree, shirt, kurti), footwear, cosmetics, bakery, loose goods, or general retail.
 
-JSON Schema:
+Extract and infer comprehensive, professional product catalog data in pure JSON matching this exact schema:
 {
-  "name": "Tata Salt Vacuum Evaporated Iodized Salt 1kg",
-  "brand": "Tata Consumer Products",
-  "category_hint": "Kirana & Grocery",
-  "mrp": 28.0,
-  "estimated_cost": 24.0,
-  "weight": 1000.0,
-  "unit": "g",
-  "description": "Iodized cooking salt.",
-  "suggested_sku": "TAT-SLT-1KG",
-  "visual_code": "FMCG-TATA-SLT-1KG",
-  "visual_keywords": ["salt", "namak", "tata", "pouch", "1kg"]
+  "name": "Full professional commercial product name in Title Case (e.g., 'Royal Banarasi Silk Saree With Gold Zari Work' or 'Tata Tea Gold Leaf Tea 500g')",
+  "brand": "Exact brand name (e.g. 'Tata Tea', 'Kashvi', 'Amul', or 'Local Handloom'/'Generic' if unbranded)",
+  "category_hint": "Standard retail category (MUST be one of: 'Grocery & Staples', 'Snacks & Munchies', 'Beverages & Drinks', 'Dairy & Eggs', 'Personal Care & Beauty', 'Home & Kitchen', 'Clothing & Fashion', 'Electronics & Mobile', 'Hardware & Tools', 'Stationery & Office', 'Baby Care', 'General Store')",
+  "subcategory": "Specific subcategory name (e.g. 'Sarees', 'Tea & Coffee', 'Edible Oils', 'Biscuits', 'Skin Care')",
+  "mrp": 299.0,
+  "selling_price": 249.0,
+  "estimated_cost": 199.0,
+  "profit_margin_percent": 20.0,
+  "weight": 500.0,
+  "unit": "Appropriate unit: 'gm', 'kg', 'ml', 'litre', 'piece', 'meter', 'pack', 'pair', 'box'",
+  "description": "Attractive, professional 2-3 line marketing and descriptive overview highlighting material/ingredients, quality, and usage.",
+  "key_features": [
+    "Feature 1 with key benefit",
+    "Feature 2 with specification",
+    "Feature 3 with highlight"
+  ],
+  "ingredients": "Material or ingredients composition if visible/standard",
+  "tags": [
+    "6 to 8 relevant search keywords in English and Hinglish for customer search"
+  ],
+  "attributes": {
+    "specs": "Provide 4 to 6 specific key-value pairs appropriate for this category. For clothing: fabric, pattern, color, occasion, wash_care; for food: dietary_preference (Vegetarian/Non-Vegetarian), shelf_life, packaging_type; for electronics/hardware: material, warranty"
+  },
+  "suggested_sku": "Smart uppercase SKU identifier (e.g. 'BANARASI-SILK-GOLD' or 'TATA-GOLD-500G')",
+  "barcode": "Barcode digits if clearly visible on packaging, otherwise empty string",
+  "visual_keywords": ["3-5 visual identifiers like color, shape, packaging style"]
 }
-`
+
+Rules:
+1. Always return realistic Indian market MRP and selling prices in INR (₹).
+2. For clothing or fashion without printed weight, set weight to 0 or estimated garment weight and unit to 'piece' or 'meter'.
+3. Never return null for name, brand, category_hint, unit, or description.
+4. Output MUST be ONLY valid JSON matching this schema.`
 
 	payload := geminiPayload{
 		Contents: []geminiContent{
@@ -447,7 +469,7 @@ JSON Schema:
 		GenerationConfig: geminiGenerationConfig{
 			ResponseMimeType: "application/json",
 			Temperature:      0.1,
-			MaxOutputTokens:  600, // Token Bounded (saves 1400 tokens)
+			MaxOutputTokens:  1500, // Sufficient tokens for all 10+ attributes
 		},
 	}
 
@@ -756,62 +778,91 @@ Return JSON:
 	return &resp, nil
 }
 
-func (s *aiService) callGeminiWithFallback(ctx context.Context, apiKey string, payload geminiPayload) (string, error) {
+func (s *aiService) callGeminiWithFallback(ctx context.Context, explicitKey string, payload geminiPayload) (string, error) {
+	keyAttempts := s.rotator.KeyCount()
+	if keyAttempts <= 0 {
+		keyAttempts = 1
+	}
+
 	models := getGeminiModels()
 	var lastErr error
 
-	for _, model := range models {
-		reply, err := s.callSingleGeminiModel(ctx, apiKey, model, payload)
-		if err == nil && reply != "" {
-			return reply, nil
+	for attempt := 0; attempt < keyAttempts; attempt++ {
+		apiKey := explicitKey
+		if apiKey == "" || attempt > 0 {
+			k, err := s.rotator.GetNextKey()
+			if err != nil && !errors.Is(err, ai.ErrAllKeysExhausted) {
+				return "", err
+			}
+			apiKey = k
 		}
-		lastErr = err
+
+		if apiKey == "" {
+			return "", ai.ErrNoKeysConfigured
+		}
+
+		for _, model := range models {
+			reply, statusCode, err := s.callSingleGeminiModel(ctx, apiKey, model, payload)
+			if err == nil && reply != "" {
+				s.rotator.MarkSuccess(apiKey)
+				return reply, nil
+			}
+
+			lastErr = err
+
+			if statusCode == http.StatusTooManyRequests {
+				s.rotator.MarkRateLimited(apiKey, 60*time.Second)
+				break // Switch to next key in keyAttempts
+			} else if statusCode >= 400 {
+				s.rotator.MarkError(apiKey)
+			}
+		}
 	}
 
 	return "", lastErr
 }
 
-func (s *aiService) callSingleGeminiModel(ctx context.Context, apiKey, model string, payload geminiPayload) (string, error) {
-	modelCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+func (s *aiService) callSingleGeminiModel(ctx context.Context, apiKey, model string, payload geminiPayload) (string, int, error) {
+	modelCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal gemini payload: %w", err)
+		return "", 0, fmt.Errorf("failed to marshal gemini payload: %w", err)
 	}
 
 	endpoint := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, apiKey)
 	httpReq, err := http.NewRequestWithContext(modelCtx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
-		return "", fmt.Errorf("failed to create http request: %w", err)
+		return "", 0, fmt.Errorf("failed to create http request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := s.client.Do(httpReq)
 	if err != nil {
-		return "", fmt.Errorf("gemini api request failed for model %s: %w", model, err)
+		return "", 0, fmt.Errorf("gemini api request failed for model %s: %w", model, err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("failed to read gemini response body: %w", err)
+		return "", resp.StatusCode, fmt.Errorf("failed to read gemini response body: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("gemini api error (model %s, status %d): %s", model, resp.StatusCode, string(respBody))
+		return "", resp.StatusCode, fmt.Errorf("gemini api error (model %s, status %d): %s", model, resp.StatusCode, string(respBody))
 	}
 
 	var parsedResp geminiCandidateResponse
 	if err := json.Unmarshal(respBody, &parsedResp); err != nil {
-		return "", fmt.Errorf("failed to parse gemini response: %w", err)
+		return "", resp.StatusCode, fmt.Errorf("failed to parse gemini response: %w", err)
 	}
 
 	if len(parsedResp.Candidates) == 0 || len(parsedResp.Candidates[0].Content.Parts) == 0 {
-		return "", fmt.Errorf("empty candidate response from gemini model %s", model)
+		return "", resp.StatusCode, fmt.Errorf("empty candidate response from gemini model %s", model)
 	}
 
-	return parsedResp.Candidates[0].Content.Parts[0].Text, nil
+	return parsedResp.Candidates[0].Content.Parts[0].Text, resp.StatusCode, nil
 }
 
 func generateCustomerGracefulFallback(prompt string) string {

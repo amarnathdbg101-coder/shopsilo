@@ -4,6 +4,7 @@ package utils
 import (
 	"log"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/joho/godotenv" // for local .env file
@@ -17,7 +18,8 @@ type Config struct {
 	AccessKey string `koanf:"R2_ACCESS_KEY"`
 	SecretKey string `koanf:"R2_SECRET_KEY"`
 	Endpoint  string `koanf:"R2_ENDPOINT"`
-	PublicURL string `koanf:"R2_PUBLIC_URL"`
+	PublicURL     string   `koanf:"R2_PUBLIC_URL"`
+	GeminiAPIKeys []string `koanf:"GEMINI_API_KEYS"`
 }
 
 var (
@@ -65,16 +67,39 @@ func MustLoad() Config {
 		}
 
 		cachedConfig = Config{
-			Port:      port,
-			DBURL:     database,
-			Jwt:       jwt,
-			AccessKey: accessKey,
-			Endpoint:  r2Endpoint,
-			SecretKey: secertKey,
-			Bucket:    bucket,
-			PublicURL: os.Getenv("R2_PUBLIC_URL"),
+			Port:          port,
+			DBURL:         database,
+			Jwt:           jwt,
+			AccessKey:     accessKey,
+			Endpoint:      r2Endpoint,
+			SecretKey:     secertKey,
+			Bucket:        bucket,
+			PublicURL:     os.Getenv("R2_PUBLIC_URL"),
+			GeminiAPIKeys: parseCommaList(getEnvFallback("GEMINI_API_KEYS", "GEMINI_API_KEY")),
 		}
 	})
 
 	return cachedConfig
+}
+
+func getEnvFallback(primary, fallback string) string {
+	v := os.Getenv(primary)
+	if strings.TrimSpace(v) != "" {
+		return v
+	}
+	return os.Getenv(fallback)
+}
+
+func parseCommaList(raw string) []string {
+	if raw == "" {
+		return []string{}
+	}
+	parts := []string{}
+	for _, p := range strings.Split(raw, ",") {
+		clean := strings.TrimSpace(strings.Trim(p, `"'`))
+		if clean != "" {
+			parts = append(parts, clean)
+		}
+	}
+	return parts
 }
