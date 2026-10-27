@@ -99,6 +99,12 @@ func NewAIService(shopRepo *repository.ShopRepo) AIService {
 		}
 	}
 
+	if len(keys) == 0 {
+		fmt.Printf("[AIService WARNING] No Gemini API keys found! Set GEMINI_API_KEYS in .env\n")
+	} else {
+		fmt.Printf("[AIService] Initialized with %d active Gemini key(s). Models: %v\n", len(keys), getGeminiModels())
+	}
+
 	return &aiService{
 		shopRepo: shopRepo,
 		client: &http.Client{
@@ -117,7 +123,7 @@ func getGeminiModels() []string {
 		"gemini-3.8-flash",
 		"gemini-flash-latest",
 	}
-	if custom != "" {
+	if custom != "" && custom != "gemini-3.1-pro-preview" && custom != "gemini-2.5-flash" {
 		return append([]string{custom}, models...)
 	}
 	return models

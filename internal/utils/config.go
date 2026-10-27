@@ -29,8 +29,8 @@ var (
 
 func MustLoad() Config {
 	configOnce.Do(func() {
-		// Load .env file only in local dev (ignore error if file not found)
-		_ = godotenv.Load(".env")
+		// Load .env file (supports local dev and VPS deployment paths)
+		_ = godotenv.Load(".env", "/root/shopsilo/.env", "/root/shopsilo/cmd/api/.env", "../.env")
 
 		port := os.Getenv("PORT")
 		if port == "" {
