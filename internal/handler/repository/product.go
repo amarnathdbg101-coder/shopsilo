@@ -651,8 +651,19 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 	cleanedSearch := utils.CleanSearchQuery(filter.Search)
 	cacheKey := ""
 	if cleanedSearch != "" {
-		cacheKey = fmt.Sprintf("p_srch:%s:s:%s:c:%s:sb:%s:p:%d:l:%d:min:%.0f:max:%.0f",
-			cleanedSearch, filter.ShopID, filter.CategoryID, filter.SortBy, filter.Page, filter.Limit, filter.MinPrice, filter.MaxPrice)
+		latStr, lngStr, radStr := "none", "none", "none"
+		if filter.Lat != nil && filter.Lng != nil {
+			latStr = fmt.Sprintf("%.3f", *filter.Lat)
+			lngStr = fmt.Sprintf("%.3f", *filter.Lng)
+			radVal := 10.0
+			if filter.RadiusKm != nil && *filter.RadiusKm > 0 {
+				radVal = *filter.RadiusKm
+			}
+			radStr = fmt.Sprintf("%.1f", radVal)
+		}
+		cacheKey = fmt.Sprintf("p_srch:%s:s:%s:c:%s:sb:%s:p:%d:l:%d:min:%.0f:max:%.0f:lat:%s:lng:%s:rad:%s:city:%s",
+			cleanedSearch, filter.ShopID, filter.CategoryID, filter.SortBy, filter.Page, filter.Limit, filter.MinPrice, filter.MaxPrice,
+			latStr, lngStr, radStr, strings.ToLower(strings.TrimSpace(filter.City)))
 		if cachedProds, cachedCount, found := r.getCachedSearch(cacheKey); found {
 			return cachedProds, cachedCount, nil
 		}
@@ -755,7 +766,7 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 					continue
 				}
 				wild := "%" + term + "%"
-				catOrs = append(catOrs, fmt.Sprintf("(p.name ILIKE $%d OR p.description ILIKE $%d OR p.tags::text ILIKE $%d)", argIdx, argIdx, argIdx))
+				catOrs = append(catOrs, fmt.Sprintf("(p.name ILIKE $%d OR p.description ILIKE $%d OR immutable_array_to_string(p.tags, ' ') ILIKE $%d)", argIdx, argIdx, argIdx))
 				args = append(args, wild)
 				argIdx++
 			}
@@ -778,11 +789,11 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 					}
 					wild := "%" + cleanTerm + "%"
 					if len(cleanTerm) >= 3 {
-						groupOrs = append(groupOrs, fmt.Sprintf("(p.name ILIKE $%d OR word_similarity($%d, p.name) >= 0.35 OR p.name %% $%d OR COALESCE(p.sku, '') ILIKE $%d OR COALESCE(p.description, '') ILIKE $%d OR p.slug ILIKE $%d OR COALESCE(p.tags::text, '') ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx+1, argIdx+1, argIdx, argIdx, argIdx, argIdx, argIdx))
+						groupOrs = append(groupOrs, fmt.Sprintf("(p.name ILIKE $%d OR word_similarity($%d, p.name) >= 0.35 OR p.name %% $%d OR COALESCE(p.sku, '') ILIKE $%d OR COALESCE(p.description, '') ILIKE $%d OR p.slug ILIKE $%d OR immutable_array_to_string(p.tags, ' ') ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx+1, argIdx+1, argIdx, argIdx, argIdx, argIdx, argIdx))
 						args = append(args, wild, cleanTerm)
 						argIdx += 2
 					} else {
-						groupOrs = append(groupOrs, fmt.Sprintf("(p.name ILIKE $%d OR COALESCE(p.sku, '') ILIKE $%d OR COALESCE(p.description, '') ILIKE $%d OR p.slug ILIKE $%d OR COALESCE(p.tags::text, '') ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx, argIdx))
+						groupOrs = append(groupOrs, fmt.Sprintf("(p.name ILIKE $%d OR COALESCE(p.sku, '') ILIKE $%d OR COALESCE(p.description, '') ILIKE $%d OR p.slug ILIKE $%d OR immutable_array_to_string(p.tags, ' ') ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx, argIdx))
 						args = append(args, wild)
 						argIdx++
 					}
@@ -795,11 +806,11 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 			cleanTerm := strings.TrimSpace(filter.Search)
 			wild := "%" + cleanTerm + "%"
 			if len(cleanTerm) >= 3 {
-				whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR word_similarity($%d, p.name) >= 0.35 OR p.name %% $%d OR COALESCE(p.sku, '') ILIKE $%d OR COALESCE(p.description, '') ILIKE $%d OR p.slug ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx+1, argIdx+1, argIdx, argIdx, argIdx, argIdx))
+				whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR word_similarity($%d, p.name) >= 0.35 OR p.name %% $%d OR COALESCE(p.sku, '') ILIKE $%d OR COALESCE(p.description, '') ILIKE $%d OR p.slug ILIKE $%d OR immutable_array_to_string(p.tags, ' ') ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx+1, argIdx+1, argIdx, argIdx, argIdx, argIdx, argIdx))
 				args = append(args, wild, cleanTerm)
 				argIdx += 2
 			} else {
-				whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR COALESCE(p.sku, '') ILIKE $%d OR COALESCE(p.description, '') ILIKE $%d OR p.slug ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx))
+				whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR COALESCE(p.sku, '') ILIKE $%d OR COALESCE(p.description, '') ILIKE $%d OR p.slug ILIKE $%d OR immutable_array_to_string(p.tags, ' ') ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx, argIdx))
 				args = append(args, wild)
 				argIdx++
 			}
@@ -846,6 +857,7 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 		geoSubquery := fmt.Sprintf(`p.shop_id IN (
 			SELECT id FROM shops
 			WHERE is_active = true AND status = 'active'
+			  AND latitude IS NOT NULL AND longitude IS NOT NULL
 			  AND latitude BETWEEN %f AND %f
 			  AND longitude BETWEEN %f AND %f
 			  AND (6371 * acos(LEAST(1.0, GREATEST(-1.0,
@@ -1570,11 +1582,11 @@ func (r *ProductRepo) FindNearbyProducts(
 					}
 					wild := "%" + cleanTerm + "%"
 					if len(cleanTerm) >= 3 {
-						groupOrs = append(groupOrs, fmt.Sprintf("(p.name ILIKE $%d OR word_similarity($%d, p.name) >= 0.35 OR p.name %% $%d OR COALESCE(p.description, '') ILIKE $%d OR COALESCE(p.sku, '') ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx+1, argIdx+1, argIdx, argIdx, argIdx))
+						groupOrs = append(groupOrs, fmt.Sprintf("(p.name ILIKE $%d OR word_similarity($%d, p.name) >= 0.35 OR p.name %% $%d OR COALESCE(p.description, '') ILIKE $%d OR COALESCE(p.sku, '') ILIKE $%d OR immutable_array_to_string(p.tags, ' ') ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx+1, argIdx+1, argIdx, argIdx, argIdx, argIdx))
 						args = append(args, wild, cleanTerm)
 						argIdx += 2
 					} else {
-						groupOrs = append(groupOrs, fmt.Sprintf("(p.name ILIKE $%d OR COALESCE(p.description, '') ILIKE $%d OR COALESCE(p.sku, '') ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
+						groupOrs = append(groupOrs, fmt.Sprintf("(p.name ILIKE $%d OR COALESCE(p.description, '') ILIKE $%d OR COALESCE(p.sku, '') ILIKE $%d OR immutable_array_to_string(p.tags, ' ') ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx))
 						args = append(args, wild)
 						argIdx++
 					}
@@ -1587,11 +1599,11 @@ func (r *ProductRepo) FindNearbyProducts(
 			cleanTerm := trimmedQ
 			wild := "%" + cleanTerm + "%"
 			if len(cleanTerm) >= 3 {
-				whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR word_similarity($%d, p.name) >= 0.35 OR p.name %% $%d OR COALESCE(p.description, '') ILIKE $%d OR COALESCE(p.sku, '') ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx+1, argIdx+1, argIdx, argIdx, argIdx))
+				whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR word_similarity($%d, p.name) >= 0.35 OR p.name %% $%d OR COALESCE(p.description, '') ILIKE $%d OR COALESCE(p.sku, '') ILIKE $%d OR immutable_array_to_string(p.tags, ' ') ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx+1, argIdx+1, argIdx, argIdx, argIdx, argIdx))
 				args = append(args, wild, cleanTerm)
 				argIdx += 2
 			} else {
-				whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR COALESCE(p.description, '') ILIKE $%d OR COALESCE(p.sku, '') ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
+				whereClauses = append(whereClauses, fmt.Sprintf("(p.name ILIKE $%d OR COALESCE(p.description, '') ILIKE $%d OR COALESCE(p.sku, '') ILIKE $%d OR immutable_array_to_string(p.tags, ' ') ILIKE $%d OR COALESCE(p.attributes::text, '') ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx))
 				args = append(args, wild)
 				argIdx++
 			}

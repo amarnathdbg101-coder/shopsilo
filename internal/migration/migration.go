@@ -269,6 +269,16 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"CREATE INDEX IF NOT EXISTS idx_products_shop_cat_active ON products(shop_id, category_id, is_active) WHERE is_active = true;",
 		"CREATE INDEX IF NOT EXISTS idx_products_featured ON products(shop_id, is_featured, created_at DESC) WHERE is_featured = true AND is_active = true;",
 
+		// Step 4 Production Optimizations: Search Speedups (Shop Address & Product Tags/Attributes Trigram)
+		"CREATE INDEX IF NOT EXISTS idx_shops_address_trgm ON shops USING gin (address gin_trgm_ops);",
+		"CREATE INDEX IF NOT EXISTS idx_products_tags_gin ON products USING gin (tags);",
+		`CREATE OR REPLACE FUNCTION immutable_array_to_string(arr text[], sep text) 
+		 RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ 
+		     SELECT array_to_string(arr, sep); 
+		 $$;`,
+		"CREATE INDEX IF NOT EXISTS idx_products_tags_trgm ON products USING gin (immutable_array_to_string(tags, ' ') gin_trgm_ops);",
+		"CREATE INDEX IF NOT EXISTS idx_products_attributes_trgm ON products USING gin ((attributes::text) gin_trgm_ops);",
+
 		`CREATE TABLE IF NOT EXISTS procurement_items (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			shop_id UUID NOT NULL REFERENCES shops(id) ON DELETE CASCADE,

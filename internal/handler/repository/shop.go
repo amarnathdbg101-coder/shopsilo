@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
 	"shopMe/internal/utils"
@@ -494,11 +495,11 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 					}
 					wild := "%" + cleanTerm + "%"
 					if len(cleanTerm) >= 3 {
-						groupOrs = append(groupOrs, fmt.Sprintf("(name ILIKE $%d OR word_similarity($%d, name) >= 0.35 OR name %% $%d OR category ILIKE $%d OR COALESCE(description, '') ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx+1, argIdx+1, argIdx, argIdx, argIdx))
+						groupOrs = append(groupOrs, fmt.Sprintf("(name ILIKE $%d OR word_similarity($%d, name) >= 0.35 OR name %% $%d OR category ILIKE $%d OR COALESCE(city, '') ILIKE $%d OR COALESCE(address, '') ILIKE $%d OR word_similarity($%d, COALESCE(address, '')) >= 0.35 OR COALESCE(description, '') ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx+1, argIdx+1, argIdx, argIdx, argIdx, argIdx+1, argIdx, argIdx))
 						args = append(args, wild, cleanTerm)
 						argIdx += 2
 					} else {
-						groupOrs = append(groupOrs, fmt.Sprintf("(name ILIKE $%d OR category ILIKE $%d OR COALESCE(description, '') ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
+						groupOrs = append(groupOrs, fmt.Sprintf("(name ILIKE $%d OR category ILIKE $%d OR COALESCE(city, '') ILIKE $%d OR COALESCE(address, '') ILIKE $%d OR COALESCE(description, '') ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx, argIdx))
 						args = append(args, wild)
 						argIdx++
 					}
@@ -511,11 +512,11 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 			cleanTerm := strings.TrimSpace(filter.Search)
 			wild := "%" + cleanTerm + "%"
 			if len(cleanTerm) >= 3 {
-				innerWhereClauses = append(innerWhereClauses, fmt.Sprintf("(name ILIKE $%d OR word_similarity($%d, name) >= 0.35 OR name %% $%d OR category ILIKE $%d OR COALESCE(description, '') ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx+1, argIdx+1, argIdx, argIdx, argIdx))
+				innerWhereClauses = append(innerWhereClauses, fmt.Sprintf("(name ILIKE $%d OR word_similarity($%d, name) >= 0.35 OR name %% $%d OR category ILIKE $%d OR COALESCE(city, '') ILIKE $%d OR COALESCE(address, '') ILIKE $%d OR word_similarity($%d, COALESCE(address, '')) >= 0.35 OR COALESCE(description, '') ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx+1, argIdx+1, argIdx, argIdx, argIdx, argIdx+1, argIdx, argIdx))
 				args = append(args, wild, cleanTerm)
 				argIdx += 2
 			} else {
-				innerWhereClauses = append(innerWhereClauses, fmt.Sprintf("(name ILIKE $%d OR category ILIKE $%d OR COALESCE(description, '') ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
+				innerWhereClauses = append(innerWhereClauses, fmt.Sprintf("(name ILIKE $%d OR category ILIKE $%d OR COALESCE(city, '') ILIKE $%d OR COALESCE(address, '') ILIKE $%d OR COALESCE(description, '') ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx, argIdx))
 				args = append(args, wild)
 				argIdx++
 			}
@@ -542,43 +543,89 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 
 	hasGeo := filter.Lat != nil && filter.Lng != nil
 	var distanceExpr string
+	var outerWhereClauses []string
 
 	if hasGeo {
+		radius := 10.0
+		if filter.RadiusKm != nil && *filter.RadiusKm > 0 {
+			radius = *filter.RadiusKm
+		}
+
+		lat := *filter.Lat
+		lng := *filter.Lng
+
+		// Bounding box pre-filter strictly limits DB scan to shops in spatial range
+		latDiff := radius / 111.0
+		cosLat := math.Cos(lat * math.Pi / 180.0)
+		if cosLat == 0 {
+			cosLat = 0.0001
+		}
+		lngDiff := radius / (111.0 * math.Abs(cosLat))
+		minLat, maxLat := lat-latDiff, lat+latDiff
+		minLng, maxLng := lng-lngDiff, lng+lngDiff
+
+		innerWhereClauses = append(innerWhereClauses,
+			"latitude IS NOT NULL AND longitude IS NOT NULL",
+			fmt.Sprintf("latitude BETWEEN %f AND %f", minLat, maxLat),
+			fmt.Sprintf("longitude BETWEEN %f AND %f", minLng, maxLng),
+		)
+
 		latIdx := argIdx
 		lngIdx := argIdx + 1
 		distanceExpr = fmt.Sprintf(`
-			CASE
-				WHEN latitude IS NOT NULL AND longitude IS NOT NULL AND (latitude != 0 OR longitude != 0) THEN
-					(6371 * acos(LEAST(1.0, GREATEST(-1.0,
-						cos(radians($%d)) * cos(radians(latitude)) * cos(radians(longitude) - radians($%d)) +
-						sin(radians($%d)) * sin(radians(latitude))
-					))))
-				ELSE NULL
-			END
+			(6371 * acos(LEAST(1.0, GREATEST(-1.0,
+				cos(radians($%d)) * cos(radians(latitude)) * cos(radians(longitude) - radians($%d)) +
+				sin(radians($%d)) * sin(radians(latitude))
+			))))
 		`, latIdx, lngIdx, latIdx)
-		args = append(args, *filter.Lat, *filter.Lng)
+		args = append(args, lat, lng)
 		argIdx += 2
+
+		// Strict hard spatial boundary: ONLY shops within user radius allowed
+		outerWhereClauses = append(outerWhereClauses, fmt.Sprintf("distance_km IS NOT NULL AND distance_km <= $%d", argIdx))
+		args = append(args, radius)
+		argIdx++
 	} else {
 		distanceExpr = "NULL::DOUBLE PRECISION"
 	}
 
 	innerWhereSQL := strings.Join(innerWhereClauses, " AND ")
-
-	var outerWhereClauses []string
-	if hasGeo && filter.RadiusKm != nil && *filter.RadiusKm > 0 {
-		outerWhereClauses = append(outerWhereClauses, fmt.Sprintf("(distance_km IS NULL OR distance_km <= $%d)", argIdx))
-		args = append(args, *filter.RadiusKm)
-		argIdx++
-	}
-
 	outerWhereSQL := ""
 	if len(outerWhereClauses) > 0 {
 		outerWhereSQL = "WHERE " + strings.Join(outerWhereClauses, " AND ")
 	}
 
+	countQuery := fmt.Sprintf(`
+		WITH filtered_shops AS (
+			SELECT id, %s AS distance_km
+			FROM shops
+			WHERE %s
+		)
+		SELECT COUNT(*)
+		FROM filtered_shops
+		%s
+	`, distanceExpr, innerWhereSQL, outerWhereSQL)
+
+	var totalCount int
+	if err := r.db.QueryRow(ctx, countQuery, args...).Scan(&totalCount); err != nil {
+		r.logger.Error("failed to count shops", zap.Error(err))
+		return nil, 0, err
+	}
+
+	if totalCount == 0 {
+		return []*model.Shop{}, 0, nil
+	}
+
 	orderBy := "is_open DESC, created_at DESC"
 	if hasGeo {
 		orderBy = "is_open DESC, (distance_km IS NULL) ASC, distance_km ASC, created_at DESC"
+	} else if filter.Search != "" {
+		cleanSearch := strings.TrimSpace(filter.Search)
+		if len(cleanSearch) >= 3 {
+			orderBy = fmt.Sprintf("is_open DESC, GREATEST(word_similarity($%d, name), similarity(name, $%d), word_similarity($%d, COALESCE(address, ''))) DESC, created_at DESC", argIdx, argIdx, argIdx)
+			args = append(args, cleanSearch)
+			argIdx++
+		}
 	}
 
 	query := fmt.Sprintf(`
@@ -621,27 +668,6 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 		ORDER BY %s
 		LIMIT $%d OFFSET $%d
 	`, distanceExpr, innerWhereSQL, outerWhereSQL, orderBy, argIdx, argIdx+1)
-
-	countQuery := fmt.Sprintf(`
-		WITH filtered_shops AS (
-			SELECT id, %s AS distance_km
-			FROM shops
-			WHERE %s
-		)
-		SELECT COUNT(*)
-		FROM filtered_shops
-		%s
-	`, distanceExpr, innerWhereSQL, outerWhereSQL)
-
-	var totalCount int
-	if err := r.db.QueryRow(ctx, countQuery, args...).Scan(&totalCount); err != nil {
-		r.logger.Error("failed to count shops", zap.Error(err))
-		return nil, 0, err
-	}
-
-	if totalCount == 0 {
-		return []*model.Shop{}, 0, nil
-	}
 
 	args = append(args, limit, offset)
 

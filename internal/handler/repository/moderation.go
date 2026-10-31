@@ -388,7 +388,7 @@ func (r *ModerationRepo) ListShopsForAdmin(ctx context.Context, status, search s
 
 	if search != "" {
 		searchTerm := "%" + strings.TrimSpace(search) + "%"
-		whereClauses = append(whereClauses, fmt.Sprintf("(name ILIKE $%d OR slug ILIKE $%d OR city ILIKE $%d OR phone ILIKE $%d)", argIdx, argIdx, argIdx, argIdx))
+		whereClauses = append(whereClauses, fmt.Sprintf("(name ILIKE $%d OR slug ILIKE $%d OR city ILIKE $%d OR phone ILIKE $%d OR COALESCE(address, '') ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx))
 		args = append(args, searchTerm)
 		argIdx++
 	}
