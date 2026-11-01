@@ -174,6 +174,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	// Public Browsing routes (customers & visitors)
 	r.Group(func(r chi.Router) {
 
+		r.Get("/sitemap.xml", sc.GenerateDynamicSitemapXML)                // Search Engine Crawlers Dynamic XML Sitemap
 		r.Get("/catalog/home-feed", sc.GetHomeFeed)                        // Customer
 		r.Get("/catalog/barcode/{code}", catalogc.Lookup)                  // Both - Master Barcode Catalog Lookup
 		r.Get("/catalog/lookup", catalogc.Lookup)                          // Both - query param fallback ?barcode=

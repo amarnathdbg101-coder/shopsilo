@@ -61,6 +61,17 @@ func TestShopControllerValidation(t *testing.T) {
 		}
 	})
 
+	t.Run("GenerateDynamicSitemapXML Graceful Handling", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/sitemap.xml", nil)
+		w := httptest.NewRecorder()
+
+		sc.GenerateDynamicSitemapXML(w, req)
+
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500 on nil service, got %d", w.Code)
+		}
+	})
+
 	t.Run("GetMyShop Unauthorized if no claims", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/shops/me", nil)
 		w := httptest.NewRecorder()
@@ -213,4 +224,12 @@ func TestShopControllerValidation(t *testing.T) {
 		}
 	})
 
+	t.Run("GenerateDynamicSitemapXML Service Unavailable", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/sitemap.xml", nil)
+		w := httptest.NewRecorder()
+		sc.GenerateDynamicSitemapXML(w, req)
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500 when service is nil, got %d", w.Code)
+		}
+	})
 }

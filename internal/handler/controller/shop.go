@@ -12,6 +12,7 @@ import (
 	"shopMe/internal/middleware"
 	"shopMe/internal/reuse"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -520,5 +521,65 @@ func (c *ShopController) GetHomeFeed(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reuse.Success(w, "Customer home feed retrieved successfully", feed)
+}
+
+// GenerateDynamicSitemapXML serves dynamic XML sitemap with all active shops and core URLs for search engine crawlers
+func (c *ShopController) GenerateDynamicSitemapXML(w http.ResponseWriter, r *http.Request) {
+	if c.service == nil {
+		reuse.Error(w, http.StatusInternalServerError, "shop service unavailable")
+		return
+	}
+	result, err := c.service.ListShops(r.Context(), dto.ShopFilter{
+		Limit: 5000,
+	})
+	if err != nil {
+		reuse.Error(w, http.StatusInternalServerError, "Failed to generate sitemap")
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+	sb.WriteString("<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n")
+
+	// Core marketing URLs
+	coreUrls := []struct {
+		loc      string
+		priority string
+		change   string
+	}{
+		{"https://shopsilo.in/", "1.0", "daily"},
+		{"https://shopsilo.in/explore", "0.9", "daily"},
+		{"https://shopsilo.in/deals", "0.9", "daily"},
+		{"https://shopsilo.in/khata", "0.8", "daily"},
+		{"https://shop.shopsilo.in/", "1.0", "daily"},
+		{"https://shop.shopsilo.in/register", "0.8", "weekly"},
+	}
+
+	for _, u := range coreUrls {
+		sb.WriteString("  <url>\n")
+		sb.WriteString("    <loc>" + u.loc + "</loc>\n")
+		sb.WriteString("    <changefreq>" + u.change + "</changefreq>\n")
+		sb.WriteString("    <priority>" + u.priority + "</priority>\n")
+		sb.WriteString("  </url>\n")
+	}
+
+	// Dynamic store profile URLs
+	if result != nil && result.Shops != nil {
+		for _, s := range result.Shops {
+			if s.Slug != "" {
+				sb.WriteString("  <url>\n")
+				sb.WriteString("    <loc>https://shopsilo.in/shop/" + s.Slug + "</loc>\n")
+				sb.WriteString("    <changefreq>daily</changefreq>\n")
+				sb.WriteString("    <priority>0.9</priority>\n")
+				sb.WriteString("  </url>\n")
+			}
+		}
+	}
+
+	sb.WriteString("</urlset>\n")
+
+	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(sb.String()))
 }
 
