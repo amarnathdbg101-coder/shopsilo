@@ -279,6 +279,32 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"CREATE INDEX IF NOT EXISTS idx_products_tags_trgm ON products USING gin (immutable_array_to_string(tags, ' ') gin_trgm_ops);",
 		"CREATE INDEX IF NOT EXISTS idx_products_attributes_trgm ON products USING gin ((attributes::text) gin_trgm_ops);",
 
+		// Step 5 Production Optimizations: PostGIS Spatial 2D Geography & GIST Index
+		"CREATE EXTENSION IF NOT EXISTS postgis;",
+		"ALTER TABLE shops ADD COLUMN IF NOT EXISTS location geography(Point, 4326);",
+		"UPDATE shops SET location = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND location IS NULL;",
+		"CREATE INDEX IF NOT EXISTS idx_shops_location_gist ON shops USING gist (location) WHERE is_active = true AND status = 'active';",
+		`CREATE OR REPLACE FUNCTION sync_shop_location()
+		RETURNS TRIGGER AS $$
+		BEGIN
+		    IF NEW.latitude IS NOT NULL AND NEW.longitude IS NOT NULL THEN
+		        NEW.location := ST_SetSRID(ST_MakePoint(NEW.longitude, NEW.latitude), 4326)::geography;
+		    ELSE
+		        NEW.location := NULL;
+		    END IF;
+		    RETURN NEW;
+		END;
+		$$ LANGUAGE plpgsql;`,
+		`DO $$
+		BEGIN
+		    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_sync_shop_location') THEN
+		        CREATE TRIGGER trg_sync_shop_location
+		        BEFORE INSERT OR UPDATE OF latitude, longitude ON shops
+		        FOR EACH ROW EXECUTE FUNCTION sync_shop_location();
+		    END IF;
+		END;
+		$$;`,
+
 		`CREATE TABLE IF NOT EXISTS procurement_items (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			shop_id UUID NOT NULL REFERENCES shops(id) ON DELETE CASCADE,

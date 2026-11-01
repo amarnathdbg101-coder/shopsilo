@@ -2,11 +2,17 @@ package services
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
 	"shopMe/internal/handler/dto"
 )
+
+func init() {
+	_ = os.Setenv("PORT", "8080")
+	_ = os.Setenv("DATABASE_URL", "postgres://test:test@localhost:5432/test")
+}
 
 func TestAICache(t *testing.T) {
 	key := "test_cache_key"

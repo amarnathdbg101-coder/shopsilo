@@ -215,5 +215,32 @@ func TestProductControllerValidation(t *testing.T) {
 			t.Fatalf("expected 400 Bad Request for missing product_id, got %d", w.Code)
 		}
 	})
-}
 
+	t.Run("List Products Invalid Geo Latitude", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/products?lat=-95.0&lng=77.3", nil)
+		w := httptest.NewRecorder()
+		pc.List(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request for lat < -90, got %d", w.Code)
+		}
+	})
+
+	t.Run("List Products Partial Geo Coordinates", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/products?lng=77.3", nil)
+		w := httptest.NewRecorder()
+		pc.List(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request for lng without lat, got %d", w.Code)
+		}
+	})
+
+	t.Run("FindNearby Out-of-bounds Latitude", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/products/nearby?lat=95.0&lng=77.3", nil)
+		w := httptest.NewRecorder()
+		pc.FindNearby(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request for lat > 90, got %d", w.Code)
+		}
+	})
+
+}

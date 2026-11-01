@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
 	"shopMe/internal/utils"
@@ -553,38 +552,28 @@ func (r *ShopRepo) FindAll(ctx context.Context, filter dto.ShopFilter) ([]*model
 
 		lat := *filter.Lat
 		lng := *filter.Lng
+		radiusMeters := radius * 1000.0
 
-		// Bounding box pre-filter strictly limits DB scan to shops in spatial range
-		latDiff := radius / 111.0
-		cosLat := math.Cos(lat * math.Pi / 180.0)
-		if cosLat == 0 {
-			cosLat = 0.0001
-		}
-		lngDiff := radius / (111.0 * math.Abs(cosLat))
-		minLat, maxLat := lat-latDiff, lat+latDiff
-		minLng, maxLng := lng-lngDiff, lng+lngDiff
+		// PostGIS Level 1 Spatial Architecture:
+		// Uses GIST R-Tree spatial index (idx_shops_location_gist) for microsecond lookups.
+		// ST_MakePoint takes (longitude, latitude) in WGS 84 (SRID 4326).
+		lngIdx := argIdx
+		latIdx := argIdx + 1
+		radMetersIdx := argIdx + 2
 
+		userPoint := fmt.Sprintf("ST_SetSRID(ST_MakePoint($%d, $%d), 4326)::geography", lngIdx, latIdx)
+
+		// Hard spatial fence: only shops strictly within radiusMeters using GIST 2D index
 		innerWhereClauses = append(innerWhereClauses,
-			"latitude IS NOT NULL AND longitude IS NOT NULL",
-			fmt.Sprintf("latitude BETWEEN %f AND %f", minLat, maxLat),
-			fmt.Sprintf("longitude BETWEEN %f AND %f", minLng, maxLng),
+			"location IS NOT NULL",
+			fmt.Sprintf("ST_DWithin(location, %s, $%d)", userPoint, radMetersIdx),
 		)
 
-		latIdx := argIdx
-		lngIdx := argIdx + 1
-		distanceExpr = fmt.Sprintf(`
-			(6371 * acos(LEAST(1.0, GREATEST(-1.0,
-				cos(radians($%d)) * cos(radians(latitude)) * cos(radians(longitude) - radians($%d)) +
-				sin(radians($%d)) * sin(radians(latitude))
-			))))
-		`, latIdx, lngIdx, latIdx)
-		args = append(args, lat, lng)
-		argIdx += 2
+		// Exact ellipsoidal distance in kilometers (divided by 1000.0)
+		distanceExpr = fmt.Sprintf("ROUND((ST_Distance(location, %s) / 1000.0)::numeric, 2)::double precision", userPoint)
 
-		// Strict hard spatial boundary: ONLY shops within user radius allowed
-		outerWhereClauses = append(outerWhereClauses, fmt.Sprintf("distance_km IS NOT NULL AND distance_km <= $%d", argIdx))
-		args = append(args, radius)
-		argIdx++
+		args = append(args, lng, lat, radiusMeters)
+		argIdx += 3
 	} else {
 		distanceExpr = "NULL::DOUBLE PRECISION"
 	}

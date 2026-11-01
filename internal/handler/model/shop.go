@@ -24,12 +24,17 @@ type Shop struct {
 	OpeningTime    string    `json:"opening_time,omitempty"`
 	ClosingTime    string    `json:"closing_time,omitempty"`
 	WeeklyOff      string    `json:"weekly_off,omitempty"`
-	IsOpen         bool      `json:"is_open"`
-	IsCurrentlyOpen bool     `json:"is_currently_open"`
-	IsActive       bool      `json:"is_active"`
-	DistanceKm     *float64  `json:"distance_km,omitempty"`
-	GoogleMapsURL  string    `json:"google_maps_url,omitempty"`
-	WhatsAppURL    string    `json:"whatsapp_url,omitempty"`
+	IsOpen          bool      `json:"is_open"`
+	IsCurrentlyOpen bool      `json:"is_currently_open"`
+	LiveStatus      string    `json:"live_status,omitempty"`     // OPEN, CLOSING_SOON, CLOSED, WEEKLY_OFF
+	StatusMessage   string    `json:"status_message,omitempty"`  // "Open now • Closes at 9:00 PM"
+	NextChangeAt    string    `json:"next_change_at,omitempty"`  // "Closes in 22 mins" or "Opens tomorrow at 9:00 AM"
+	MinutesToClose  int       `json:"minutes_to_close,omitempty"`// e.g. 22
+	IsActive        bool      `json:"is_active"`
+	DistanceKm      *float64  `json:"distance_km,omitempty"`
+	GoogleMapsURL   string    `json:"google_maps_url,omitempty"`
+	WhatsAppURL     string    `json:"whatsapp_url,omitempty"`
+	UPIPaymentURL   string    `json:"upi_payment_url,omitempty"` // Standard NPCI UPI Deep Link (upi://pay?...)
 	AverageRating  float64   `json:"average_rating"`
 	TotalReviews   int       `json:"total_reviews"`
 	Status            string    `json:"status"` // active, pending_review, flagged, suspended, banned

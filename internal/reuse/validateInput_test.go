@@ -90,3 +90,99 @@ func TestMaskPhoneNumber(t *testing.T) {
 		})
 	}
 }
+func TestParseAndValidateGeoParams(t *testing.T) {
+	t.Run("Clean non-geo query (both empty)", func(t *testing.T) {
+		res, err := ParseAndValidateGeoParams("", "", "", 10.0, 0.5, 30.0)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.HasGeo {
+			t.Errorf("expected HasGeo=false, got true")
+		}
+	})
+
+	t.Run("Valid coordinates inside India (Noida)", func(t *testing.T) {
+		res, err := ParseAndValidateGeoParams("28.58284729", "77.3110291", "15.0", 10.0, 0.5, 30.0)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.HasGeo {
+			t.Fatalf("expected HasGeo=true")
+		}
+		// Coordinate truncation to 5 decimal places
+		if *res.Lat != 28.58285 {
+			t.Errorf("expected rounded lat 28.58285, got %f", *res.Lat)
+		}
+		if *res.Lng != 77.31103 {
+			t.Errorf("expected rounded lng 77.31103, got %f", *res.Lng)
+		}
+		if *res.RadiusKm != 15.0 {
+			t.Errorf("expected radius 15.0, got %f", *res.RadiusKm)
+		}
+	})
+
+	t.Run("Partial coordinates rejected: lat without lng", func(t *testing.T) {
+		_, err := ParseAndValidateGeoParams("28.58", "", "", 10.0, 0.5, 30.0)
+		if err == nil {
+			t.Fatalf("expected error for partial coordinates, got nil")
+		}
+	})
+
+	t.Run("Partial coordinates rejected: lng without lat", func(t *testing.T) {
+		_, err := ParseAndValidateGeoParams("", "77.31", "", 10.0, 0.5, 30.0)
+		if err == nil {
+			t.Fatalf("expected error for partial coordinates, got nil")
+		}
+	})
+
+	t.Run("Latitude out of bounds (> 90)", func(t *testing.T) {
+		_, err := ParseAndValidateGeoParams("95.0", "77.31", "", 10.0, 0.5, 30.0)
+		if err == nil {
+			t.Fatalf("expected error for lat > 90, got nil")
+		}
+	})
+
+	t.Run("Latitude out of bounds (< -90)", func(t *testing.T) {
+		_, err := ParseAndValidateGeoParams("-91.0", "77.31", "", 10.0, 0.5, 30.0)
+		if err == nil {
+			t.Fatalf("expected error for lat < -90, got nil")
+		}
+	})
+
+	t.Run("Longitude out of bounds (> 180)", func(t *testing.T) {
+		_, err := ParseAndValidateGeoParams("28.58", "190.0", "", 10.0, 0.5, 30.0)
+		if err == nil {
+			t.Fatalf("expected error for lng > 180, got nil")
+		}
+	})
+
+	t.Run("Radius clamped to maximum (DoS prevention)", func(t *testing.T) {
+		res, err := ParseAndValidateGeoParams("28.58", "77.31", "5000.0", 10.0, 0.5, 30.0)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if *res.RadiusKm != 30.0 {
+			t.Errorf("expected radius clamped to 30.0, got %f", *res.RadiusKm)
+		}
+	})
+
+	t.Run("Radius clamped to minimum", func(t *testing.T) {
+		res, err := ParseAndValidateGeoParams("28.58", "77.31", "0.1", 10.0, 0.5, 30.0)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if *res.RadiusKm != 0.5 {
+			t.Errorf("expected radius clamped to 0.5, got %f", *res.RadiusKm)
+		}
+	})
+
+	t.Run("Default radius used when empty", func(t *testing.T) {
+		res, err := ParseAndValidateGeoParams("28.58", "77.31", "", 10.0, 0.5, 30.0)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if *res.RadiusKm != 10.0 {
+			t.Errorf("expected default radius 10.0, got %f", *res.RadiusKm)
+		}
+	})
+}

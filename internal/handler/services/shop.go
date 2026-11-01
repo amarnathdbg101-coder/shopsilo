@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"net/url"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
 	"shopMe/internal/handler/repository"
@@ -53,20 +54,28 @@ func (s *ShopService) SetAggregatedRepos(
 	s.loyaltyRepo = loyaltyRepo
 }
 
-// enrichShop adds convenient URLs for in-store physical visits (Google Maps navigation & WhatsApp inquiry).
+// enrichShop enriches shop model with real-time timings, Google Maps navigation, WhatsApp inquiry, and NPCI UPI deep link.
 func enrichShop(s *model.Shop) {
 	if s == nil {
 		return
 	}
 
-	// 1. Google Maps URL
+	// 1. Real-Time Store Timing State Machine (IST Clock Evaluation)
+	timing := utils.CalculateStoreLiveStatus(s.IsOpen, s.OpeningTime, s.ClosingTime, s.WeeklyOff)
+	s.IsCurrentlyOpen = timing.IsOpenNow
+	s.LiveStatus = string(timing.Status)
+	s.StatusMessage = timing.StatusMessage
+	s.NextChangeAt = timing.NextChangeAt
+	s.MinutesToClose = timing.MinutesToClose
+
+	// 2. Google Maps Navigation URL
 	if s.Latitude != nil && s.Longitude != nil {
 		s.GoogleMapsURL = fmt.Sprintf("https://www.google.com/maps/search/?api=1&query=%f,%f", *s.Latitude, *s.Longitude)
 	} else if s.Address != "" {
-		s.GoogleMapsURL = fmt.Sprintf("https://www.google.com/maps/search/?api=1&query=%s", strings.ReplaceAll(s.Address, " ", "+"))
+		s.GoogleMapsURL = fmt.Sprintf("https://www.google.com/maps/search/?api=1&query=%s", url.QueryEscape(s.Address))
 	}
 
-	// 2. WhatsApp URL
+	// 3. Structured WhatsApp URL with E.164 (+91) formatting
 	targetPhone := s.WhatsAppNumber
 	if targetPhone == "" {
 		targetPhone = s.Phone
@@ -79,10 +88,20 @@ func enrichShop(s *model.Shop) {
 			}
 		}
 		num := digits.String()
-		if num != "" {
-			greeting := fmt.Sprintf("Hello %s, I found your store on ShopMe!", s.Name)
-			s.WhatsAppURL = fmt.Sprintf("https://wa.me/%s?text=%s", num, strings.ReplaceAll(greeting, " ", "%20"))
+		if len(num) == 10 {
+			num = "91" + num // Standard India E.164 Country Code
 		}
+		if num != "" {
+			greeting := fmt.Sprintf("Namaste %s, I found your store on ShopSilo! I am browsing your live catalog: https://shopsilo.in/shop/%s", s.Name, s.Slug)
+			s.WhatsAppURL = fmt.Sprintf("https://wa.me/%s?text=%s", num, url.QueryEscape(greeting))
+		}
+	}
+
+	// 4. Standard NPCI UPI Deep Link (Merchant Category Code mc=5411 for Grocery & Retail)
+	if strings.TrimSpace(s.UPIID) != "" {
+		cleanUPI := strings.TrimSpace(s.UPIID)
+		encodedName := url.QueryEscape(s.Name)
+		s.UPIPaymentURL = fmt.Sprintf("upi://pay?pa=%s&pn=%s&mc=5411&cu=INR", cleanUPI, encodedName)
 	}
 }
 
@@ -470,7 +489,7 @@ func (s *ShopService) RestoreMyShop(ctx context.Context, userID, userEmail strin
 	return token, nil
 }
 
-// GenerateShopQRCode generates a scannable PNG QR code for the shop by slug.
+// GenerateShopQRCode generates a high-resolution, scannable PNG QR code for the shop by slug with O2O smart UTM tracking.
 func (s *ShopService) GenerateShopQRCode(ctx context.Context, slug string) ([]byte, error) {
 	shop, err := s.shopRepo.FindBySlug(ctx, slug)
 	if err != nil {
@@ -480,12 +499,11 @@ func (s *ShopService) GenerateShopQRCode(ctx context.Context, slug string) ([]by
 		return nil, err
 	}
 
-	// In production, this can point to the frontend web app or deep-link app URL
-	targetURL := fmt.Sprintf("https://shopsilo.in/shop/%s", shop.Slug)
-	return utils.GenerateQRCodePNG(targetURL, 300)
+	targetURL := fmt.Sprintf("https://shopsilo.in/s/%s?utm_source=counter_qr&utm_medium=standee&utm_campaign=o2o_storefront", shop.Slug)
+	return utils.GenerateQRCodePNG(targetURL, 512)
 }
 
-// GenerateMyShopQRCode generates a scannable PNG QR code for the authenticated shop owner.
+// GenerateMyShopQRCode generates a high-resolution, scannable PNG QR code for the authenticated shop owner.
 func (s *ShopService) GenerateMyShopQRCode(ctx context.Context, userID string) ([]byte, error) {
 	shop, err := s.shopRepo.FindByUserID(ctx, userID)
 	if err != nil {
@@ -495,8 +513,36 @@ func (s *ShopService) GenerateMyShopQRCode(ctx context.Context, userID string) (
 		return nil, err
 	}
 
-	targetURL := fmt.Sprintf("https://shopsilo.in/shop/%s", shop.Slug)
-	return utils.GenerateQRCodePNG(targetURL, 300)
+	targetURL := fmt.Sprintf("https://shopsilo.in/s/%s?utm_source=counter_qr&utm_medium=standee&utm_campaign=o2o_storefront", shop.Slug)
+	return utils.GenerateQRCodePNG(targetURL, 512)
+}
+
+// GenerateShopStandeePDF generates an executive A5 printable acrylic counter standee PDF for the shop by slug.
+func (s *ShopService) GenerateShopStandeePDF(ctx context.Context, slug string) ([]byte, error) {
+	shop, err := s.shopRepo.FindBySlug(ctx, slug)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, ErrShopNotFound
+		}
+		return nil, err
+	}
+
+	enrichShop(shop)
+	return utils.GenerateStoreStandeePDF(shop)
+}
+
+// GenerateMyShopStandeePDF generates an executive A5 printable acrylic counter standee PDF for the authenticated shop owner.
+func (s *ShopService) GenerateMyShopStandeePDF(ctx context.Context, userID string) ([]byte, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, ErrShopNotFound
+		}
+		return nil, err
+	}
+
+	enrichShop(shop)
+	return utils.GenerateStoreStandeePDF(shop)
 }
 
 // GetDailyDigest retrieves today's key retail digest numbers for the shop dashboard.

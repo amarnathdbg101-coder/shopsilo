@@ -1,7 +1,10 @@
 package reuse
 
 import (
+	"errors"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 
 	"github.com/go-playground/validator/v10"
@@ -98,4 +101,78 @@ func MaskPhoneNumber(phone string) string {
 	}
 	return trimmed[:1] + "***" + trimmed[len(trimmed)-2:]
 }
-
+// GeoQueryParams holds validated, sanitized, and clamped spatial parameters.
+type GeoQueryParams struct {
+	Lat      *float64
+	Lng      *float64
+	RadiusKm *float64
+	HasGeo   bool
+}
+
+// ParseAndValidateGeoParams extracts, validates, and clamps geospatial query parameters.
+// Guarantees:
+// 1. Both lat and lng must be provided together. Partial coordinates return an error.
+// 2. Latitude is strictly checked: -90.0 <= lat <= 90.0, not NaN, not Inf.
+// 3. Longitude is strictly checked: -180.0 <= lng <= 180.0, not NaN, not Inf.
+// 4. Clamps radius between minRadius (e.g. 0.5 km) and maxRadius (e.g. 30.0 km) to prevent DoS.
+// 5. Rounds coordinates to 5 decimal places (~1.1 meter accuracy) for privacy protection and cache consolidation.
+func ParseAndValidateGeoParams(latStr, lngStr, radStr string, defaultRadius, minRadius, maxRadius float64) (GeoQueryParams, error) {
+	latStr = strings.TrimSpace(latStr)
+	lngStr = strings.TrimSpace(lngStr)
+	radStr = strings.TrimSpace(radStr)
+
+	// If neither lat nor lng provided, geo query is inactive (clean non-geo browse)
+	if latStr == "" && lngStr == "" {
+		return GeoQueryParams{HasGeo: false}, nil
+	}
+
+	// Partial coordinates validation: both must be present
+	if latStr == "" || lngStr == "" {
+		return GeoQueryParams{}, errors.New("both latitude (lat) and longitude (lng) must be provided together")
+	}
+
+	lat, err := strconv.ParseFloat(latStr, 64)
+	if err != nil || math.IsNaN(lat) || math.IsInf(lat, 0) {
+		return GeoQueryParams{}, errors.New("invalid latitude: must be a valid decimal number")
+	}
+	if lat < -90.0 || lat > 90.0 {
+		return GeoQueryParams{}, errors.New("latitude out of range: must be between -90.0 and +90.0 degrees")
+	}
+
+	lng, err := strconv.ParseFloat(lngStr, 64)
+	if err != nil || math.IsNaN(lng) || math.IsInf(lng, 0) {
+		return GeoQueryParams{}, errors.New("invalid longitude: must be a valid decimal number")
+	}
+	if lng < -180.0 || lng > 180.0 {
+		return GeoQueryParams{}, errors.New("longitude out of range: must be between -180.0 and +180.0 degrees")
+	}
+
+	// Sanitize and round coordinates to 5 decimal places (~1.1 meter accuracy)
+	roundedLat := math.Round(lat*100000) / 100000
+	roundedLng := math.Round(lng*100000) / 100000
+
+	// Radius parsing and DoS clamping
+	radius := defaultRadius
+	if radius <= 0 {
+		radius = 10.0
+	}
+	if radStr != "" {
+		if rVal, rErr := strconv.ParseFloat(radStr, 64); rErr == nil && !math.IsNaN(rVal) && !math.IsInf(rVal, 0) {
+			radius = rVal
+		}
+	}
+
+	if minRadius > 0 && radius < minRadius {
+		radius = minRadius
+	}
+	if maxRadius > 0 && radius > maxRadius {
+		radius = maxRadius
+	}
+
+	return GeoQueryParams{
+		Lat:      &roundedLat,
+		Lng:      &roundedLng,
+		RadiusKm: &radius,
+		HasGeo:   true,
+	}, nil
+}

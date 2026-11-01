@@ -257,29 +257,22 @@ func (c *ShopController) List(w http.ResponseWriter, r *http.Request) {
 	city := query.Get("city")
 	pincode := query.Get("pincode")
 
-	var lat *float64
-	if latStr := query.Get("lat"); latStr != "" {
-		if val, err := strconv.ParseFloat(latStr, 64); err == nil {
-			lat = &val
-		}
-	}
-
-	var lng *float64
-	if lngStr := query.Get("lng"); lngStr != "" {
-		if val, err := strconv.ParseFloat(lngStr, 64); err == nil {
-			lng = &val
-		}
-	}
-
-	var radius *float64
 	radStr := query.Get("radius_km")
 	if radStr == "" {
 		radStr = query.Get("radius")
 	}
-	if radStr != "" {
-		if val, err := strconv.ParseFloat(radStr, 64); err == nil {
-			radius = &val
-		}
+
+	geo, err := reuse.ParseAndValidateGeoParams(query.Get("lat"), query.Get("lng"), radStr, 10.0, 0.5, 30.0)
+	if err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var lat, lng, radius *float64
+	if geo.HasGeo {
+		lat = geo.Lat
+		lng = geo.Lng
+		radius = geo.RadiusKm
 	}
 
 	page, _ := strconv.Atoi(query.Get("page"))
@@ -403,6 +396,54 @@ func (c *ShopController) GetMyShopQR(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(pngBytes)
 }
 
+// GetShopStandeePDF generates and downloads a printable A5 counter standee PDF for a shop by slug (Public)
+func (c *ShopController) GetShopStandeePDF(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	if slug == "" {
+		reuse.Error(w, http.StatusBadRequest, "shop slug is required")
+		return
+	}
+
+	pdfBytes, err := c.service.GenerateShopStandeePDF(r.Context(), slug)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "shop not found")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-counter-standee.pdf"`, slug))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(pdfBytes)
+}
+
+// GetMyShopStandeePDF generates and downloads a printable A5 counter standee PDF for the authenticated shop owner (Protected)
+func (c *ShopController) GetMyShopStandeePDF(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	pdfBytes, err := c.service.GenerateMyShopStandeePDF(r.Context(), claims.UserID)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", `attachment; filename="my-shop-counter-standee.pdf"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(pdfBytes)
+}
+
 // GetDailyDigest returns today's aggregated retail overview (Protected - Shop)
 func (c *ShopController) GetDailyDigest(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())
@@ -447,16 +488,15 @@ func (c *ShopController) GetMerchantDashboard(w http.ResponseWriter, r *http.Req
 
 // GetHomeFeed returns the consolidated customer storefront feed in 1 single HTTP call (Public)
 func (c *ShopController) GetHomeFeed(w http.ResponseWriter, r *http.Request) {
-	var lat, lng *float64
-	if latStr := r.URL.Query().Get("lat"); latStr != "" {
-		if val, err := strconv.ParseFloat(latStr, 64); err == nil {
-			lat = &val
-		}
+	geo, err := reuse.ParseAndValidateGeoParams(r.URL.Query().Get("lat"), r.URL.Query().Get("lng"), "", 10.0, 0.5, 30.0)
+	if err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
 	}
-	if lngStr := r.URL.Query().Get("lng"); lngStr != "" {
-		if val, err := strconv.ParseFloat(lngStr, 64); err == nil {
-			lng = &val
-		}
+	var lat, lng *float64
+	if geo.HasGeo {
+		lat = geo.Lat
+		lng = geo.Lng
 	}
 
 	city := r.URL.Query().Get("city")

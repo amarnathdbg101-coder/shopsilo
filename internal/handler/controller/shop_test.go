@@ -185,5 +185,32 @@ func TestShopControllerValidation(t *testing.T) {
 			t.Fatalf("expected 401 Unauthorized, got %d", w.Code)
 		}
 	})
-}
 
+	t.Run("List Shops Invalid Geo Latitude", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/shops?lat=95.0&lng=77.3", nil)
+		w := httptest.NewRecorder()
+		sc.List(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request for lat > 90, got %d", w.Code)
+		}
+	})
+
+	t.Run("List Shops Partial Geo Coordinates (lat without lng)", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/shops?lat=28.58", nil)
+		w := httptest.NewRecorder()
+		sc.List(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request for partial coords, got %d", w.Code)
+		}
+	})
+
+	t.Run("GetHomeFeed Invalid Geo Longitude", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/catalog/home-feed?lat=28.58&lng=195.0", nil)
+		w := httptest.NewRecorder()
+		sc.GetHomeFeed(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request for lng > 180, got %d", w.Code)
+		}
+	})
+
+}

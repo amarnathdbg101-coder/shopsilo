@@ -191,6 +191,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/shops/{id}", sc.GetByID)                                   // Customer
 		r.Get("/shops/slug/{slug}", sc.GetBySlug)                          // Customer
 		r.Get("/shops/{slug}/qr", sc.GetShopQR)                            // Customer
+		r.Get("/shops/{slug}/standee.pdf", sc.GetShopStandeePDF)           // Customer Printable Standee
 		r.Get("/shops/{slug}/products", pc.ListByShop)                     // Customer
 		r.Get("/shops/{slug}/live", wsc.ServePublicStorefrontWebSocket)    // Real-Time Storefront Live Channel
 		r.Get("/shops/{slug}/reviews", revc.List)                          // Customer
@@ -346,6 +347,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/shops/me/branches", sc.ListMyBranches)                                          // Shop
 		r.Get("/shops/me/dashboard", sc.GetMerchantDashboard)                                  // Shop
 		r.Get("/shops/me/qr", sc.GetMyShopQR)                                                   // Shop
+		r.Get("/shops/me/standee.pdf", sc.GetMyShopStandeePDF)                                     // Shop Printable Standee
 		r.Get("/shops/me/digest", sc.GetDailyDigest)                                            // Shop
 		r.Put("/shops/me", sc.UpdateMyShop)                                                     // Shop
 		r.Patch("/shops/me/status", sc.ToggleStatus)                                            // Shop

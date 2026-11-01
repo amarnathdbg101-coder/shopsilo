@@ -231,6 +231,57 @@ func CleanSearchQuery(q string) string {
 	return strings.Join(strings.Fields(sb.String()), " ")
 }
 
+// hinglishStopwords contains common Hindi/Hinglish colloquial conversational stopwords
+// and fillers that should not be used as mandatory search terms (e.g., "amul ka doodh" -> "amul", "doodh").
+var hinglishStopwords = map[string]struct{}{
+	"ka":      {},
+	"ki":      {},
+	"ke":      {},
+	"ko":      {},
+	"se":      {},
+	"me":      {},
+	"mein":    {},
+	"par":     {},
+	"aur":     {},
+	"ya":      {},
+	"chahiye": {},
+	"bhai":    {},
+	"wala":    {},
+	"wali":    {},
+	"wale":    {},
+	"vale":    {},
+	"sabse":   {},
+	"sasta":   {},
+	"accha":   {},
+	"achha":   {},
+	"packet":  {},
+	"dabba":   {},
+	"pauwa":   {},
+}
+
+// IsHinglishStopword checks if a word is an everyday Hinglish conversational filler.
+func IsHinglishStopword(w string) bool {
+	_, ok := hinglishStopwords[strings.ToLower(strings.TrimSpace(w))]
+	return ok
+}
+
+// NormalizeHinglishPhonetic applies standard phonetic soundex rules to Indian colloquial spellings:
+// - ee -> i (e.g. "cheeni" -> "chini", "paneer" -> "panir")
+// - oo -> u (e.g. "doodh" -> "dudh", "sooji" -> "suji")
+// - sh -> s (e.g. "shakkar" -> "sakkar")
+// - z -> j (e.g. "zeera" -> "jeera")
+func NormalizeHinglishPhonetic(w string) string {
+	w = strings.ToLower(strings.TrimSpace(w))
+	if len(w) < 3 {
+		return w
+	}
+	w = strings.ReplaceAll(w, "ee", "i")
+	w = strings.ReplaceAll(w, "oo", "u")
+	w = strings.ReplaceAll(w, "sh", "s")
+	w = strings.ReplaceAll(w, "z", "j")
+	return w
+}
+
 // SearchTermGroup represents a group of synonyms for a given search word.
 // In SQL: (field LIKE '%term1%' OR field LIKE '%term2%')
 type SearchTermGroup struct {
@@ -238,11 +289,11 @@ type SearchTermGroup struct {
 }
 
 // ExpandHinglishSearchGroups breaks a multi-word or single-word search query into
-// phonetic/bilingual synonym groups.
+// phonetic/bilingual synonym groups while stripping colloquial stopwords.
 // For example:
-// "amul doodh" -> Group 1: ["amul"], Group 2: ["doodh", "milk", "dudh", "dairy"]
+// "amul ka doodh" -> Group 1: ["amul"], Group 2: ["doodh", "milk", "dudh", "dairy"]
 // "fortune tel" -> Group 1: ["fortune"], Group 2: ["tel", "oil", "mustard", "sarson"]
-// "cheeni" -> Group 1: ["cheeni", "sugar", "chini", "shakkar"]
+// "cheeni chahiye" -> Group 1: ["cheeni", "sugar", "chini", "shakkar"]
 func ExpandHinglishSearchGroups(rawQuery string) []SearchTermGroup {
 	cleaned := CleanSearchQuery(rawQuery)
 	if cleaned == "" {
@@ -259,19 +310,38 @@ func ExpandHinglishSearchGroups(rawQuery string) []SearchTermGroup {
 		return []SearchTermGroup{{Terms: syns}}
 	}
 
+	// 2. Filter out Hinglish conversational stopwords unless ALL words are stopwords
+	var nonStopwords []string
+	for _, w := range words {
+		if !IsHinglishStopword(w) {
+			nonStopwords = append(nonStopwords, w)
+		}
+	}
+	if len(nonStopwords) > 0 {
+		words = nonStopwords
+	}
+
 	var groups []SearchTermGroup
 	for _, word := range words {
 		if len(word) == 0 {
 			continue
 		}
 
-		// Look up word in dictionary
+		// 3. Direct lookup in Hinglish dictionary
 		if syns, ok := hinglishDictionary[word]; ok {
 			groups = append(groups, SearchTermGroup{Terms: syns})
-		} else {
-			// Plain word fallback (matches word itself)
-			groups = append(groups, SearchTermGroup{Terms: []string{word}})
+			continue
 		}
+
+		// 4. Phonetic normalized lookup (e.g. "cheeni" -> "chini", "sooji" -> "suji")
+		normalized := NormalizeHinglishPhonetic(word)
+		if syns, ok := hinglishDictionary[normalized]; ok {
+			groups = append(groups, SearchTermGroup{Terms: syns})
+			continue
+		}
+
+		// 5. Plain word fallback (matches word itself)
+		groups = append(groups, SearchTermGroup{Terms: []string{word}})
 	}
 
 	return groups

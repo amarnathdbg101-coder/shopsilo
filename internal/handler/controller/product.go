@@ -348,22 +348,29 @@ func (c *ProductController) List(w http.ResponseWriter, r *http.Request) {
 		limit = 12
 	}
 
+	radStr := query.Get("radius_km")
+	if radStr == "" {
+		radStr = query.Get("radius")
+	}
+
+	geo, err := reuse.ParseAndValidateGeoParams(query.Get("lat"), query.Get("lng"), radStr, 10.0, 0.5, 30.0)
+	if err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	var lat, lng, radiusKm *float64
-	if latVal, err := strconv.ParseFloat(query.Get("lat"), 64); err == nil {
-		lat = &latVal
-	}
-	if lngVal, err := strconv.ParseFloat(query.Get("lng"), 64); err == nil {
-		lng = &lngVal
-	}
-	if radVal, err := strconv.ParseFloat(query.Get("radius_km"), 64); err == nil && radVal > 0 {
-		radiusKm = &radVal
-	} else if radVal, err := strconv.ParseFloat(query.Get("radius"), 64); err == nil && radVal > 0 {
-		radiusKm = &radVal
+	if geo.HasGeo {
+		lat = geo.Lat
+		lng = geo.Lng
+		radiusKm = geo.RadiusKm
 	}
 	city := query.Get("city")
+	barcode := strings.TrimSpace(query.Get("barcode"))
 
 	filter := dto.ProductFilter{
 		Search:     search,
+		Barcode:    barcode,
 		CategoryID: categoryID,
 		ShopID:     shopID,
 		MinPrice:   minPrice,
@@ -422,8 +429,10 @@ func (c *ProductController) ListMyShopProducts(w http.ResponseWriter, r *http.Re
 		search = query.Get("search")
 	}
 
+	barcode := strings.TrimSpace(query.Get("barcode"))
 	filter := dto.ProductFilter{
 		ShopID:     shop.ID,
+		Barcode:    barcode,
 		Search:     search,
 		CategoryID: func() string {
 			if c := query.Get("category_id"); c != "" { return c }
@@ -485,8 +494,10 @@ func (c *ProductController) ListByShop(w http.ResponseWriter, r *http.Request) {
 		sortBy = query.Get("sort")
 	}
 
+	barcode := strings.TrimSpace(query.Get("barcode"))
 	filter := dto.ProductFilter{
 		ShopID:     shop.ID,
+		Barcode:    barcode,
 		Search:     search,
 		CategoryID: func() string {
 			if c := query.Get("category_id"); c != "" { return c }
@@ -515,28 +526,24 @@ func (c *ProductController) ListByShop(w http.ResponseWriter, r *http.Request) {
 func (c *ProductController) FindNearby(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 
-	latStr := query.Get("lat")
-	lngStr := query.Get("lng")
-	if latStr == "" || lngStr == "" {
+	radStr := query.Get("radius_km")
+	if radStr == "" {
+		radStr = query.Get("radius")
+	}
+
+	geo, err := reuse.ParseAndValidateGeoParams(query.Get("lat"), query.Get("lng"), radStr, 10.0, 0.5, 30.0)
+	if err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !geo.HasGeo {
 		reuse.Error(w, http.StatusBadRequest, "latitude (lat) and longitude (lng) are required query parameters")
 		return
 	}
 
-	lat, err := strconv.ParseFloat(latStr, 64)
-	if err != nil {
-		reuse.Error(w, http.StatusBadRequest, "invalid latitude")
-		return
-	}
-	lng, err := strconv.ParseFloat(lngStr, 64)
-	if err != nil {
-		reuse.Error(w, http.StatusBadRequest, "invalid longitude")
-		return
-	}
-
-	radiusKm, _ := strconv.ParseFloat(query.Get("radius_km"), 64)
-	if radiusKm <= 0 {
-		radiusKm = 10
-	}
+	lat := *geo.Lat
+	lng := *geo.Lng
+	radiusKm := *geo.RadiusKm
 
 	page, _ := strconv.Atoi(query.Get("page"))
 	limit, _ := strconv.Atoi(query.Get("limit"))
@@ -928,8 +935,10 @@ func parseProductFilter(r *http.Request) dto.ProductFilter {
 		limit = 10
 	}
 
+	barcode := strings.TrimSpace(query.Get("barcode"))
 	return dto.ProductFilter{
 		Search:     search,
+		Barcode:    barcode,
 		CategoryID: categoryID,
 		ShopID:     shopID,
 		MinPrice:   minPrice,

@@ -49,3 +49,60 @@ func TestHinglishExpansion(t *testing.T) {
 		}
 	}
 }
+
+func TestHinglishStopwordStripping(t *testing.T) {
+	t.Run("Strips 'ka' stopword from conversational search", func(t *testing.T) {
+		groups := ExpandHinglishSearchGroups("amul ka doodh")
+		if len(groups) != 2 {
+			t.Fatalf("expected 2 search groups (amul, doodh), got %d: %+v", len(groups), groups)
+		}
+		// Group 1 should be amul
+		if len(groups[0].Terms) != 1 || groups[0].Terms[0] != "amul" {
+			t.Errorf("group 1 expected ['amul'], got %v", groups[0].Terms)
+		}
+		// Group 2 should expand doodh -> milk
+		hasMilk := false
+		for _, term := range groups[1].Terms {
+			if term == "milk" {
+				hasMilk = true
+			}
+		}
+		if !hasMilk {
+			t.Errorf("group 2 expected to contain 'milk', got %v", groups[1].Terms)
+		}
+	})
+
+	t.Run("Strips 'chahiye' and 'sabse sasta' fillers", func(t *testing.T) {
+		groups := ExpandHinglishSearchGroups("sabse sasta tel chahiye")
+		if len(groups) != 1 {
+			t.Fatalf("expected 1 group (tel), got %d: %+v", len(groups), groups)
+		}
+		hasOil := false
+		for _, term := range groups[0].Terms {
+			if term == "oil" {
+				hasOil = true
+			}
+		}
+		if !hasOil {
+			t.Errorf("expected group to contain 'oil', got %v", groups[0].Terms)
+		}
+	})
+}
+
+func TestHinglishPhoneticNormalization(t *testing.T) {
+	t.Run("Phonetic 'zeera' matches 'jeera' / 'cumin'", func(t *testing.T) {
+		groups := ExpandHinglishSearchGroups("zeera")
+		if len(groups) != 1 {
+			t.Fatalf("expected 1 group, got %d", len(groups))
+		}
+		hasCumin := false
+		for _, term := range groups[0].Terms {
+			if term == "cumin" {
+				hasCumin = true
+			}
+		}
+		if !hasCumin {
+			t.Errorf("expected zeera to expand to cumin, got %v", groups[0].Terms)
+		}
+	})
+}

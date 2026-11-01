@@ -55,6 +55,7 @@ type UpdateProductRequest struct {
 
 type ProductFilter struct {
 	Search     string   `json:"search,omitempty"`
+	Barcode    string   `json:"barcode,omitempty"`
 	CategoryID string   `json:"category_id,omitempty"`
 	ShopID     string   `json:"shop_id,omitempty"`
 	MinPrice   float64  `json:"min_price,omitempty"`
