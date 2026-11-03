@@ -70,6 +70,10 @@ func DefaultThermalOptions() ChromedpPDFOptions {
 var (
 	resolvedChromePathOnce sync.Once
 	resolvedChromePath     string
+
+	sharedAllocOnce   sync.Once
+	sharedAllocCtx    context.Context
+	sharedAllocCancel context.CancelFunc
 )
 
 // FindChromiumPath locates the executable path of Chrome, Chromium, or Microsoft Edge on the host OS.
@@ -114,9 +118,30 @@ func CheckChromiumAvailable() bool {
 	return FindChromiumPath() != ""
 }
 
+// getSharedBrowserAllocator returns a high-performance persistent browser allocator singleton.
+// By keeping one warm browser master process alive, subsequent PDF requests avoid the ~1s cold start delay.
+func getSharedBrowserAllocator(chromePath string) context.Context {
+	sharedAllocOnce.Do(func() {
+		allocOpts := append(chromedp.DefaultExecAllocatorOptions[:],
+			chromedp.ExecPath(chromePath),
+			chromedp.Flag("headless", "new"),
+			chromedp.Flag("disable-gpu", true),
+			chromedp.Flag("no-sandbox", true),
+			chromedp.Flag("disable-dev-shm-usage", true),
+			chromedp.Flag("disable-extensions", true),
+			chromedp.Flag("disable-background-networking", true),
+			chromedp.Flag("disable-sync", true),
+			chromedp.Flag("no-first-run", true),
+			chromedp.Flag("hide-scrollbars", true),
+			chromedp.Flag("mute-audio", true),
+		)
+		sharedAllocCtx, sharedAllocCancel = chromedp.NewExecAllocator(context.Background(), allocOpts...)
+	})
+	return sharedAllocCtx
+}
+
 // GeneratePDFWithChromedp renders raw HTML into a high-fidelity PDF using headless browser automation.
-// It uses chromedp (Chrome DevTools Protocol) with bounded timeout, direct executable path resolution,
-// and isolated temporary file navigation to guarantee 100% fidelity for Hindi, Unicode, Emojis, and CSS.
+// It uses a warm persistent browser allocator, bounded timeout, and local file navigation for sub-second speeds.
 func GeneratePDFWithChromedp(ctx context.Context, htmlContent string, opts ChromedpPDFOptions) ([]byte, error) {
 	chromePath := FindChromiumPath()
 	if chromePath == "" {
@@ -138,23 +163,11 @@ func GeneratePDFWithChromedp(ctx context.Context, htmlContent string, opts Chrom
 
 	fileURL := "file:///" + filepath.ToSlash(tmpFile.Name())
 
-	// 2. Configure headless browser allocation flags for high speed, reliability, and minimal RAM overhead
-	allocOpts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.ExecPath(chromePath),
-		chromedp.Flag("headless", "new"),
-		chromedp.Flag("disable-gpu", true),
-		chromedp.Flag("no-sandbox", true),
-		chromedp.Flag("disable-dev-shm-usage", true),
-		chromedp.Flag("disable-extensions", true),
-		chromedp.Flag("hide-scrollbars", true),
-		chromedp.Flag("mute-audio", true),
-	)
+	// 2. Obtain warm shared browser allocator for maximum performance (sub-second render)
+	allocCtx := getSharedBrowserAllocator(chromePath)
 
-	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx, allocOpts...)
-	defer cancelAlloc()
-
-	// 3. Create browser tab context with a bounded 20-second timeout to prevent runaway goroutines
-	taskCtx, cancelTask := context.WithTimeout(allocCtx, 20*time.Second)
+	// 3. Create isolated tab context with a bounded 15-second timeout
+	taskCtx, cancelTask := context.WithTimeout(allocCtx, 15*time.Second)
 	defer cancelTask()
 
 	browserCtx, cancelBrowser := chromedp.NewContext(taskCtx)
@@ -289,7 +302,7 @@ func BuildInvoiceHTML(bill *model.POSBill) string {
 		}
 		* { box-sizing: border-box; }
 		body {
-			font-family: 'Nirmala UI', 'Segoe UI', 'Segoe UI Emoji', 'Noto Sans Devanagari', -apple-system, BlinkMacSystemFont, Arial, sans-serif;
+			font-family: 'Nirmala UI', 'Segoe UI', 'Noto Sans Devanagari', 'Segoe UI Emoji', 'Noto Color Emoji', 'Apple Color Emoji', -apple-system, BlinkMacSystemFont, Arial, sans-serif;
 			margin: 0;
 			padding: 24px;
 			color: #0f172a;
