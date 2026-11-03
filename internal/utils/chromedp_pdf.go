@@ -5,9 +5,9 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -18,17 +18,17 @@ import (
 
 // ChromedpPDFOptions controls page layout, dimensions and print settings for browser-based PDF generation.
 type ChromedpPDFOptions struct {
-	PaperWidthInches  float64 // e.g. 5.83 for A5, 3.15 for 80mm POS Thermal, 8.27 for A4
-	PaperHeightInches float64 // e.g. 8.27 for A5, 0 (or large) for continuous thermal roll, 11.69 for A4
-	MarginTopInches   float64
+	PaperWidthInches   float64 // e.g. 5.83 for A5, 3.15 for 80mm POS Thermal, 8.27 for A4
+	PaperHeightInches  float64 // e.g. 8.27 for A5, 11.69 for A4, 0 for continuous roll
+	MarginTopInches    float64
 	MarginBottomInches float64
-	MarginLeftInches  float64
-	MarginRightInches float64
-	Landscape         bool
-	PrintBackground   bool
+	MarginLeftInches   float64
+	MarginRightInches  float64
+	Landscape          bool
+	PrintBackground    bool
 }
 
-// DefaultA5Options returns print settings tailored for executive A5 counter bills (148mm x 210mm).
+// DefaultA5Options returns print settings tailored for executive A5 counter bills & standees (148mm x 210mm).
 func DefaultA5Options() ChromedpPDFOptions {
 	return ChromedpPDFOptions{
 		PaperWidthInches:   5.83,
@@ -37,6 +37,19 @@ func DefaultA5Options() ChromedpPDFOptions {
 		MarginBottomInches: 0.2,
 		MarginLeftInches:   0.25,
 		MarginRightInches:  0.25,
+		PrintBackground:    true,
+	}
+}
+
+// DefaultA4Options returns print settings tailored for standard A4 reports, statements, and procurement sheets (210mm x 297mm).
+func DefaultA4Options() ChromedpPDFOptions {
+	return ChromedpPDFOptions{
+		PaperWidthInches:   8.27,
+		PaperHeightInches:  11.69,
+		MarginTopInches:    0.25,
+		MarginBottomInches: 0.25,
+		MarginLeftInches:   0.3,
+		MarginRightInches:  0.3,
 		PrintBackground:    true,
 	}
 }
@@ -54,16 +67,14 @@ func DefaultThermalOptions() ChromedpPDFOptions {
 	}
 }
 
-// isChromeAvailableCache caches whether a chromium executable exists to avoid repeated exec.LookPath overhead.
 var (
-	isChromeAvailableOnce sync.Once
-	isChromeAvailable     bool
+	resolvedChromePathOnce sync.Once
+	resolvedChromePath     string
 )
 
-// CheckChromiumAvailable verifies if a headless browser executable is discoverable on the host OS.
-func CheckChromiumAvailable() bool {
-	isChromeAvailableOnce.Do(func() {
-		// Common executable names across Windows, Linux, and macOS
+// FindChromiumPath locates the executable path of Chrome, Chromium, or Microsoft Edge on the host OS.
+func FindChromiumPath() string {
+	resolvedChromePathOnce.Do(func() {
 		candidates := []string{
 			"chrome",
 			"chrome.exe",
@@ -73,34 +84,63 @@ func CheckChromiumAvailable() bool {
 			"chromium-browser",
 			`C:\Program Files\Google\Chrome\Application\chrome.exe`,
 			`C:\Program Files (x86)\Google\Chrome\Application\chrome.exe`,
+			`C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`,
 			`C:\Program Files\Microsoft\Edge\Application\msedge.exe`,
+			"/usr/bin/google-chrome",
+			"/usr/bin/google-chrome-stable",
+			"/usr/bin/chromium",
+			"/usr/bin/chromium-browser",
+			"/snap/bin/chromium",
+			"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+			"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
 		}
 
 		for _, name := range candidates {
-			if _, err := exec.LookPath(name); err == nil {
-				isChromeAvailable = true
+			if path, err := exec.LookPath(name); err == nil {
+				resolvedChromePath = path
 				return
 			}
 			if _, err := os.Stat(name); err == nil {
-				isChromeAvailable = true
+				resolvedChromePath = name
 				return
 			}
 		}
-		isChromeAvailable = false
 	})
-	return isChromeAvailable
+	return resolvedChromePath
+}
+
+// CheckChromiumAvailable verifies if a headless browser executable is discoverable on the host OS.
+func CheckChromiumAvailable() bool {
+	return FindChromiumPath() != ""
 }
 
 // GeneratePDFWithChromedp renders raw HTML into a high-fidelity PDF using headless browser automation.
-// It uses chromedp (Chrome DevTools Protocol) with bounded timeout and automatic context cleanup.
+// It uses chromedp (Chrome DevTools Protocol) with bounded timeout, direct executable path resolution,
+// and isolated temporary file navigation to guarantee 100% fidelity for Hindi, Unicode, Emojis, and CSS.
 func GeneratePDFWithChromedp(ctx context.Context, htmlContent string, opts ChromedpPDFOptions) ([]byte, error) {
-	// Fallback check if Chrome/Chromium is not installed
-	if !CheckChromiumAvailable() {
-		return nil, fmt.Errorf("chromium binary not found on host system")
+	chromePath := FindChromiumPath()
+	if chromePath == "" {
+		return nil, fmt.Errorf("chromium binary not found on host system (please ensure Google Chrome or Microsoft Edge is installed)")
 	}
 
-	// 1. Configure headless browser allocation flags for high speed and minimal RAM overhead
+	// 1. Write HTML to isolated temp file for instant, reliable local file navigation
+	tmpFile, err := os.CreateTemp("", "shopsilo-pdf-*.html")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp html file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.WriteString(htmlContent); err != nil {
+		_ = tmpFile.Close()
+		return nil, fmt.Errorf("failed to write html to temp file: %w", err)
+	}
+	_ = tmpFile.Close()
+
+	fileURL := "file:///" + filepath.ToSlash(tmpFile.Name())
+
+	// 2. Configure headless browser allocation flags for high speed, reliability, and minimal RAM overhead
 	allocOpts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.ExecPath(chromePath),
 		chromedp.Flag("headless", "new"),
 		chromedp.Flag("disable-gpu", true),
 		chromedp.Flag("no-sandbox", true),
@@ -113,15 +153,12 @@ func GeneratePDFWithChromedp(ctx context.Context, htmlContent string, opts Chrom
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx, allocOpts...)
 	defer cancelAlloc()
 
-	// 2. Create browser tab context with a strict 10-second timeout to prevent runaway goroutines
-	taskCtx, cancelTask := context.WithTimeout(allocCtx, 10*time.Second)
+	// 3. Create browser tab context with a bounded 20-second timeout to prevent runaway goroutines
+	taskCtx, cancelTask := context.WithTimeout(allocCtx, 20*time.Second)
 	defer cancelTask()
 
 	browserCtx, cancelBrowser := chromedp.NewContext(taskCtx)
 	defer cancelBrowser()
-
-	// 3. Build data URI to load HTML without needing an external HTTP webserver
-	dataURL := "data:text/html;charset=utf-8," + url.PathEscape(htmlContent)
 
 	// 4. Configure PDF print options
 	pdfOptions := []chromedp.PDFOption{
@@ -141,11 +178,8 @@ func GeneratePDFWithChromedp(ctx context.Context, htmlContent string, opts Chrom
 		pdfOptions = append(pdfOptions, chromedp.PDFLandscape())
 	}
 
-	// 5. Navigate to data URL and wait for DOM body
-	if err := chromedp.Do(browserCtx,
-		chromedp.Navigate(dataURL),
-		chromedp.WaitVisible(chromedp.CSS("body")),
-	); err != nil {
+	// 5. Navigate to file URL (Navigate automatically waits for page load event)
+	if err := chromedp.Do(browserCtx, chromedp.Navigate(fileURL)); err != nil {
 		return nil, fmt.Errorf("chromedp navigation failed: %w", err)
 	}
 
@@ -158,17 +192,17 @@ func GeneratePDFWithChromedp(ctx context.Context, htmlContent string, opts Chrom
 	return pdfBuffer, nil
 }
 
-// BuildInvoiceHTML generates a modern, bilingual HTML5 invoice template with Unicode (Hindi/English) support.
+// BuildInvoiceHTML generates an ultra-polished, bilingual HTML5 invoice template with full Hindi & Emoji support.
 func BuildInvoiceHTML(bill *model.POSBill) string {
-	storeName := "Retail Store"
+	storeName := "ShopSilo Retail Store"
 	storePhone := ""
 	storeAddress := ""
 	storeCity := ""
 	storePincode := ""
 
 	if bill.Shop != nil {
-		if bill.Shop.Name != "" {
-			storeName = bill.Shop.Name
+		if strings.TrimSpace(bill.Shop.Name) != "" {
+			storeName = strings.TrimSpace(bill.Shop.Name)
 		}
 		storePhone = bill.Shop.Phone
 		if bill.Shop.WhatsAppNumber != "" {
@@ -179,7 +213,7 @@ func BuildInvoiceHTML(bill *model.POSBill) string {
 		storePincode = bill.Shop.Pincode
 	}
 
-	customerDisplay := "Walk-in Customer"
+	customerDisplay := "Walk-in Customer (काउंटर ग्राहक)"
 	if bill.CustomerPhone != "" {
 		customerDisplay = maskPhone(bill.CustomerPhone)
 	}
@@ -200,14 +234,14 @@ func BuildInvoiceHTML(bill *model.POSBill) string {
 		}
 		rowsBuilder.WriteString(fmt.Sprintf(`
 			<tr style="background-color: %s;">
-				<td style="padding: 7px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11px; text-align: center; color: #64748b;">%d</td>
-				<td style="padding: 7px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12px; font-weight: 600; color: #1e293b;">
+				<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11px; text-align: center; color: #64748b;">%d</td>
+				<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12px; font-weight: 600; color: #0f172a;">
 					%s
 					%s
 				</td>
-				<td style="padding: 7px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11px; text-align: center; color: #334155;">%d</td>
-				<td style="padding: 7px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11px; text-align: right; color: #334155;">&#8377;%.2f</td>
-				<td style="padding: 7px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12px; font-weight: 700; text-align: right; color: #0f172a;">&#8377;%.2f</td>
+				<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11px; text-align: center; color: #334155; font-weight: 600;">%d</td>
+				<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11px; text-align: right; color: #334155;">&#8377;%.2f</td>
+				<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12px; font-weight: 700; text-align: right; color: #0f172a;">&#8377;%.2f</td>
 			</tr>
 		`, bg, i+1, it.ProductName, formatSKUBadge(it.ProductSKU), it.Quantity, it.UnitPrice, it.TotalPrice))
 	}
@@ -215,15 +249,15 @@ func BuildInvoiceHTML(bill *model.POSBill) string {
 	// Split Tender Breakdown
 	var splitHTML strings.Builder
 	if bill.PaymentMethod == "split" || bill.CashAmount > 0 || bill.OnlineAmount > 0 || bill.KhataAmount > 0 {
-		splitHTML.WriteString(`<div style="margin-top: 10px; padding: 8px 12px; background-color: #f1f5f9; border-radius: 8px; font-size: 11px;">`)
+		splitHTML.WriteString(`<div style="margin-top: 10px; padding: 10px 14px; background-color: #f1f5f9; border-radius: 8px; font-size: 11px;">`)
 		if bill.CashAmount > 0 {
-			splitHTML.WriteString(fmt.Sprintf(`<div style="display:flex; justify-content:space-between; margin-bottom:3px;"><span style="color:#64748b;">Paid in Cash:</span><span style="font-weight:700;">&#8377;%.2f</span></div>`, bill.CashAmount))
+			splitHTML.WriteString(fmt.Sprintf(`<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span style="color:#64748b;">💵 Paid in Cash (नकद):</span><span style="font-weight:700;">&#8377;%.2f</span></div>`, bill.CashAmount))
 		}
 		if bill.OnlineAmount > 0 {
-			splitHTML.WriteString(fmt.Sprintf(`<div style="display:flex; justify-content:space-between; margin-bottom:3px;"><span style="color:#64748b;">Paid via UPI / Online:</span><span style="font-weight:700; color:#2563eb;">&#8377;%.2f</span></div>`, bill.OnlineAmount))
+			splitHTML.WriteString(fmt.Sprintf(`<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span style="color:#64748b;">💳 UPI / Online (ऑनलाइन):</span><span style="font-weight:700; color:#2563eb;">&#8377;%.2f</span></div>`, bill.OnlineAmount))
 		}
 		if bill.KhataAmount > 0 {
-			splitHTML.WriteString(fmt.Sprintf(`<div style="display:flex; justify-content:space-between;"><span style="color:#dc2626; font-weight:600;">Khata (Udhar Due):</span><span style="font-weight:800; color:#dc2626;">&#8377;%.2f</span></div>`, bill.KhataAmount))
+			splitHTML.WriteString(fmt.Sprintf(`<div style="display:flex; justify-content:space-between;"><span style="color:#dc2626; font-weight:600;">📒 Khata Due (उधार):</span><span style="font-weight:800; color:#dc2626;">&#8377;%.2f</span></div>`, bill.KhataAmount))
 		}
 		splitHTML.WriteString(`</div>`)
 	}
@@ -232,7 +266,7 @@ func BuildInvoiceHTML(bill *model.POSBill) string {
 	if bill.DiscountAmount > 0 {
 		discountRow = fmt.Sprintf(`
 			<div style="display: flex; justify-content: space-between; font-size: 12px; color: #16a34a; font-weight: 600; margin-bottom: 4px;">
-				<span>Discount Savings:</span>
+				<span>🏷️ Discount Savings (छूट बचत):</span>
 				<span>- &#8377;%.2f</span>
 			</div>
 		`, bill.DiscountAmount)
@@ -244,7 +278,7 @@ func BuildInvoiceHTML(bill *model.POSBill) string {
 	}
 
 	return fmt.Sprintf(`<!DOCTYPE html>
-<html lang="en">
+<html lang="hi">
 <head>
 	<meta charset="UTF-8">
 	<title>Invoice - %s</title>
@@ -253,8 +287,9 @@ func BuildInvoiceHTML(bill *model.POSBill) string {
 			margin: 0;
 			size: A5 portrait;
 		}
+		* { box-sizing: border-box; }
 		body {
-			font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans Devanagari", Arial, sans-serif;
+			font-family: 'Nirmala UI', 'Segoe UI', 'Segoe UI Emoji', 'Noto Sans Devanagari', -apple-system, BlinkMacSystemFont, Arial, sans-serif;
 			margin: 0;
 			padding: 24px;
 			color: #0f172a;
@@ -262,7 +297,6 @@ func BuildInvoiceHTML(bill *model.POSBill) string {
 			-webkit-print-color-adjust: exact;
 			print-color-adjust: exact;
 		}
-		* { box-sizing: border-box; }
 	</style>
 </head>
 <body>
@@ -277,8 +311,8 @@ func BuildInvoiceHTML(bill *model.POSBill) string {
 				%s
 			</div>
 			<div style="text-align: right;">
-				<div style="font-size: 9px; font-weight: 800; color: #4338ca; text-transform: uppercase; letter-spacing: 0.5px; background: #e0e7ff; padding: 2px 8px; border-radius: 4px; display: inline-block;">
-					Official Tax Invoice
+				<div style="font-size: 9px; font-weight: 800; color: #4338ca; text-transform: uppercase; letter-spacing: 0.5px; background: #e0e7ff; padding: 3px 8px; border-radius: 4px; display: inline-block;">
+					🧾 TAX INVOICE / बिल
 				</div>
 				<div style="font-size: 13px; font-weight: 700; color: #0f172a; margin-top: 4px;">#%s</div>
 				<div style="font-size: 11px; color: #64748b;">%s</div>
@@ -288,19 +322,19 @@ func BuildInvoiceHTML(bill *model.POSBill) string {
 
 	<!-- Metadata Bar -->
 	<div style="display: flex; justify-content: space-between; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 14px; margin-bottom: 16px; font-size: 11px;">
-		<div><span style="color: #64748b;">Customer:</span> <strong style="color: #0f172a;">%s</strong></div>
-		<div><span style="color: #64748b;">Payment Mode:</span> <strong style="color: #4338ca; text-transform: uppercase;">%s</strong></div>
+		<div><span style="color: #64748b;">Customer (ग्राहक):</span> <strong style="color: #0f172a;">%s</strong></div>
+		<div><span style="color: #64748b;">Payment (भुगतान):</span> <strong style="color: #4338ca; text-transform: uppercase;">%s</strong></div>
 	</div>
 
 	<!-- Items Table -->
 	<table style="width: 100%%; border-collapse: collapse; margin-bottom: 16px;">
 		<thead>
 			<tr style="background-color: #1e1b4b; color: #ffffff;">
-				<th style="padding: 7px 10px; font-size: 10px; font-weight: 700; text-align: center; width: 30px;">#</th>
-				<th style="padding: 7px 10px; font-size: 10px; font-weight: 700; text-align: left;">Item Description</th>
-				<th style="padding: 7px 10px; font-size: 10px; font-weight: 700; text-align: center; width: 40px;">Qty</th>
-				<th style="padding: 7px 10px; font-size: 10px; font-weight: 700; text-align: right; width: 70px;">Rate</th>
-				<th style="padding: 7px 10px; font-size: 10px; font-weight: 700; text-align: right; width: 85px;">Amount</th>
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: center; width: 30px;">#</th>
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: left;">Item Description (सामान का विवरण)</th>
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: center; width: 45px;">Qty (मात्रा)</th>
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: right; width: 75px;">Rate (दर)</th>
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: right; width: 90px;">Amount (रकम)</th>
 			</tr>
 		</thead>
 		<tbody>
@@ -313,19 +347,19 @@ func BuildInvoiceHTML(bill *model.POSBill) string {
 		<div style="display: flex; align-items: center; gap: 12px;">
 			%s
 			<div>
-				<div style="font-size: 10px; color: #64748b;">Scan to verify invoice</div>
-				<div style="font-size: 9px; color: #94a3b8; margin-top: 2px;">ShopSilo Paperless Retail OS</div>
+				<div style="font-size: 10px; font-weight: 600; color: #4338ca;">Scan QR to verify bill</div>
+				<div style="font-size: 9px; color: #94a3b8; margin-top: 2px;">ShopSilo Digital Retail OS</div>
 			</div>
 		</div>
 
-		<div style="width: 220px;">
+		<div style="width: 230px;">
 			<div style="display: flex; justify-content: space-between; font-size: 12px; color: #64748b; margin-bottom: 4px;">
-				<span>Subtotal:</span>
+				<span>Subtotal (योग):</span>
 				<span style="font-weight: 600; color: #334155;">&#8377;%.2f</span>
 			</div>
 			%s
-			<div style="display: flex; justify-content: space-between; font-size: 15px; font-weight: 800; color: #1e1b4b; background: #e0e7ff; padding: 6px 10px; border-radius: 6px; margin-top: 6px;">
-				<span>Grand Total:</span>
+			<div style="display: flex; justify-content: space-between; font-size: 15px; font-weight: 800; color: #1e1b4b; background: #e0e7ff; padding: 7px 12px; border-radius: 6px; margin-top: 6px;">
+				<span>Grand Total (कुल देय):</span>
 				<span>&#8377;%.2f</span>
 			</div>
 			%s
@@ -334,8 +368,8 @@ func BuildInvoiceHTML(bill *model.POSBill) string {
 
 	<!-- Footer Note -->
 	<div style="margin-top: 24px; text-align: center; border-top: 1px dashed #cbd5e1; padding-top: 12px;">
-		<div style="font-size: 11px; font-weight: 700; color: #4338ca;">Thank you for shopping with us! Visit again.</div>
-		<div style="font-size: 9px; color: #94a3b8; margin-top: 2px;">This is a computer-generated digital tax invoice. No signature required.</div>
+		<div style="font-size: 11px; font-weight: 700; color: #4338ca;">धन्यवाद! फिर पधारें! • Thank you for shopping with us!</div>
+		<div style="font-size: 9px; color: #94a3b8; margin-top: 3px;">This is a computer-generated digital tax invoice. Powered by ShopSilo.</div>
 	</div>
 </body>
 </html>`,
@@ -360,7 +394,7 @@ func formatPhoneHeader(phone string) string {
 	if phone == "" {
 		return ""
 	}
-	return fmt.Sprintf(`<div style="font-size: 11px; color: #64748b;">Phone: %s</div>`, phone)
+	return fmt.Sprintf(`<div style="font-size: 11px; color: #64748b;">Phone / WhatsApp: %s</div>`, phone)
 }
 
 func formatSKUBadge(sku string) string {
@@ -370,18 +404,8 @@ func formatSKUBadge(sku string) string {
 	return fmt.Sprintf(`<div style="font-size: 9px; color: #94a3b8; font-weight: 500;">SKU: %s</div>`, sku)
 }
 
-// GenerateSmartBillPDF generates an invoice PDF using the best available engine:
-// 1. Attempts high-fidelity Chromedp browser automation (supports Hindi/Devanagari, custom CSS, crisp barcodes).
-// 2. Automatically falls back to high-speed native gofpdf if Chromedp is unavailable on the host.
+// GenerateSmartBillPDF generates an invoice PDF using headless browser automation with full Hindi and Unicode support.
 func GenerateSmartBillPDF(ctx context.Context, bill *model.POSBill) ([]byte, error) {
-	if CheckChromiumAvailable() {
-		html := BuildInvoiceHTML(bill)
-		pdfBytes, err := GeneratePDFWithChromedp(ctx, html, DefaultA5Options())
-		if err == nil && len(pdfBytes) > 0 {
-			return pdfBytes, nil
-		}
-	}
-
-	// High-speed native Go fallback
-	return GeneratePOSReceiptPDF(bill)
+	html := BuildInvoiceHTML(bill)
+	return GeneratePDFWithChromedp(ctx, html, DefaultA5Options())
 }

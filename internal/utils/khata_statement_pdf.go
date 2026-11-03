@@ -2,12 +2,13 @@
 package utils
 
 import (
-	"bytes"
+	"context"
+	"encoding/base64"
 	"fmt"
-	"shopMe/internal/handler/model"
 	"strings"
+	"time"
 
-	"github.com/jung-kurt/gofpdf"
+	"shopMe/internal/handler/model"
 )
 
 func maskPhone(phone string) string {
@@ -24,210 +25,230 @@ func maskPhone(phone string) string {
 	return trimmed[:1] + "***" + trimmed[len(trimmed)-2:]
 }
 
-// GenerateKhataStatementPDF produces an executive-grade, official customer account passbook PDF.
-func GenerateKhataStatementPDF(customer *model.CustomerKhata, transactions []model.KhataTransaction, shop *model.Shop) ([]byte, error) {
-	pdf := gofpdf.New("P", "mm", "A4", "") // Standard A4 ledger sheet
-	pdf.SetMargins(12, 12, 12)
-	pdf.SetAutoPageBreak(true, 12)
-	pdf.AddPage()
+// BuildKhataStatementHTML generates an ultra-clean, executive A4 Khata passbook HTML template with full Hindi & Emoji support.
+func BuildKhataStatementHTML(customer *model.CustomerKhata, transactions []model.KhataTransaction, shop *model.Shop) string {
+	storeName := "ShopSilo Retail Store"
+	storePhone := ""
+	storeAddress := ""
+	storeCity := ""
+	storePincode := ""
+	storeUPI := ""
 
-	// 1. Header (Store Branding)
-	pdf.SetFillColor(15, 23, 42) // Slate Navy Accent Header
-	pdf.Rect(0, 0, 210, 24, "F")
-
-	pdf.SetFont("Arial", "B", 16)
-	pdf.SetTextColor(255, 255, 255)
-	storeName := "SHOPME RETAIL STORE"
-	if shop != nil && shop.Name != "" {
-		storeName = strings.ToUpper(shop.Name)
-	}
-	pdf.SetY(6)
-	pdf.CellFormat(0, 7, storeName, "", 1, "C", false, 0, "")
-
-	pdf.SetFont("Arial", "B", 8)
-	pdf.SetTextColor(199, 210, 254)
-	pdf.CellFormat(0, 4, "OFFICIAL KHATA PASSBOOK & ACCOUNT STATEMENT", "", 1, "C", false, 0, "")
-
-	pdf.SetY(28)
-
-	// 2. Store Address & Contact Info
-	pdf.SetFont("Arial", "", 8)
-	pdf.SetTextColor(71, 85, 105)
 	if shop != nil {
-		if shop.Address != "" {
-			pdf.CellFormat(0, 4, fmt.Sprintf("%s, %s %s", shop.Address, shop.City, shop.Pincode), "", 1, "C", false, 0, "")
+		if strings.TrimSpace(shop.Name) != "" {
+			storeName = strings.TrimSpace(shop.Name)
 		}
-		contact := shop.Phone
+		storePhone = shop.Phone
 		if shop.WhatsAppNumber != "" {
-			contact = fmt.Sprintf("Phone / WhatsApp: %s", shop.WhatsAppNumber)
+			storePhone = shop.WhatsAppNumber
 		}
-		if contact != "" {
-			pdf.CellFormat(0, 4, contact, "", 1, "C", false, 0, "")
+		storeAddress = shop.Address
+		storeCity = shop.City
+		storePincode = shop.Pincode
+		storeUPI = shop.UPIID
+	}
+
+	custName := "Customer"
+	custPhone := ""
+	currentDue := 0.0
+	if customer != nil {
+		if strings.TrimSpace(customer.CustomerName) != "" {
+			custName = strings.TrimSpace(customer.CustomerName)
+		}
+		custPhone = maskPhone(customer.CustomerMobile)
+		currentDue = customer.CurrentBalance
+	}
+
+	// Calculate Totals
+	totalDebit := 0.0  // Udhar
+	totalCredit := 0.0 // Jama
+	for _, tx := range transactions {
+		if tx.Type == "GIVE_CREDIT" || tx.Type == "debit" || tx.Type == "DEBIT" {
+			totalDebit += tx.Amount
+		} else if tx.Type == "RECEIVE_PAYMENT" || tx.Type == "credit" || tx.Type == "CREDIT" {
+			totalCredit += tx.Amount
 		}
 	}
-	pdf.Ln(2)
 
-	// Divider line
-	pdf.SetDrawColor(226, 232, 240)
-	pdf.SetLineWidth(0.4)
-	pdf.Line(12, pdf.GetY(), 198, pdf.GetY())
-	pdf.Ln(4)
-
-	// 3. Customer Info Section
-	metaY := pdf.GetY()
-	pdf.SetFillColor(248, 250, 252)
-	pdf.SetDrawColor(226, 232, 240)
-	pdf.RoundedRect(12, metaY, 186, 16, 2, "1234", "FD")
-
-	pdf.SetY(metaY + 2)
-	pdf.SetFont("Arial", "B", 9)
-	pdf.SetTextColor(15, 23, 42)
-	pdf.CellFormat(93, 4, fmt.Sprintf(" Customer Name: %s", customer.CustomerName), "", 0, "L", false, 0, "")
-	pdf.CellFormat(90, 4, fmt.Sprintf("Mobile: %s ", maskPhone(customer.CustomerMobile)), "", 1, "R", false, 0, "")
-
-	pdf.SetFont("Arial", "", 8)
-	pdf.SetTextColor(71, 85, 105)
-	pdf.CellFormat(93, 4, fmt.Sprintf(" Statement Generated: %s", customer.UpdatedAt.Format("02-Jan-2006 15:04")), "", 0, "L", false, 0, "")
-
-	limitStr := "No Cap"
-	if customer.CreditLimit > 0 {
-		limitStr = fmt.Sprintf("Rs. %.2f", customer.CreditLimit)
+	// Generate optional UPI QR code for outstanding due payment
+	qrImgTag := ""
+	if storeUPI != "" && currentDue > 0 {
+		upiPayload := fmt.Sprintf("upi://pay?pa=%s&pn=%s&am=%.2f&cu=INR", storeUPI, storeName, currentDue)
+		if qrBytes, err := GenerateQRCodePNG(upiPayload, 130); err == nil {
+			qrBase64 := base64.StdEncoding.EncodeToString(qrBytes)
+			qrImgTag = fmt.Sprintf(`
+				<div style="display: flex; align-items: center; gap: 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 14px;">
+					<img src="data:image/png;base64,%s" alt="UPI QR" style="width: 70px; height: 70px; border-radius: 4px;" />
+					<div>
+						<div style="font-size: 11px; font-weight: 700; color: #1e1b4b;">Scan & Pay via UPI (फोनपे / गूगलपे)</div>
+						<div style="font-size: 10px; color: #64748b; margin-top: 2px;">UPI ID: %s</div>
+						<div style="font-size: 9px; color: #16a34a; font-weight: 600; margin-top: 2px;">Instant Due Clearance</div>
+					</div>
+				</div>
+			`, qrBase64, storeUPI)
+		}
 	}
-	pdf.CellFormat(90, 4, fmt.Sprintf("Approved Credit Limit: %s ", limitStr), "", 1, "R", false, 0, "")
 
-	pdf.Ln(6)
-
-	// 4. Summary Status Callout Badge
-	sumY := pdf.GetY()
-	if customer.CurrentBalance > 0 {
-		pdf.SetFillColor(254, 242, 242) // Light Crimson Red
-		pdf.SetDrawColor(252, 165, 165)
-		pdf.SetTextColor(220, 38, 38)
+	// Build Transaction Rows
+	var rowsBuilder strings.Builder
+	if len(transactions) == 0 {
+		rowsBuilder.WriteString(`
+			<tr>
+				<td colspan="6" style="padding: 24px; text-align: center; color: #94a3b8; font-size: 12px;">
+					No transaction entries found in this khata account statement.
+				</td>
+			</tr>
+		`)
 	} else {
-		pdf.SetFillColor(240, 253, 244) // Light Emerald Green
-		pdf.SetDrawColor(134, 239, 172)
-		pdf.SetTextColor(22, 163, 74)
-	}
-	pdf.RoundedRect(12, sumY, 186, 12, 2, "1234", "FD")
+		for i, tx := range transactions {
+			bg := "#ffffff"
+			if i%2 == 1 {
+				bg = "#f8fafc"
+			}
 
-	pdf.SetY(sumY + 2)
-	pdf.SetFont("Arial", "B", 10)
+			dateStr := tx.CreatedAt.Format("02-01-2006 15:04")
+			desc := strings.TrimSpace(tx.Notes)
+			if desc == "" {
+				desc = "General Khata Entry"
+			}
+			if tx.BillNumber != "" {
+				desc = fmt.Sprintf("%s (Bill: #%s)", desc, tx.BillNumber)
+			}
 
-	balanceText := fmt.Sprintf("TOTAL OUTSTANDING DUE: Rs. %.2f", customer.CurrentBalance)
-	if customer.CurrentBalance <= 0 {
-		balanceText = "TOTAL OUTSTANDING DUE: NIL (ALL CLEAR)"
-	}
-	pdf.CellFormat(186, 8, balanceText, "", 1, "C", false, 0, "")
-	pdf.Ln(6)
-
-	// 5. Ledger Table Header
-	pdf.SetFillColor(67, 56, 202) // Deep Indigo Header
-	pdf.SetFont("Arial", "B", 8)
-	pdf.SetTextColor(255, 255, 255)
-
-	colWidths := []float64{10, 32, 28, 50, 22, 22, 22}
-	pdf.CellFormat(colWidths[0], 7, "#", "", 0, "C", true, 0, "")
-	pdf.CellFormat(colWidths[1], 7, "Date & Time", "", 0, "C", true, 0, "")
-	pdf.CellFormat(colWidths[2], 7, "Tx Type", "", 0, "C", true, 0, "")
-	pdf.CellFormat(colWidths[3], 7, "Description / Notes", "", 0, "L", true, 0, "")
-	pdf.CellFormat(colWidths[4], 7, "Mode", "", 0, "C", true, 0, "")
-	pdf.CellFormat(colWidths[5], 7, "Amount", "", 0, "R", true, 0, "")
-	pdf.CellFormat(colWidths[6], 7, "Balance ", "", 1, "R", true, 0, "")
-
-	// 6. Zebra Striped Ledger Transactions
-	pdf.SetFont("Arial", "", 8)
-
-	for idx, tx := range transactions {
-		if idx%2 == 0 {
-			pdf.SetFillColor(255, 255, 255)
-		} else {
-			pdf.SetFillColor(248, 250, 252) // Subtle Zebra Stripe
-		}
-
-		txType := "Credit (Udhar)"
-		if tx.Type == model.KhataTxTypeReceivePayment {
-			txType = "Payment (Jama)"
-		}
-
-		notes := tx.Notes
-		if tx.BillNumber != "" {
-			if notes != "" {
-				notes = fmt.Sprintf("Bill #%s - %s", tx.BillNumber, notes)
+			debitStr := "-"
+			creditStr := "-"
+			if tx.Type == "GIVE_CREDIT" || tx.Type == "debit" || tx.Type == "DEBIT" {
+				debitStr = fmt.Sprintf("&#8377;%.2f", tx.Amount)
 			} else {
-				notes = fmt.Sprintf("Bill #%s", tx.BillNumber)
+				creditStr = fmt.Sprintf("&#8377;%.2f", tx.Amount)
 			}
-		}
-		if len(notes) > 32 {
-			notes = notes[:29] + "..."
-		}
-		if notes == "" {
-			notes = "-"
-		}
 
-		mode := strings.ToUpper(tx.PaymentMode)
-		if mode == "" {
-			mode = "-"
-		}
-
-		pdf.SetTextColor(30, 41, 59)
-		pdf.CellFormat(colWidths[0], 6, fmt.Sprintf("%d", idx+1), "", 0, "C", true, 0, "")
-		pdf.CellFormat(colWidths[1], 6, tx.CreatedAt.Format("02-Jan-06 15:04"), "", 0, "C", true, 0, "")
-
-		// Highlight Tx Type
-		if tx.Type == model.KhataTxTypeReceivePayment {
-			pdf.SetTextColor(22, 163, 74) // Green for Jama
-		} else {
-			pdf.SetTextColor(220, 38, 38) // Red for Udhar
-		}
-		pdf.CellFormat(colWidths[2], 6, txType, "", 0, "C", true, 0, "")
-
-		pdf.SetTextColor(30, 41, 59)
-		pdf.CellFormat(colWidths[3], 6, fmt.Sprintf(" %s", notes), "", 0, "L", true, 0, "")
-		pdf.CellFormat(colWidths[4], 6, mode, "", 0, "C", true, 0, "")
-		pdf.CellFormat(colWidths[5], 6, fmt.Sprintf("%.2f ", tx.Amount), "", 0, "R", true, 0, "")
-
-		pdf.SetFont("Arial", "B", 8)
-		pdf.CellFormat(colWidths[6], 6, fmt.Sprintf("%.2f ", tx.BalanceAfter), "", 1, "R", true, 0, "")
-		pdf.SetFont("Arial", "", 8)
-	}
-
-	pdf.SetDrawColor(226, 232, 240)
-	pdf.Line(12, pdf.GetY(), 198, pdf.GetY())
-
-	// 7. Dynamic UPI Payment Collect QR Code
-	if customer.CurrentBalance > 0 && shop != nil {
-		qrPayload := fmt.Sprintf("upi://pay?pa=%s&pn=%s&am=%.2f&cu=INR", shop.Phone, storeName, customer.CurrentBalance)
-		qrBytes, err := GenerateQRCodePNG(qrPayload, 120)
-		if err == nil && len(qrBytes) > 0 {
-			qrHolder := gofpdf.ImageOptions{ImageType: "PNG", ReadDpi: true}
-			pdf.RegisterImageOptionsReader("khata_qr", qrHolder, bytes.NewReader(qrBytes))
-
-			qrY := pdf.GetY() + 4
-			if qrY < 240 {
-				pdf.SetY(qrY)
-				pdf.ImageOptions("khata_qr", 12, qrY, 22, 22, false, qrHolder, 0, "")
-				pdf.SetX(38)
-				pdf.SetFont("Arial", "B", 8)
-				pdf.SetTextColor(67, 56, 202)
-				pdf.CellFormat(0, 4, "SCAN TO PAY & CLEAR KHATA DUE VIA UPI", "", 1, "L", false, 0, "")
-				pdf.SetX(38)
-				pdf.SetFont("Arial", "", 7)
-				pdf.SetTextColor(100, 116, 139)
-				pdf.CellFormat(0, 4, "Scan this QR code with PhonePe, Google Pay, or Paytm to pay directly to store counter.", "", 1, "L", false, 0, "")
-			}
+			rowsBuilder.WriteString(fmt.Sprintf(`
+				<tr style="background-color: %s;">
+					<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11px; text-align: center; color: #64748b;">%d</td>
+					<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11px; color: #475569;">%s</td>
+					<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12px; font-weight: 600; color: #0f172a;">%s</td>
+					<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11px; font-weight: 700; text-align: right; color: #dc2626;">%s</td>
+					<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11px; font-weight: 700; text-align: right; color: #16a34a;">%s</td>
+					<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11px; font-weight: 700; text-align: right; color: #1e1b4b;">&#8377;%.2f</td>
+				</tr>
+			`, bg, i+1, dateStr, desc, debitStr, creditStr, tx.BalanceAfter))
 		}
 	}
 
-	// 8. Footer
-	pdf.SetY(280)
-	pdf.SetFont("Arial", "I", 8)
-	pdf.SetTextColor(148, 163, 184)
-	pdf.CellFormat(0, 3, "Computer-generated official account statement. Verified by ShopMe Retail OS.", "", 1, "C", false, 0, "")
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html lang="hi">
+<head>
+	<meta charset="UTF-8">
+	<title>Khata Statement - %s</title>
+	<style>
+		@page {
+			margin: 0;
+			size: A4 portrait;
+		}
+		* { box-sizing: border-box; }
+		body {
+			font-family: 'Nirmala UI', 'Segoe UI', 'Segoe UI Emoji', 'Noto Sans Devanagari', -apple-system, BlinkMacSystemFont, Arial, sans-serif;
+			margin: 0;
+			padding: 28px;
+			color: #0f172a;
+			background-color: #ffffff;
+			-webkit-print-color-adjust: exact;
+			print-color-adjust: exact;
+		}
+	</style>
+</head>
+<body>
+	<!-- Header -->
+	<div style="border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 16px;">
+		<div style="display: flex; justify-content: space-between; align-items: flex-start;">
+			<div>
+				<h1 style="margin: 0; font-size: 22px; font-weight: 800; color: #0f172a; letter-spacing: -0.5px;">%s</h1>
+				<div style="font-size: 11px; color: #64748b; margin-top: 3px;">
+					%s, %s %s
+				</div>
+				%s
+			</div>
+			<div style="text-align: right;">
+				<div style="font-size: 10px; font-weight: 800; color: #4338ca; text-transform: uppercase; letter-spacing: 0.5px; background: #e0e7ff; padding: 4px 10px; border-radius: 4px; display: inline-block;">
+					📒 OFFICIAL KHATA PASSBOOK / खाता विवरण
+				</div>
+				<div style="font-size: 11px; color: #64748b; margin-top: 6px;">Generated: %s</div>
+			</div>
+		</div>
+	</div>
 
-	var buf bytes.Buffer
-	if err := pdf.Output(&buf); err != nil {
-		return nil, fmt.Errorf("failed to generate statement PDF: %w", err)
-	}
+	<!-- Customer Info & Summary Cards -->
+	<div style="display: grid; grid-template-columns: 1.5fr 1fr 1fr 1.2fr; gap: 12px; margin-bottom: 20px;">
+		<!-- Customer Profile Box -->
+		<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 14px;">
+			<div style="font-size: 10px; color: #64748b; text-transform: uppercase; font-weight: 700;">Customer (खाताधारक)</div>
+			<div style="font-size: 14px; font-weight: 800; color: #0f172a; margin-top: 2px;">%s</div>
+			<div style="font-size: 11px; color: #64748b; margin-top: 2px;">📱 %s</div>
+		</div>
 
-	return buf.Bytes(), nil
+		<!-- Total Udhar (Debit) Card -->
+		<div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 12px 14px;">
+			<div style="font-size: 10px; color: #991b1b; text-transform: uppercase; font-weight: 700;">Total Udhar (कुल सामान उधार)</div>
+			<div style="font-size: 16px; font-weight: 800; color: #dc2626; margin-top: 4px;">&#8377;%.2f</div>
+		</div>
+
+		<!-- Total Jama (Credit) Card -->
+		<div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 12px 14px;">
+			<div style="font-size: 10px; color: #166534; text-transform: uppercase; font-weight: 700;">Total Jama (कुल भुगतान जमा)</div>
+			<div style="font-size: 16px; font-weight: 800; color: #16a34a; margin-top: 4px;">&#8377;%.2f</div>
+		</div>
+
+		<!-- Net Due Card -->
+		<div style="background: #eef2ff; border: 1.5px solid #c7d2fe; border-radius: 8px; padding: 12px 14px;">
+			<div style="font-size: 10px; color: #3730a3; text-transform: uppercase; font-weight: 800;">Net Balance Due (बाकी रकम)</div>
+			<div style="font-size: 17px; font-weight: 900; color: #1e1b4b; margin-top: 4px;">&#8377;%.2f</div>
+		</div>
+	</div>
+
+	<!-- Transactions Ledger Table -->
+	<table style="width: 100%%; border-collapse: collapse; margin-bottom: 20px;">
+		<thead>
+			<tr style="background-color: #1e1b4b; color: #ffffff;">
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: center; width: 30px;">#</th>
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: left; width: 130px;">Date & Time (दिनांक)</th>
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: left;">Description (विवरण)</th>
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: right; width: 95px;">उधार (-) / Debit</th>
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: right; width: 95px;">जमा (+) / Credit</th>
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: right; width: 100px;">शेष / Balance</th>
+			</tr>
+		</thead>
+		<tbody>
+			%s
+		</tbody>
+	</table>
+
+	<!-- Footer with UPI QR & Notes -->
+	<div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px;">
+		%s
+		<div style="text-align: right; font-size: 10px; color: #94a3b8;">
+			<div>Computer-generated digital account passbook.</div>
+			<div>Powered by ShopSilo Retail OS • Secure Khata Ledger</div>
+		</div>
+	</div>
+</body>
+</html>`,
+		custName,
+		storeName,
+		storeAddress, storeCity, storePincode,
+		formatPhoneHeader(storePhone),
+		time.Now().Format("02-Jan-2006 15:04"),
+		custName, custPhone,
+		totalDebit,
+		totalCredit,
+		currentDue,
+		rowsBuilder.String(),
+		qrImgTag,
+	)
+}
+
+// GenerateKhataStatementPDF produces an executive-grade, official customer account passbook PDF using chromedp.
+func GenerateKhataStatementPDF(customer *model.CustomerKhata, transactions []model.KhataTransaction, shop *model.Shop) ([]byte, error) {
+	html := BuildKhataStatementHTML(customer, transactions, shop)
+	return GeneratePDFWithChromedp(context.Background(), html, DefaultA4Options())
 }

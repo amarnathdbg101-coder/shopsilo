@@ -2,316 +2,293 @@
 package utils
 
 import (
-	"bytes"
+	"context"
 	"fmt"
-	"shopMe/internal/handler/dto"
-	"shopMe/internal/handler/model"
 	"strings"
 	"time"
 
-	"github.com/jung-kurt/gofpdf"
+	"shopMe/internal/handler/dto"
+	"shopMe/internal/handler/model"
 )
 
-// GenerateWholesaleReorderPDF generates an executive, ready-to-print PDF purchase order sheet for wholesale suppliers.
-func GenerateWholesaleReorderPDF(shop *model.Shop, items []*dto.LowStockProduct) ([]byte, error) {
-	pdf := gofpdf.New("P", "mm", "A4", "")
-	pdf.SetMargins(12, 12, 12)
-	pdf.SetAutoPageBreak(true, 12)
-	pdf.AddPage()
+// BuildWholesaleReorderHTML generates a clean A4 HTML template for low-stock restock orders with Hindi support.
+func BuildWholesaleReorderHTML(shop *model.Shop, items []*dto.LowStockProduct) string {
+	shopName := "ShopSilo Retail Store"
+	storePhone := ""
+	storeAddress := ""
+	storeCity := ""
+	storePincode := ""
 
-	// 1. Top Brand Banner
-	pdf.SetFillColor(15, 23, 42) // Slate Navy Accent Header
-	pdf.Rect(0, 0, 210, 24, "F")
-
-	pdf.SetFont("Arial", "B", 16)
-	pdf.SetTextColor(255, 255, 255)
-	shopName := "RETAIL STORE"
-	if shop != nil && shop.Name != "" {
-		shopName = strings.ToUpper(shop.Name)
-	}
-	pdf.SetY(6)
-	pdf.CellFormat(0, 7, shopName, "", 1, "C", false, 0, "")
-
-	pdf.SetFont("Arial", "B", 8)
-	pdf.SetTextColor(199, 210, 254)
-	pdf.CellFormat(0, 4, "WHOLESALE RE-ORDER & PROCUREMENT SHEET", "", 1, "C", false, 0, "")
-
-	pdf.SetY(28)
-
-	// 2. Store Info Sub-header
-	pdf.SetFont("Arial", "", 8)
-	pdf.SetTextColor(71, 85, 105)
 	if shop != nil {
-		if shop.Address != "" {
-			pdf.CellFormat(0, 4, fmt.Sprintf("%s, %s %s", shop.Address, shop.City, shop.Pincode), "", 1, "C", false, 0, "")
+		if strings.TrimSpace(shop.Name) != "" {
+			shopName = strings.TrimSpace(shop.Name)
 		}
-		contact := shop.Phone
+		storePhone = shop.Phone
 		if shop.WhatsAppNumber != "" {
-			contact = fmt.Sprintf("Phone / WhatsApp: %s", shop.WhatsAppNumber)
+			storePhone = shop.WhatsAppNumber
 		}
-		if contact != "" {
-			pdf.CellFormat(0, 4, contact, "", 1, "C", false, 0, "")
-		}
+		storeAddress = shop.Address
+		storeCity = shop.City
+		storePincode = shop.Pincode
 	}
-	pdf.CellFormat(0, 4, fmt.Sprintf("Date Generated: %s", time.Now().Format("02-Jan-2006 15:04")), "", 1, "C", false, 0, "")
-	pdf.Ln(2)
 
-	// Horizontal Rule
-	pdf.SetDrawColor(226, 232, 240)
-	pdf.SetLineWidth(0.4)
-	pdf.Line(12, pdf.GetY(), 198, pdf.GetY())
-	pdf.Ln(4)
-
-	// 3. Document Summary Callout
-	sumY := pdf.GetY()
-	pdf.SetFillColor(248, 250, 252)
-	pdf.SetDrawColor(226, 232, 240)
-	pdf.RoundedRect(12, sumY, 186, 10, 2, "1234", "FD")
-
-	pdf.SetY(sumY + 2)
-	pdf.SetFont("Arial", "B", 9)
-	pdf.SetTextColor(67, 56, 202)
-	pdf.CellFormat(186, 6, fmt.Sprintf("TOTAL ITEMS REQUIRING MANDI / WHOLESALE RESTOCK: %d", len(items)), "", 1, "C", false, 0, "")
-	pdf.Ln(4)
-
-	// 4. Table Header
-	pdf.SetFillColor(67, 56, 202) // Deep Indigo Header
-	pdf.SetFont("Arial", "B", 8)
-	pdf.SetTextColor(255, 255, 255)
-
-	colWidths := []float64{10, 72, 32, 24, 26, 22}
-	headers := []string{"#", "Product Description", "SKU / Code", "Current Stock", "Re-Order Qty", "Check [ ]"}
-
-	for i, h := range headers {
-		pdf.CellFormat(colWidths[i], 7, h, "", 0, "C", true, 0, "")
-	}
-	pdf.Ln(-1)
-
-	// 5. Zebra Striped Table Body
-	pdf.SetFont("Arial", "", 8)
-
+	var rowsBuilder strings.Builder
 	if len(items) == 0 {
-		pdf.CellFormat(186, 10, "Procurement list is empty. All store items are currently well-stocked.", "", 1, "C", false, 0, "")
+		rowsBuilder.WriteString(`
+			<tr>
+				<td colspan="6" style="padding: 24px; text-align: center; color: #64748b; font-size: 12px;">
+					Procurement list is empty. All store items are currently well-stocked.
+				</td>
+			</tr>
+		`)
 	} else {
-		for idx, item := range items {
-			if idx%2 == 0 {
-				pdf.SetFillColor(255, 255, 255)
-			} else {
-				pdf.SetFillColor(248, 250, 252)
+		for i, item := range items {
+			bg := "#ffffff"
+			if i%2 == 1 {
+				bg = "#f8fafc"
 			}
-
-			name := item.Name
-			if len(name) > 38 {
-				name = name[:35] + "..."
-			}
-
-			skuStr := item.SKU
-			if skuStr == "" {
-				skuStr = "N/A"
-			}
-
-			pdf.SetTextColor(30, 41, 59)
-			pdf.CellFormat(colWidths[0], 6, fmt.Sprintf("%d", idx+1), "", 0, "C", true, 0, "")
-			pdf.CellFormat(colWidths[1], 6, fmt.Sprintf(" %s", name), "", 0, "L", true, 0, "")
-			pdf.CellFormat(colWidths[2], 6, fmt.Sprintf(" %s", skuStr), "", 0, "C", true, 0, "")
-
-			// Red text for 0 stock, regular otherwise
-			if item.CurrentStock <= 0 {
-				pdf.SetTextColor(220, 38, 38)
-				pdf.SetFont("Arial", "B", 8)
-			} else {
-				pdf.SetTextColor(30, 41, 59)
-				pdf.SetFont("Arial", "", 8)
-			}
-			pdf.CellFormat(colWidths[3], 6, fmt.Sprintf("%d", item.CurrentStock), "", 0, "C", true, 0, "")
-
-			pdf.SetFont("Arial", "B", 8)
-			pdf.SetTextColor(67, 56, 202)
-			pdf.CellFormat(colWidths[4], 6, fmt.Sprintf("%d", item.SuggestedReorderQty), "", 0, "C", true, 0, "")
-
-			pdf.SetTextColor(100, 116, 139)
-			pdf.CellFormat(colWidths[5], 6, "[   ]", "", 1, "C", true, 0, "") // Checkbox for physical Mandi procurement
-			pdf.SetFont("Arial", "", 8)
+			rowsBuilder.WriteString(fmt.Sprintf(`
+				<tr style="background-color: %s;">
+					<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11px; text-align: center; color: #64748b;">%d</td>
+					<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12px; font-weight: 600; color: #0f172a;">%s</td>
+					<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11px; text-align: center; color: #64748b;">%s</td>
+					<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11px; text-align: center; font-weight: 700; color: #dc2626;">%d</td>
+					<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11px; text-align: center; font-weight: 800; color: #4338ca;">%d</td>
+					<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12px; text-align: center; color: #94a3b8;">[ &nbsp; ]</td>
+				</tr>
+			`, bg, i+1, item.Name, item.SKU, item.CurrentStock, item.SuggestedReorderQty))
 		}
 	}
 
-	pdf.SetDrawColor(226, 232, 240)
-	pdf.Line(12, pdf.GetY(), 198, pdf.GetY())
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html lang="hi">
+<head>
+	<meta charset="UTF-8">
+	<title>Wholesale Re-Order Sheet</title>
+	<style>
+		@page { margin: 0; size: A4 portrait; }
+		* { box-sizing: border-box; }
+		body {
+			font-family: 'Nirmala UI', 'Segoe UI', 'Segoe UI Emoji', 'Noto Sans Devanagari', -apple-system, BlinkMacSystemFont, Arial, sans-serif;
+			margin: 0;
+			padding: 28px;
+			color: #0f172a;
+			background-color: #ffffff;
+			-webkit-print-color-adjust: exact;
+			print-color-adjust: exact;
+		}
+	</style>
+</head>
+<body>
+	<div style="border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 16px;">
+		<div style="display: flex; justify-content: space-between; align-items: flex-start;">
+			<div>
+				<h1 style="margin: 0; font-size: 22px; font-weight: 800; color: #0f172a;">%s</h1>
+				<div style="font-size: 11px; color: #64748b; margin-top: 3px;">%s, %s %s</div>
+				%s
+			</div>
+			<div style="text-align: right;">
+				<div style="font-size: 10px; font-weight: 800; color: #4338ca; text-transform: uppercase; background: #e0e7ff; padding: 4px 10px; border-radius: 4px; display: inline-block;">
+					📦 MANDI & WHOLESALE PROCUREMENT
+				</div>
+				<div style="font-size: 11px; color: #64748b; margin-top: 6px;">Date: %s</div>
+			</div>
+		</div>
+	</div>
 
-	// 6. Footer Notes
-	pdf.SetY(280)
-	pdf.SetFont("Arial", "I", 8)
-	pdf.SetTextColor(148, 163, 184)
-	pdf.CellFormat(0, 3, "Notes: Please verify stock availability and wholesale rates. Generated automatically by ShopMe Retail OS.", "", 1, "C", false, 0, "")
+	<!-- Summary Callout -->
+	<div style="background: #eef2ff; border: 1.5px solid #c7d2fe; border-radius: 8px; padding: 10px 16px; margin-bottom: 16px; font-size: 12px; font-weight: 700; color: #3730a3; text-align: center;">
+		TOTAL ITEMS REQUIRING MANDI / WHOLESALE RESTOCK: %d
+	</div>
 
-	var buf bytes.Buffer
-	if err := pdf.Output(&buf); err != nil {
-		return nil, fmt.Errorf("failed to output PDF: %w", err)
-	}
+	<!-- Table -->
+	<table style="width: 100%%; border-collapse: collapse; margin-bottom: 20px;">
+		<thead>
+			<tr style="background-color: #1e1b4b; color: #ffffff;">
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: center; width: 30px;">#</th>
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: left;">Product Description (सामान का नाम)</th>
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: center; width: 110px;">SKU / Code</th>
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: center; width: 100px;">Current Stock</th>
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: center; width: 110px;">Re-Order Qty</th>
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: center; width: 80px;">Check [ ]</th>
+			</tr>
+		</thead>
+		<tbody>
+			%s
+		</tbody>
+	</table>
 
-	return buf.Bytes(), nil
+	<div style="border-top: 1px dashed #cbd5e1; padding-top: 12px; font-size: 10px; color: #94a3b8; text-align: center;">
+		Generated automatically by ShopSilo Retail OS • Mandi Stock Procurement Sheet
+	</div>
+</body>
+</html>`,
+		shopName,
+		storeAddress, storeCity, storePincode,
+		formatPhoneHeader(storePhone),
+		time.Now().Format("02-Jan-2006 15:04"),
+		len(items),
+		rowsBuilder.String(),
+	)
 }
 
-// GenerateCustomProcurementPDF generates an executive PDF purchase order sheet directly from screen procurement items.
-func GenerateCustomProcurementPDF(shop *model.Shop, title string, items []dto.ProcurementPDFItem) ([]byte, error) {
-	pdf := gofpdf.New("P", "mm", "A4", "")
-	pdf.SetMargins(12, 12, 12)
-	pdf.SetAutoPageBreak(true, 12)
-	pdf.AddPage()
+// GenerateWholesaleReorderPDF generates an executive, ready-to-print PDF purchase order sheet for wholesale suppliers using chromedp.
+func GenerateWholesaleReorderPDF(shop *model.Shop, items []*dto.LowStockProduct) ([]byte, error) {
+	html := BuildWholesaleReorderHTML(shop, items)
+	return GeneratePDFWithChromedp(context.Background(), html, DefaultA4Options())
+}
 
-	// 1. Header Banner
-	pdf.SetFillColor(15, 23, 42) // Slate Navy Accent Header
-	pdf.Rect(0, 0, 210, 24, "F")
+// BuildCustomProcurementHTML generates an executive HTML template for custom screen procurement items with Hindi support.
+func BuildCustomProcurementHTML(shop *model.Shop, title string, items []dto.ProcurementPDFItem) string {
+	shopName := "ShopSilo Retail Store"
+	storePhone := ""
+	storeAddress := ""
+	storeCity := ""
+	storePincode := ""
 
-	pdf.SetFont("Arial", "B", 16)
-	pdf.SetTextColor(255, 255, 255)
-	shopName := "RETAIL STORE"
-	if shop != nil && shop.Name != "" {
-		shopName = strings.ToUpper(shop.Name)
+	if shop != nil {
+		if strings.TrimSpace(shop.Name) != "" {
+			shopName = strings.TrimSpace(shop.Name)
+		}
+		storePhone = shop.Phone
+		if shop.WhatsAppNumber != "" {
+			storePhone = shop.WhatsAppNumber
+		}
+		storeAddress = shop.Address
+		storeCity = shop.City
+		storePincode = shop.Pincode
 	}
-	pdf.SetY(6)
-	pdf.CellFormat(0, 7, shopName, "", 1, "C", false, 0, "")
 
 	docTitle := "MANDI KHAREED & WHOLESALE PROCUREMENT SHEET"
 	if strings.TrimSpace(title) != "" {
 		docTitle = strings.ToUpper(strings.TrimSpace(title))
 	}
 
-	pdf.SetFont("Arial", "B", 8)
-	pdf.SetTextColor(199, 210, 254)
-	pdf.CellFormat(0, 4, docTitle, "", 1, "C", false, 0, "")
-
-	pdf.SetY(28)
-
-	// 2. Sub-header
-	pdf.SetFont("Arial", "", 8)
-	pdf.SetTextColor(71, 85, 105)
-	if shop != nil {
-		if shop.Address != "" {
-			pdf.CellFormat(0, 4, fmt.Sprintf("%s, %s %s", shop.Address, shop.City, shop.Pincode), "", 1, "C", false, 0, "")
-		}
-		contact := shop.Phone
-		if shop.WhatsAppNumber != "" {
-			contact = fmt.Sprintf("Phone / WhatsApp: %s", shop.WhatsAppNumber)
-		}
-		if contact != "" {
-			pdf.CellFormat(0, 4, contact, "", 1, "C", false, 0, "")
-		}
-	}
-	pdf.CellFormat(0, 4, fmt.Sprintf("Date Generated: %s", time.Now().Format("02-Jan-2006 15:04")), "", 1, "C", false, 0, "")
-	pdf.Ln(2)
-
-	// Horizontal Rule
-	pdf.SetDrawColor(226, 232, 240)
-	pdf.SetLineWidth(0.4)
-	pdf.Line(12, pdf.GetY(), 198, pdf.GetY())
-	pdf.Ln(4)
-
-	// 3. Document Summary Callout
-	sumY := pdf.GetY()
-	pdf.SetFillColor(248, 250, 252)
-	pdf.SetDrawColor(226, 232, 240)
-	pdf.RoundedRect(12, sumY, 186, 10, 2, "1234", "FD")
-
-	pdf.SetY(sumY + 2)
-	pdf.SetFont("Arial", "B", 9)
-	pdf.SetTextColor(67, 56, 202)
-	pdf.CellFormat(186, 6, fmt.Sprintf("TOTAL ITEMS ON PROCUREMENT SHEET: %d", len(items)), "", 1, "C", false, 0, "")
-	pdf.Ln(4)
-
-	// 4. Table Header
-	pdf.SetFillColor(67, 56, 202)
-	pdf.SetFont("Arial", "B", 8)
-	pdf.SetTextColor(255, 255, 255)
-
-	colWidths := []float64{10, 70, 28, 24, 38, 16}
-	headers := []string{"#", "Item Description & Category", "Required Qty", "Est. Rate", "Mandi Dealer / Wholesaler", "Check"}
-
-	for i, h := range headers {
-		align := "C"
-		if i == 1 {
-			align = "L"
-		}
-		pdf.CellFormat(colWidths[i], 7, h, "", 0, align, true, 0, "")
-	}
-	pdf.Ln(-1)
-
-	// 5. Table Body
-	pdf.SetFont("Arial", "", 8)
-
+	var rowsBuilder strings.Builder
 	if len(items) == 0 {
-		pdf.CellFormat(186, 10, "No procurement items added yet. Add items on screen or via AI Smart Paste.", "", 1, "C", false, 0, "")
+		rowsBuilder.WriteString(`
+			<tr>
+				<td colspan="6" style="padding: 24px; text-align: center; color: #64748b; font-size: 12px;">
+					No procurement items added yet.
+				</td>
+			</tr>
+		`)
 	} else {
-		for idx, item := range items {
-			if idx%2 == 0 {
-				pdf.SetFillColor(255, 255, 255)
-			} else {
-				pdf.SetFillColor(248, 250, 252)
+		for i, it := range items {
+			bg := "#ffffff"
+			if i%2 == 1 {
+				bg = "#f8fafc"
 			}
 
-			name := strings.TrimSpace(item.Name)
-			if name == "" {
-				name = "Procurement Item"
-			}
-			itemDesc := name
-			if strings.TrimSpace(item.Category) != "" {
-				itemDesc = fmt.Sprintf("%s (%s)", name, strings.TrimSpace(item.Category))
-			}
-			if len(itemDesc) > 42 {
-				itemDesc = itemDesc[:39] + "..."
+			itemDesc := strings.TrimSpace(it.Name)
+			if it.Category != "" {
+				itemDesc = fmt.Sprintf("%s (%s)", it.Name, strings.TrimSpace(it.Category))
 			}
 
-			qty := item.Qty
+			qty := it.Qty
 			if qty == "" {
 				qty = "1"
 			}
 
-			rate := strings.TrimSpace(item.EstimatedPrice)
+			rate := strings.TrimSpace(it.EstimatedPrice)
 			if rate == "" {
 				rate = "-"
 			}
 
-			dealer := strings.TrimSpace(item.Dealer)
+			dealer := strings.TrimSpace(it.Dealer)
 			if dealer == "" {
 				dealer = "-"
 			}
-			if len(dealer) > 22 {
-				dealer = dealer[:19] + "..."
-			}
 
-			pdf.SetTextColor(30, 41, 59)
-			pdf.CellFormat(colWidths[0], 6, fmt.Sprintf("%d", idx+1), "", 0, "C", true, 0, "")
-			pdf.CellFormat(colWidths[1], 6, fmt.Sprintf(" %s", itemDesc), "", 0, "L", true, 0, "")
-
-			pdf.SetFont("Arial", "B", 8)
-			pdf.SetTextColor(67, 56, 202)
-			pdf.CellFormat(colWidths[2], 6, fmt.Sprintf(" %s", qty), "", 0, "C", true, 0, "")
-
-			pdf.SetFont("Arial", "", 8)
-			pdf.SetTextColor(30, 41, 59)
-			pdf.CellFormat(colWidths[3], 6, fmt.Sprintf(" %s", rate), "", 0, "C", true, 0, "")
-
-			pdf.SetTextColor(71, 85, 105)
-			pdf.CellFormat(colWidths[4], 6, fmt.Sprintf(" %s", dealer), "", 0, "L", true, 0, "")
-
-			pdf.SetTextColor(100, 116, 139)
-			pdf.CellFormat(colWidths[5], 6, "[   ]", "", 1, "C", true, 0, "")
+			rowsBuilder.WriteString(fmt.Sprintf(`
+				<tr style="background-color: %s;">
+					<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11px; text-align: center; color: #64748b;">%d</td>
+					<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12px; font-weight: 600; color: #0f172a;">%s</td>
+					<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11px; text-align: center; font-weight: 700; color: #4338ca;">%s</td>
+					<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11px; text-align: center; color: #334155;">%s</td>
+					<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11px; color: #475569;">%s</td>
+					<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12px; text-align: center; color: #94a3b8;">[ &nbsp; ]</td>
+				</tr>
+			`, bg, i+1, itemDesc, qty, rate, dealer))
 		}
 	}
 
-	pdf.SetDrawColor(226, 232, 240)
-	pdf.Line(12, pdf.GetY(), 198, pdf.GetY())
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html lang="hi">
+<head>
+	<meta charset="UTF-8">
+	<title>%s</title>
+	<style>
+		@page { margin: 0; size: A4 portrait; }
+		* { box-sizing: border-box; }
+		body {
+			font-family: 'Nirmala UI', 'Segoe UI', 'Segoe UI Emoji', 'Noto Sans Devanagari', -apple-system, BlinkMacSystemFont, Arial, sans-serif;
+			margin: 0;
+			padding: 28px;
+			color: #0f172a;
+			background-color: #ffffff;
+			-webkit-print-color-adjust: exact;
+			print-color-adjust: exact;
+		}
+	</style>
+</head>
+<body>
+	<div style="border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 16px;">
+		<div style="display: flex; justify-content: space-between; align-items: flex-start;">
+			<div>
+				<h1 style="margin: 0; font-size: 22px; font-weight: 800; color: #0f172a;">%s</h1>
+				<div style="font-size: 11px; color: #64748b; margin-top: 3px;">%s, %s %s</div>
+				%s
+			</div>
+			<div style="text-align: right;">
+				<div style="font-size: 10px; font-weight: 800; color: #4338ca; text-transform: uppercase; background: #e0e7ff; padding: 4px 10px; border-radius: 4px; display: inline-block;">
+					🛒 %s
+				</div>
+				<div style="font-size: 11px; color: #64748b; margin-top: 6px;">Date: %s</div>
+			</div>
+		</div>
+	</div>
 
-	// 6. Footer Notes
-	pdf.SetY(280)
-	pdf.SetFont("Arial", "I", 8)
-	pdf.SetTextColor(148, 163, 184)
-	pdf.CellFormat(0, 3, "Notes: Please verify stock availability and wholesale rates. Generated automatically by ShopMe Retail OS.", "", 1, "C", false, 0, "")
+	<!-- Summary Callout -->
+	<div style="background: #eef2ff; border: 1.5px solid #c7d2fe; border-radius: 8px; padding: 10px 16px; margin-bottom: 16px; font-size: 12px; font-weight: 700; color: #3730a3; text-align: center;">
+		TOTAL ITEMS ON PROCUREMENT SHEET: %d
+	</div>
 
-	var buf bytes.Buffer
-	if err := pdf.Output(&buf); err != nil {
-		return nil, fmt.Errorf("failed to output custom procurement PDF: %w", err)
-	}
+	<!-- Table -->
+	<table style="width: 100%%; border-collapse: collapse; margin-bottom: 20px;">
+		<thead>
+			<tr style="background-color: #1e1b4b; color: #ffffff;">
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: center; width: 30px;">#</th>
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: left;">Item Description & Category</th>
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: center; width: 120px;">Required Qty</th>
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: center; width: 100px;">Est. Rate</th>
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: left; width: 140px;">Mandi Dealer / Wholesaler</th>
+				<th style="padding: 8px 10px; font-size: 10px; font-weight: 700; text-align: center; width: 80px;">Check [ ]</th>
+			</tr>
+		</thead>
+		<tbody>
+			%s
+		</tbody>
+	</table>
 
-	return buf.Bytes(), nil
+	<div style="border-top: 1px dashed #cbd5e1; padding-top: 12px; font-size: 10px; color: #94a3b8; text-align: center;">
+		Notes: Please verify stock availability and wholesale rates. Generated automatically by ShopSilo Retail OS.
+	</div>
+</body>
+</html>`,
+		docTitle,
+		shopName,
+		storeAddress, storeCity, storePincode,
+		formatPhoneHeader(storePhone),
+		docTitle,
+		time.Now().Format("02-Jan-2006 15:04"),
+		len(items),
+		rowsBuilder.String(),
+	)
+}
+
+// GenerateCustomProcurementPDF generates an executive PDF purchase order sheet directly from screen procurement items using chromedp.
+func GenerateCustomProcurementPDF(shop *model.Shop, title string, items []dto.ProcurementPDFItem) ([]byte, error) {
+	html := BuildCustomProcurementHTML(shop, title, items)
+	return GeneratePDFWithChromedp(context.Background(), html, DefaultA4Options())
 }

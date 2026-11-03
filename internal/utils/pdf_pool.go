@@ -7,16 +7,16 @@ import (
 	"time"
 )
 
-// pdfSemaphore restricts max parallel PDF rendering goroutines to prevent CPU/memory spikes under heavy traffic.
-var pdfSemaphore = make(chan struct{}, 15) // Max 15 concurrent PDF generation tasks
+// pdfSemaphore restricts max parallel PDF rendering goroutines to 5 to prevent CPU and memory spikes.
+var pdfSemaphore = make(chan struct{}, 5) // Max 5 concurrent PDF generation tasks
 
-// RenderPDFWithConcurrencyLimit executes a single PDF generator function within a bounded concurrency semaphore pool.
+// RenderPDFWithConcurrencyLimit executes a single PDF generator function within a bounded concurrency semaphore pool of 5 workers.
 func RenderPDFWithConcurrencyLimit(ctx context.Context, renderFunc func() ([]byte, error)) ([]byte, error) {
 	select {
 	case pdfSemaphore <- struct{}{}:
 		defer func() { <-pdfSemaphore }()
 		return renderFunc()
-	case <-time.After(10 * time.Second):
+	case <-time.After(15 * time.Second):
 		return nil, fmt.Errorf("pdf generator service busy, please try again in a moment")
 	case <-ctx.Done():
 		return nil, ctx.Err()

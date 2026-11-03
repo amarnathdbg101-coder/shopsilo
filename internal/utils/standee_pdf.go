@@ -1,146 +1,154 @@
+// Package utils provides helper utilities.
 package utils
 
 import (
-	"bytes"
+	"context"
+	"encoding/base64"
 	"fmt"
 	"strings"
 
 	"shopMe/internal/handler/model"
-
-	"github.com/jung-kurt/gofpdf"
 )
 
-// GenerateStoreStandeePDF generates a professional, high-resolution printable A5 counter standee PDF for merchants.
-// The standee can be placed on acrylic counter stands for customers to scan and jump directly into the live catalog.
-func GenerateStoreStandeePDF(shop *model.Shop) ([]byte, error) {
-	// A5 Dimensions: 148 mm width x 210 mm height
-	pdf := gofpdf.New("P", "mm", "A5", "")
-	pdf.SetMargins(10, 10, 10)
-	pdf.SetAutoPageBreak(false, 0)
-	pdf.AddPage()
+// BuildStoreStandeeHTML generates an ultra-polished, executive A5 counter standee HTML template with full Hindi & Emoji support.
+func BuildStoreStandeeHTML(shop *model.Shop) string {
+	storeName := "ShopSilo Retail Store"
+	category := "General Retail Store"
+	storeAddress := "Local Market"
+	storeCity := ""
+	storePhone := ""
+	storeUPI := ""
 
-	// 1. Top Header Banner (ShopSilo Indigo/Navy Brand)
-	pdf.SetFillColor(30, 41, 59) // Slate 800
-	pdf.Rect(0, 0, 148, 26, "F")
-
-	pdf.SetFont("Arial", "B", 14)
-	pdf.SetTextColor(255, 255, 255)
-	pdf.SetXY(0, 6)
-	pdf.CellFormat(148, 7, "SHOPSILO LOCAL STOREFRONT", "", 1, "C", false, 0, "")
-
-	pdf.SetFont("Arial", "", 8)
-	pdf.SetTextColor(203, 213, 225) // Slate 300
-	pdf.CellFormat(148, 5, "OFFICIAL VERIFIED PARTNER MERCHANT", "", 1, "C", false, 0, "")
-
-	// 2. Store Name & Details
-	storeName := strings.ToUpper(strings.TrimSpace(shop.Name))
-	if storeName == "" {
-		storeName = "LOCAL RETAIL STORE"
+	if shop != nil {
+		if strings.TrimSpace(shop.Name) != "" {
+			storeName = strings.TrimSpace(shop.Name)
+		}
+		if strings.TrimSpace(shop.Category) != "" {
+			category = strings.TrimSpace(shop.Category)
+		}
+		if strings.TrimSpace(shop.Address) != "" {
+			storeAddress = strings.TrimSpace(shop.Address)
+		}
+		storeCity = strings.TrimSpace(shop.City)
+		if strings.TrimSpace(shop.WhatsAppNumber) != "" {
+			storePhone = strings.TrimSpace(shop.WhatsAppNumber)
+		} else if strings.TrimSpace(shop.Phone) != "" {
+			storePhone = strings.TrimSpace(shop.Phone)
+		}
+		storeUPI = strings.TrimSpace(shop.UPIID)
 	}
 
-	pdf.SetFont("Arial", "B", 16)
-	pdf.SetTextColor(15, 23, 42) // Slate 900
-	pdf.SetXY(10, 32)
-	pdf.CellFormat(128, 8, storeName, "", 1, "C", false, 0, "")
-
-	categoryText := strings.TrimSpace(shop.Category)
-	if categoryText == "" {
-		categoryText = "General Retail Store"
-	}
-	if shop.City != "" {
-		categoryText += " • " + strings.TrimSpace(shop.City)
+	qrPayload := fmt.Sprintf("https://shopsilo.in/store/%s", strings.ToLower(strings.ReplaceAll(storeName, " ", "-")))
+	if shop != nil && shop.ID != "" {
+		qrPayload = fmt.Sprintf("https://shopsilo.in/store/%s", shop.ID)
 	}
 
-	pdf.SetFont("Arial", "", 9)
-	pdf.SetTextColor(100, 116, 139) // Slate 500
-	pdf.CellFormat(128, 5, categoryText, "", 1, "C", false, 0, "")
-
-	// 3. Counter QR Code Generation (Catalog Deep Link with UTM Tracking)
-	targetURL := fmt.Sprintf("https://shopsilo.in/s/%s?utm_source=counter_qr&utm_medium=standee&utm_campaign=store_visit", shop.Slug)
-	qrBytes, err := GenerateQRCodePNG(targetURL, 400)
-	if err == nil && len(qrBytes) > 0 {
-		qrHolder := gofpdf.ImageOptions{ImageType: "PNG", ReadDpi: true}
-		pdf.RegisterImageOptionsReader("standee_qr", qrHolder, bytes.NewReader(qrBytes))
-
-		// Draw QR background card
-		pdf.SetFillColor(248, 250, 252) // Slate 50
-		pdf.SetDrawColor(226, 232, 240) // Slate 200
-		pdf.RoundedRect(29, 48, 90, 96, 4, "1234", "FD")
-
-		// Embed QR Code Image in center (70 mm x 70 mm)
-		pdf.ImageOptions("standee_qr", 39, 52, 70, 70, false, qrHolder, 0, "")
-
-		// Call to Action inside QR Card
-		pdf.SetFont("Arial", "B", 10)
-		pdf.SetTextColor(15, 23, 42)
-		pdf.SetXY(29, 124)
-		pdf.CellFormat(90, 5, "SCAN WITH ANY CAMERA", "", 1, "C", false, 0, "")
-
-		pdf.SetFont("Arial", "", 7.5)
-		pdf.SetTextColor(100, 116, 139)
-		pdf.SetXY(29, 129)
-		pdf.CellFormat(90, 4, "Browse Live Catalog & Get Exclusive In-Store Offers", "", 1, "C", false, 0, "")
+	qrBase64 := ""
+	if qrBytes, err := GenerateQRCodePNG(qrPayload, 260); err == nil {
+		qrBase64 = base64.StdEncoding.EncodeToString(qrBytes)
 	}
 
-	// 4. Payment / UPI Information (If merchant has UPI ID)
-	currY := 148.0
-	if strings.TrimSpace(shop.UPIID) != "" {
-		pdf.SetFillColor(241, 245, 249) // Slate 100
-		pdf.SetDrawColor(203, 213, 225)
-		pdf.RoundedRect(14, currY, 120, 22, 3, "1234", "FD")
-
-		pdf.SetFont("Arial", "B", 8)
-		pdf.SetTextColor(71, 85, 105)
-		pdf.SetXY(14, currY+2)
-		pdf.CellFormat(120, 4, "ACCEPTED DIRECT UPI PAYMENTS", "", 1, "C", false, 0, "")
-
-		pdf.SetFont("Arial", "B", 9)
-		pdf.SetTextColor(30, 41, 59)
-		pdf.SetXY(14, currY+7)
-		pdf.CellFormat(120, 5, fmt.Sprintf("UPI ID: %s", strings.TrimSpace(shop.UPIID)), "", 1, "C", false, 0, "")
-
-		pdf.SetFont("Arial", "", 7)
-		pdf.SetTextColor(100, 116, 139)
-		pdf.SetXY(14, currY+13)
-		pdf.CellFormat(120, 4, "Google Pay  |  PhonePe  |  Paytm  |  BHIM UPI", "", 1, "C", false, 0, "")
-
-		currY += 25
-	} else {
-		currY += 5
+	qrImgTag := ""
+	if qrBase64 != "" {
+		qrImgTag = fmt.Sprintf(`<img src="data:image/png;base64,%s" alt="Store QR" style="width: 200px; height: 200px; display: block; margin: 0 auto; border-radius: 8px;" />`, qrBase64)
 	}
 
-	// 5. Store Address & Contact Footer
-	pdf.SetFont("Arial", "", 8)
-	pdf.SetTextColor(71, 85, 105)
-	if strings.TrimSpace(shop.Address) != "" {
-		pdf.SetXY(10, currY)
-		pdf.CellFormat(128, 4, fmt.Sprintf("Store Address: %s", strings.TrimSpace(shop.Address)), "", 1, "C", false, 0, "")
-		currY += 5
+	upiNote := ""
+	if storeUPI != "" {
+		upiNote = fmt.Sprintf(`<div style="font-size: 11px; font-weight: 700; color: #4338ca; margin-top: 4px;">💳 Accepted Payments: UPI (%s) / Cash</div>`, storeUPI)
 	}
 
-	phoneText := shop.WhatsAppNumber
-	if phoneText == "" {
-		phoneText = shop.Phone
-	}
-	if phoneText != "" {
-		pdf.SetXY(10, currY)
-		pdf.CellFormat(128, 4, fmt.Sprintf("WhatsApp / Helpline: +91 %s", phoneText), "", 1, "C", false, 0, "")
-		currY += 6
-	}
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html lang="hi">
+<head>
+	<meta charset="UTF-8">
+	<title>Store Standee - %s</title>
+	<style>
+		@page { margin: 0; size: A5 portrait; }
+		* { box-sizing: border-box; }
+		body {
+			font-family: 'Nirmala UI', 'Segoe UI', 'Segoe UI Emoji', 'Noto Sans Devanagari', -apple-system, BlinkMacSystemFont, Arial, sans-serif;
+			margin: 0;
+			padding: 24px;
+			color: #0f172a;
+			background-color: #ffffff;
+			text-align: center;
+			-webkit-print-color-adjust: exact;
+			print-color-adjust: exact;
+		}
+	</style>
+</head>
+<body>
+	<!-- Brand Pill -->
+	<div style="background: #1e1b4b; color: #ffffff; padding: 6px 14px; border-radius: 20px; display: inline-block; font-size: 10px; font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 12px;">
+		SHOPSILO LOCAL STOREFRONT • VERIFIED MERCHANT
+	</div>
 
-	// 6. Bottom Brand Strip
-	pdf.SetFillColor(30, 41, 59)
-	pdf.Rect(0, 202, 148, 8, "F")
-	pdf.SetFont("Arial", "I", 7)
-	pdf.SetTextColor(226, 232, 240)
-	pdf.SetXY(0, 203)
-	pdf.CellFormat(148, 6, "Powered by ShopSilo O2O Platform  •  shopsilo.in", "", 1, "C", false, 0, "")
+	<!-- Store Title -->
+	<h1 style="font-size: 26px; font-weight: 900; color: #0f172a; margin: 0; letter-spacing: -0.5px;">%s</h1>
+	<div style="display: inline-block; background: #e0e7ff; color: #4338ca; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 6px; margin-top: 6px;">
+		%s
+	</div>
+	<div style="font-size: 11px; color: #64748b; margin-top: 6px;">
+		📍 %s%s
+	</div>
 
-	var buf bytes.Buffer
-	if err := pdf.Output(&buf); err != nil {
-		return nil, fmt.Errorf("failed to export standee PDF: %w", err)
-	}
+	<!-- Center QR Frame -->
+	<div style="margin: 20px auto; padding: 16px; background: #f8fafc; border: 2px solid #e2e8f0; border-radius: 16px; width: 236px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+		%s
+		<div style="margin-top: 10px; font-size: 12px; font-weight: 800; color: #1e1b4b; text-transform: uppercase; letter-spacing: 0.5px;">
+			SCAN TO ORDER ONLINE
+		</div>
+		<div style="font-size: 11px; color: #4338ca; font-weight: 600; margin-top: 2px;">
+			(QR स्कैन करके ऑनलाइन सामान मंगाएं)
+		</div>
+	</div>
 
-	return buf.Bytes(), nil
+	<!-- 3-Step Walkthrough Pills -->
+	<div style="display: flex; justify-content: center; gap: 8px; margin-bottom: 20px;">
+		<div style="background: #f1f5f9; padding: 6px 10px; border-radius: 6px; font-size: 10px; font-weight: 600; color: #334155;">
+			📸 1. Scan with Phone
+		</div>
+		<div style="background: #f1f5f9; padding: 6px 10px; border-radius: 6px; font-size: 10px; font-weight: 600; color: #334155;">
+			🛒 2. View Live Catalog
+		</div>
+		<div style="background: #f1f5f9; padding: 6px 10px; border-radius: 6px; font-size: 10px; font-weight: 600; color: #334155;">
+			⚡ 3. Fast Pickup / Delivery
+		</div>
+	</div>
+
+	<!-- Bottom Merchant Details -->
+	<div style="border-top: 1.5px dashed #cbd5e1; padding-top: 12px; margin-top: 16px;">
+		<div style="font-size: 12px; font-weight: 800; color: #0f172a;">
+			📞 Order on WhatsApp: %s
+		</div>
+		%s
+		<div style="font-size: 9px; color: #94a3b8; margin-top: 6px;">
+			Powered by ShopSilo Retail OS • Official Digital Counter Standee
+		</div>
+	</div>
+</body>
+</html>`,
+		storeName,
+		storeName,
+		category,
+		storeAddress,
+		formatCity(storeCity),
+		qrImgTag,
+		storePhone,
+		upiNote,
+	)
 }
 
+func formatCity(city string) string {
+	if city == "" {
+		return ""
+	}
+	return ", " + city
+}
+
+// GenerateStoreStandeePDF generates a professional, high-resolution printable A5 counter standee PDF for merchants using chromedp.
+func GenerateStoreStandeePDF(shop *model.Shop) ([]byte, error) {
+	html := BuildStoreStandeeHTML(shop)
+	return GeneratePDFWithChromedp(context.Background(), html, DefaultA5Options())
+}
