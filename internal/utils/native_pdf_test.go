@@ -202,3 +202,37 @@ func TestGenerateNativeStoreStandeePDF(t *testing.T) {
 
 	t.Logf("✅ Native Store Standee PDF generated successfully in %v (%d KB)", duration, len(pdfBytes)/1024)
 }
+
+func TestGenerateNativeCustomProcurementPDF_MultilingualAndBlankResilience(t *testing.T) {
+	// Exact items representing user's actual problematic dataset
+	items := []dto.ProcurementPDFItem{
+		{Name: "Item 1", Qty: "10", EstimatedPrice: "₹20"},
+		{Name: "", Category: " ", Qty: "1", EstimatedPrice: "₹10"},
+		{Name: "", Category: "", Qty: "24", EstimatedPrice: "₹10"},
+		{Name: "", Qty: "24", EstimatedPrice: "₹10"},
+		{Name: "", Qty: "1", EstimatedPrice: "₹10"},
+		{Name: "", Qty: "24", EstimatedPrice: "₹10"},
+		{Name: "1", Category: "", Qty: "12", EstimatedPrice: "₹0"},
+		{Name: "500", Category: "", Qty: "1 2", EstimatedPrice: "₹0"},
+		{Name: "किसान हुक", Category: "सामान्य किराना", Qty: "1", EstimatedPrice: "₹20"},
+		{Name: "उन", Category: "कपड़ा और सिलाई", Qty: "10", EstimatedPrice: "₹130"},
+		{Name: "बैंगनी ऊन", Category: "ऊन", Qty: "20", EstimatedPrice: "₹20"},
+		{Name: "-", Category: "", Qty: "10", EstimatedPrice: "₹10"},
+		{Name: "", Qty: "1", EstimatedPrice: "₹0"},
+	}
+
+	start := time.Now()
+	// Test with shop == nil and title containing shop name
+	pdfBytes, err := utils.GenerateNativeCustomProcurementPDF(nil, "Om Clothes and Cosmetic - Mandi Procurement Sheet", items)
+	duration := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("GenerateNativeCustomProcurementPDF failed: %v", err)
+	}
+
+	if !bytes.HasPrefix(pdfBytes, []byte("%PDF-")) {
+		t.Fatalf("Procurement PDF missing %%PDF- prefix")
+	}
+
+	t.Logf("✅ Native Mandi Procurement PDF (13 complex items) generated in %v (%d KB)", duration, len(pdfBytes)/1024)
+}

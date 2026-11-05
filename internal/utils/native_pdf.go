@@ -38,6 +38,19 @@ type NativePDFOptions struct {
 	Format PageFormat
 }
 
+// TruncateRunes cleanly truncates UTF-8 strings by rune (character) count rather than byte count,
+// preventing broken multi-byte sequences for Hindi (Devanagari) and other scripts.
+func TruncateRunes(s string, maxRunes int) string {
+	runes := []rune(strings.TrimSpace(s))
+	if len(runes) <= maxRunes {
+		return string(runes)
+	}
+	if maxRunes <= 3 {
+		return string(runes[:maxRunes])
+	}
+	return string(runes[:maxRunes-3]) + "..."
+}
+
 // setupInvoiceFonts registers the embedded Noto Sans Devanagari TTF fonts in memory.
 func setupInvoiceFonts(pdf *gopdf.GoPdf) error {
 	if err := pdf.AddTTFFontData("noto-reg", fontNotoRegular); err != nil {
@@ -144,7 +157,7 @@ func GenerateNativeBillPDF(bill *model.POSBill, opts NativePDFOptions) ([]byte, 
 	pdf.SetTextColor(cHeaderSub[0], cHeaderSub[1], cHeaderSub[2])
 	_ = pdf.SetFont("noto-bold", "", 8)
 	pdf.SetXY(0, 27)
-	_ = pdf.CellWithOption(&gopdf.Rect{W: pageW, H: 12}, "RETAIL TAX INVOICE • CASH MEMO", gopdf.CellOption{
+	_ = pdf.CellWithOption(&gopdf.Rect{W: pageW, H: 12}, "RETAIL TAX INVOICE | CASH MEMO", gopdf.CellOption{
 		Align: gopdf.Center | gopdf.Middle,
 	})
 
@@ -162,7 +175,7 @@ func GenerateNativeBillPDF(bill *model.POSBill, opts NativePDFOptions) ([]byte, 
 	contactLine := storePhone
 	if storeGstin != "" {
 		if contactLine != "" {
-			contactLine += " • " + storeGstin
+			contactLine += " | " + storeGstin
 		} else {
 			contactLine = storeGstin
 		}
@@ -189,7 +202,7 @@ func GenerateNativeBillPDF(bill *model.POSBill, opts NativePDFOptions) ([]byte, 
 	if bill.CreatedAt.IsZero() {
 		createdStr = time.Now().Format("02-Jan-2006 15:04")
 	}
-	_ = pdf.Cell(&gopdf.Rect{W: 180, H: 14}, fmt.Sprintf("Bill #%s • %s", bill.BillNumber, createdStr))
+	_ = pdf.Cell(&gopdf.Rect{W: 180, H: 14}, fmt.Sprintf("Bill #%s | %s", bill.BillNumber, createdStr))
 
 	// Right: Customer & Payment Method
 	custDisplay := "Walk-in Customer"
@@ -263,9 +276,7 @@ func GenerateNativeBillPDF(bill *model.POSBill, opts NativePDFOptions) ([]byte, 
 		if it.ProductSKU != "" {
 			displayName = fmt.Sprintf("%s [%s]", it.ProductName, it.ProductSKU)
 		}
-		if len(displayName) > 36 {
-			displayName = displayName[:33] + "..."
-		}
+		displayName = TruncateRunes(displayName, 34)
 		pdf.SetXY(contentLeft+w1+4, curY)
 		_ = pdf.CellWithOption(&gopdf.Rect{W: w2 - 6, H: rowHeight}, displayName, gopdf.CellOption{Align: gopdf.Left | gopdf.Middle})
 

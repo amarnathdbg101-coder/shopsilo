@@ -127,15 +127,12 @@ func (s *InventoryService) GenerateReorderSheetPDF(ctx context.Context, shopOwne
 // GenerateCustomProcurementPDF generates Base64 PDF payload for custom Mandi Khareed items
 func (s *InventoryService) GenerateCustomProcurementPDF(ctx context.Context, shopOwnerUserID string, req dto.CreateProcurementPDFRequest) (*dto.GeneratedPDFResponse, error) {
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
-	if err != nil {
-		if errors.Is(err, repository.ErrShopNotFound) {
-			return nil, ErrShopNotFound
-		}
+	if err != nil && !errors.Is(err, repository.ErrShopNotFound) {
 		return nil, err
 	}
 
 	// 💡 SMART FALLBACK: If payload items are empty, auto-populate from DB (Low Stock + Customer Demand Watchlist)!
-	if len(req.Items) == 0 {
+	if len(req.Items) == 0 && shop != nil {
 		lowStockItems, _ := s.productRepo.GetLowStockProducts(ctx, shop.ID)
 		for _, l := range lowStockItems {
 			req.Items = append(req.Items, dto.ProcurementPDFItem{

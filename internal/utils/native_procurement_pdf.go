@@ -44,10 +44,8 @@ func GenerateNativeWholesaleReorderPDF(shop *model.Shop, items []*dto.LowStockPr
 	storeAddress := ""
 	storePhone := ""
 
-	if shop != nil {
-		if strings.TrimSpace(shop.Name) != "" {
-			storeName = strings.TrimSpace(shop.Name)
-		}
+	if shop != nil && strings.TrimSpace(shop.Name) != "" {
+		storeName = strings.TrimSpace(shop.Name)
 		addrParts := []string{}
 		if strings.TrimSpace(shop.Address) != "" {
 			addrParts = append(addrParts, strings.TrimSpace(shop.Address))
@@ -180,13 +178,19 @@ func GenerateNativeWholesaleReorderPDF(shop *model.Shop, items []*dto.LowStockPr
 		// Name & SKU
 		pdf.SetTextColor(cDark[0], cDark[1], cDark[2])
 		_ = pdf.SetFont("noto-bold", "", 8.5)
-		displayName := item.Name
-		if item.SKU != "" {
-			displayName += " (" + item.SKU + ")"
+		cleanName := strings.TrimSpace(item.Name)
+		if cleanName == "" {
+			if strings.TrimSpace(item.SKU) != "" {
+				cleanName = strings.TrimSpace(item.SKU)
+			} else {
+				cleanName = fmt.Sprintf("Item #%d", i+1)
+			}
 		}
-		if len(displayName) > 42 {
-			displayName = displayName[:39] + "..."
+		displayName := cleanName
+		if strings.TrimSpace(item.SKU) != "" && strings.ToLower(cleanName) != strings.ToLower(strings.TrimSpace(item.SKU)) {
+			displayName += " (" + strings.TrimSpace(item.SKU) + ")"
 		}
+		displayName = TruncateRunes(displayName, 36)
 		pdf.SetXY(contentLeft+w1+6, curY)
 		_ = pdf.CellWithOption(&gopdf.Rect{W: w2 - 8, H: rowH}, displayName, gopdf.CellOption{Align: gopdf.Left | gopdf.Middle})
 
@@ -264,10 +268,8 @@ func GenerateNativeCustomProcurementPDF(shop *model.Shop, title string, items []
 	storeAddress := ""
 	storePhone := ""
 
-	if shop != nil {
-		if strings.TrimSpace(shop.Name) != "" {
-			storeName = strings.TrimSpace(shop.Name)
-		}
+	if shop != nil && strings.TrimSpace(shop.Name) != "" {
+		storeName = strings.TrimSpace(shop.Name)
 		addrParts := []string{}
 		if strings.TrimSpace(shop.Address) != "" {
 			addrParts = append(addrParts, strings.TrimSpace(shop.Address))
@@ -285,6 +287,11 @@ func GenerateNativeCustomProcurementPDF(shop *model.Shop, title string, items []
 			storePhone = "Phone / WhatsApp: " + shop.WhatsAppNumber
 		} else if shop.Phone != "" {
 			storePhone = "Phone: " + shop.Phone
+		}
+	} else if strings.Contains(title, " - ") {
+		parts := strings.SplitN(title, " - ", 2)
+		if strings.TrimSpace(parts[0]) != "" {
+			storeName = strings.TrimSpace(parts[0])
 		}
 	}
 
@@ -405,13 +412,23 @@ func GenerateNativeCustomProcurementPDF(shop *model.Shop, title string, items []
 		// Item Description & Category
 		pdf.SetTextColor(cDark[0], cDark[1], cDark[2])
 		_ = pdf.SetFont("noto-bold", "", 8.5)
-		itemTitle := strings.TrimSpace(item.Name)
-		if item.Category != "" {
-			itemTitle += " (" + strings.TrimSpace(item.Category) + ")"
+		cleanName := strings.TrimSpace(item.Name)
+		cleanCat := strings.TrimSpace(item.Category)
+		if cleanName == "" {
+			if strings.TrimSpace(item.Notes) != "" {
+				cleanName = strings.TrimSpace(item.Notes)
+			} else if cleanCat != "" && strings.ToLower(cleanCat) != "general store" {
+				cleanName = cleanCat
+				cleanCat = ""
+			} else {
+				cleanName = fmt.Sprintf("Item #%d", i+1)
+			}
 		}
-		if len(itemTitle) > 40 {
-			itemTitle = itemTitle[:37] + "..."
+		itemTitle := cleanName
+		if cleanCat != "" && strings.ToLower(cleanCat) != "general store" && strings.ToLower(cleanCat) != strings.ToLower(cleanName) {
+			itemTitle = fmt.Sprintf("%s (%s)", cleanName, cleanCat)
 		}
+		itemTitle = TruncateRunes(itemTitle, 36)
 		pdf.SetXY(contentLeft+w1+6, curY)
 		_ = pdf.CellWithOption(&gopdf.Rect{W: w2 - 8, H: rowH}, itemTitle, gopdf.CellOption{Align: gopdf.Left | gopdf.Middle})
 

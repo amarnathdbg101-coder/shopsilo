@@ -71,7 +71,7 @@ type ProcurementPDFItem struct {
 }
 
 func (p ProcurementPDFItem) IsValid() bool {
-	return strings.TrimSpace(p.Name) != "" && strings.TrimSpace(p.Qty) != ""
+	return strings.TrimSpace(p.Name) != "" || strings.TrimSpace(p.Notes) != "" || strings.TrimSpace(p.Category) != ""
 }
 
 // UnmarshalJSON custom deserializer to accept name, product_name, item_name, title or item keys seamlessly
@@ -86,6 +86,7 @@ func (p *ProcurementPDFItem) UnmarshalJSON(data []byte) error {
 		Wholesaler     string `json:"wholesaler"`
 		Price          string `json:"price"`
 		Rate           string `json:"rate"`
+		Quantity       string `json:"quantity"`
 		*Alias
 	}{
 		Alias: (*Alias)(p),
@@ -104,6 +105,18 @@ func (p *ProcurementPDFItem) UnmarshalJSON(data []byte) error {
 			p.Name = aux.Title
 		} else if aux.Item != "" {
 			p.Name = aux.Item
+		} else if p.Notes != "" {
+			p.Name = p.Notes
+		} else if p.Category != "" && strings.ToLower(p.Category) != "general store" {
+			p.Name = p.Category
+		}
+	}
+
+	if strings.TrimSpace(p.Qty) == "" {
+		if strings.TrimSpace(aux.Quantity) != "" {
+			p.Qty = aux.Quantity
+		} else {
+			p.Qty = "1"
 		}
 	}
 

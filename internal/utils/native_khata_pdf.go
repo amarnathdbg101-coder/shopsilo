@@ -129,7 +129,7 @@ func GenerateNativeKhataStatementPDF(customer *model.CustomerKhata, transactions
 	}
 
 	// Customer Info Centered Line
-	custLine := fmt.Sprintf("Customer: %s (%s) • Statement Date: %s", custName, custPhone, time.Now().Format("02-Jan-2006 15:04"))
+	custLine := fmt.Sprintf("Customer: %s (%s) | Statement Date: %s", custName, custPhone, time.Now().Format("02-Jan-2006 15:04"))
 	pdf.SetTextColor(cDark[0], cDark[1], cDark[2])
 	_ = pdf.SetFont("noto-bold", "", 9)
 	pdf.SetXY(0, curY)
@@ -311,9 +311,7 @@ func GenerateNativeKhataStatementPDF(customer *model.CustomerKhata, transactions
 				notes = "Cash / UPI Repayment"
 			}
 		}
-		if len(notes) > 34 {
-			notes = notes[:31] + "..."
-		}
+		notes = TruncateRunes(notes, 32)
 		pdf.SetXY(contentLeft+w1+w2+4, curY)
 		_ = pdf.CellWithOption(&gopdf.Rect{W: w3 - 8, H: rowH}, notes, gopdf.CellOption{Align: gopdf.Left | gopdf.Middle})
 
