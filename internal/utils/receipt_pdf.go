@@ -2,12 +2,10 @@
 package utils
 
 import (
-	"context"
-
 	"shopMe/internal/handler/model"
 )
 
-// GeneratePOSReceiptPDF generates an executive-grade digital tax receipt PDF using chromedp.
+// GeneratePOSReceiptPDF generates an executive-grade digital tax receipt PDF using pure native Go.
 func GeneratePOSReceiptPDF(bill *model.POSBill) ([]byte, error) {
-	return GenerateSmartBillPDF(context.Background(), bill)
+	return GenerateNativeBillPDF(bill, NativePDFOptions{Format: FormatA5})
 }

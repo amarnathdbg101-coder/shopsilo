@@ -2,6 +2,7 @@ package reuse
 
 import (
 	"bytes"
+	"encoding/base64"
 	"image"
 	"image/color"
 	"image/draw"
@@ -168,4 +169,90 @@ func bilinearScale(dst *image.RGBA, src image.Image) {
 		}
 	}
 	_ = draw.Over // keep import
+}
+
+// CompressBase64Image decodes a base64 encoded image, resizes it down to maxDim (preserving aspect ratio)
+// if larger, and re-encodes it as an optimized JPEG (with specified quality) to drastically reduce
+// token consumption in AI multimodal vision models.
+// If decoding fails, it returns the original base64 and mime type safely without error.
+func CompressBase64Image(rawBase64 string, maxDim int, quality int) (string, string, error) {
+	clean := strings.TrimSpace(rawBase64)
+	mimeType := "image/jpeg"
+	if idx := strings.Index(clean, ","); idx != -1 {
+		prefix := clean[:idx]
+		if strings.Contains(prefix, "image/png") {
+			mimeType = "image/png"
+		} else if strings.Contains(prefix, "image/webp") {
+			mimeType = "image/webp"
+		}
+		clean = clean[idx+1:]
+	}
+	clean = strings.TrimSpace(clean)
+	if clean == "" {
+		return "", "", nil
+	}
+
+	data, err := base64.StdEncoding.DecodeString(clean)
+	if err != nil {
+		data, err = base64.RawStdEncoding.DecodeString(clean)
+		if err != nil {
+			return clean, mimeType, nil
+		}
+	}
+
+	// Attempt to decode the image
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		// Return original safely if format is not supported by standard image package
+		return clean, mimeType, nil
+	}
+
+	bounds := img.Bounds()
+	width := bounds.Dx()
+	height := bounds.Dy()
+
+	if maxDim <= 0 {
+		maxDim = 768
+	}
+	if quality <= 0 || quality > 100 {
+		quality = 80
+	}
+
+	// If image is larger than maxDim, downscale preserving aspect ratio
+	if width > maxDim || height > maxDim {
+		targetWidth := width
+		targetHeight := height
+		if width > height {
+			targetWidth = maxDim
+			targetHeight = int(float64(height) * (float64(maxDim) / float64(width)))
+		} else {
+			targetHeight = maxDim
+			targetWidth = int(float64(width) * (float64(maxDim) / float64(height)))
+		}
+		if targetWidth < 1 {
+			targetWidth = 1
+		}
+		if targetHeight < 1 {
+			targetHeight = 1
+		}
+
+		resized := image.NewRGBA(image.Rect(0, 0, targetWidth, targetHeight))
+		bilinearScale(resized, img)
+		img = resized
+	}
+
+	var buf bytes.Buffer
+	err = jpeg.Encode(&buf, img, &jpeg.Options{Quality: quality})
+	if err != nil {
+		return clean, mimeType, nil
+	}
+
+	compressedData := buf.Bytes()
+	// If compressed size is larger than original and dimensions didn't change, keep original
+	if len(compressedData) >= len(data) && width <= maxDim && height <= maxDim {
+		return clean, mimeType, nil
+	}
+
+	encoded := base64.StdEncoding.EncodeToString(compressedData)
+	return encoded, "image/jpeg", nil
 }

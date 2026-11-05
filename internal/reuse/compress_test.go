@@ -2,6 +2,7 @@ package reuse
 
 import (
 	"bytes"
+	"encoding/base64"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -72,5 +73,56 @@ func TestCompressImage_UnsupportedFallback(t *testing.T) {
 	}
 	if cType != "text/plain" {
 		t.Errorf("expected original content-type returned")
+	}
+}
+
+func TestCompressBase64Image(t *testing.T) {
+	// Create an 800x600 test image (exceeds 500px)
+	img := image.NewRGBA(image.Rect(0, 0, 800, 600))
+	for y := 0; y < 600; y++ {
+		for x := 0; x < 800; x++ {
+			img.Set(x, y, color.RGBA{R: 120, G: 180, B: 240, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 95}); err != nil {
+		t.Fatalf("failed to encode test jpeg: %v", err)
+	}
+
+	rawBase64 := "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
+
+	// Resize down to 400px
+	compressedBase64, mimeType, err := CompressBase64Image(rawBase64, 400, 75)
+	if err != nil {
+		t.Fatalf("CompressBase64Image error: %v", err)
+	}
+	if mimeType != "image/jpeg" {
+		t.Errorf("expected mimeType image/jpeg, got %s", mimeType)
+	}
+	if len(compressedBase64) == 0 {
+		t.Fatalf("expected non-empty compressed base64")
+	}
+
+	// Verify resized dimensions
+	decBytes, err := base64.StdEncoding.DecodeString(compressedBase64)
+	if err != nil {
+		t.Fatalf("failed to decode resulting base64: %v", err)
+	}
+	decImg, _, err := image.Decode(bytes.NewReader(decBytes))
+	if err != nil {
+		t.Fatalf("failed to decode resized image: %v", err)
+	}
+	decBounds := decImg.Bounds()
+	if decBounds.Dx() > 400 || decBounds.Dy() > 400 {
+		t.Errorf("expected resized image to be <= 400px, got %dx%d", decBounds.Dx(), decBounds.Dy())
+	}
+
+	// Test fallback on invalid string
+	fallback, _, err := CompressBase64Image("invalid_base64_not_image", 400, 80)
+	if err != nil {
+		t.Fatalf("expected no error on fallback: %v", err)
+	}
+	if fallback != "invalid_base64_not_image" {
+		t.Errorf("expected fallback to return original string")
 	}
 }

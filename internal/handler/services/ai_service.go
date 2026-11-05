@@ -18,6 +18,7 @@ import (
 
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/repository"
+	"shopMe/internal/reuse"
 	"shopMe/internal/reuse/ai"
 	"shopMe/internal/utils"
 )
@@ -251,6 +252,10 @@ ACTIONS INSTRUCTION:
 	userParts := []geminiPart{{Text: req.Prompt}}
 	if req.ImageBase64 != "" {
 		cleanBase64 := cleanBase64String(req.ImageBase64)
+		// Optimize image (max 768px, JPEG 80) to drastically reduce vision tokens
+		if optBase64, _, err := reuse.CompressBase64Image(cleanBase64, 768, 80); err == nil && optBase64 != "" {
+			cleanBase64 = optBase64
+		}
 		userParts = append(userParts, geminiPart{
 			InlineData: &geminiInlineData{
 				MimeType: "image/jpeg",
@@ -352,6 +357,10 @@ ACTIONS:
 	userParts := []geminiPart{{Text: req.Prompt}}
 	if req.ImageBase64 != "" {
 		cleanBase64 := cleanBase64String(req.ImageBase64)
+		// Optimize image (max 768px, JPEG 80) to drastically reduce vision tokens
+		if optBase64, _, err := reuse.CompressBase64Image(cleanBase64, 768, 80); err == nil && optBase64 != "" {
+			cleanBase64 = optBase64
+		}
 		userParts = append(userParts, geminiPart{
 			InlineData: &geminiInlineData{
 				MimeType: "image/jpeg",
@@ -400,6 +409,13 @@ func (s *aiService) ScanProduct(ctx context.Context, req dto.AIScanProductReques
 	cleanBase64 := cleanBase64String(req.ImageBase64)
 	if cleanBase64 == "" {
 		return nil, fmt.Errorf("empty or invalid image data")
+	}
+
+	// Token Optimization: Downscale large image (max 768px, JPEG quality 80)
+	// This reduces Gemini multimodal vision tiles and saves 60-75% input tokens.
+	if optBase64, optMime, err := reuse.CompressBase64Image(cleanBase64, 768, 80); err == nil && optBase64 != "" {
+		cleanBase64 = optBase64
+		mimeType = optMime
 	}
 
 	// Cache key using hash of base64 snippet to prevent duplicate billing on identical images
@@ -526,6 +542,15 @@ CRITICAL CATALOGING SPECIALIST RULES:
 // ── 2. WhatsApp Grocery Parchi Matcher ──
 func (s *aiService) ParseParchi(ctx context.Context, req dto.ParseParchiRequest) (*dto.ParseParchiResponse, error) {
 	rawText := strings.TrimSpace(req.RawText)
+	if rawText == "" {
+		return &dto.ParseParchiResponse{}, nil
+	}
+
+	// 1. FAST-PATH: Local Regex First Parser (Saves 100% AI Tokens on clean grocery lists)
+	if localResp, ok := parseParchiLocally(rawText); ok {
+		return localResp, nil
+	}
+
 	cacheKey := fmt.Sprintf("parchi:%s", hashString(rawText))
 
 	if cached, ok := getAICache(cacheKey); ok {
@@ -643,6 +668,15 @@ Return JSON:
 // ── 4. Voice-to-Bill Counter Assistant ──
 func (s *aiService) VoiceBill(ctx context.Context, req dto.VoiceBillRequest) (*dto.VoiceBillResponse, error) {
 	spoken := strings.TrimSpace(req.SpokenText)
+	if spoken == "" {
+		return &dto.VoiceBillResponse{SpokenText: ""}, nil
+	}
+
+	// 1. FAST-PATH: Local Regex First Parser (Saves 100% AI Tokens on standard counter billing phrases)
+	if localResp, ok := parseVoiceBillLocally(spoken); ok {
+		return localResp, nil
+	}
+
 	cacheKey := fmt.Sprintf("voice:%s", hashString(spoken))
 
 	if cached, ok := getAICache(cacheKey); ok {

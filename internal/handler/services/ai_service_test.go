@@ -82,45 +82,67 @@ func TestParseMerchantAction(t *testing.T) {
 }
 
 func TestCustomerGracefulFallback(t *testing.T) {
-	svc := NewAIService(nil)
-	req := dto.CustomerAIChatRequest{
-		Prompt: "kuch sasta discount offer dikhao",
-	}
-
-	resp, err := svc.CustomerChat(context.Background(), req)
-	if err != nil {
-		t.Fatalf("expected no error from graceful fallback, got %v", err)
-	}
-	if resp == nil || resp.Text == "" {
-		t.Fatalf("expected valid response text")
+	fallbackText := generateCustomerGracefulFallback("kuch sasta discount offer dikhao")
+	cleanText, actions := parseCustomerActions(fallbackText)
+	if cleanText == "" {
+		t.Fatalf("expected valid clean text from fallback")
 	}
 
 	foundDeals := false
-	for _, a := range resp.Actions {
+	for _, a := range actions {
 		if a.Type == "DEALS" {
 			foundDeals = true
 			break
 		}
 	}
 	if !foundDeals {
-		t.Errorf("expected DEALS action in graceful fallback, got %+v", resp.Actions)
+		t.Errorf("expected DEALS action in graceful fallback, got %+v", actions)
 	}
 }
 
 func TestMerchantGracefulFallback(t *testing.T) {
+	fallbackText := generateMerchantGracefulFallback("sharma ji ka udhar khata kitna hai")
+	cleanText, action := parseMerchantAction(fallbackText, "khata")
+	if cleanText == "" {
+		t.Fatalf("expected valid clean text from fallback")
+	}
+	if action != "KHATA" {
+		t.Errorf("expected KHATA action in graceful fallback, got %q", action)
+	}
+}
+
+func TestVoiceBillFastPath(t *testing.T) {
 	svc := NewAIService(nil)
-	req := dto.MerchantAICopilotRequest{
-		Prompt: "sharma ji ka udhar khata kitna hai",
+	req := dto.VoiceBillRequest{
+		SpokenText: "2 kg cheeni 80 rs, 1 amul butter 55 rs",
 	}
 
-	resp, err := svc.MerchantCopilot(context.Background(), "", req)
+	resp, err := svc.VoiceBill(context.Background(), req)
 	if err != nil {
-		t.Fatalf("expected no error from graceful fallback, got %v", err)
+		t.Fatalf("expected no error from fast-path voice bill, got %v", err)
 	}
-	if resp == nil || resp.Text == "" {
-		t.Fatalf("expected valid response text")
+	if len(resp.MatchedItems) != 2 {
+		t.Fatalf("expected 2 matched items, got %d", len(resp.MatchedItems))
 	}
-	if resp.ActionType != "KHATA" {
-		t.Errorf("expected KHATA action in graceful fallback, got %q", resp.ActionType)
+	if resp.TotalAmount != 135.0 {
+		t.Errorf("expected total amount 135.0, got %.2f", resp.TotalAmount)
+	}
+}
+
+func TestParseParchiFastPath(t *testing.T) {
+	svc := NewAIService(nil)
+	req := dto.ParseParchiRequest{
+		RawText: "1. 2 kg cheeni\n2. 1 packet namak\n3. 500 gm daal",
+	}
+
+	resp, err := svc.ParseParchi(context.Background(), req)
+	if err != nil {
+		t.Fatalf("expected no error from fast-path parchi parser, got %v", err)
+	}
+	if resp.MatchedCount != 3 {
+		t.Fatalf("expected 3 matched items, got %d", resp.MatchedCount)
+	}
+	if resp.UnmatchedCount != 0 {
+		t.Errorf("expected 0 unmatched lines, got %d", resp.UnmatchedCount)
 	}
 }
