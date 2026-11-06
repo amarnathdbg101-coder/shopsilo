@@ -551,6 +551,11 @@ func (s *POSService) GetDailySummary(ctx context.Context, shopOwnerUserID string
 
 // GenerateReceiptPDF generates the PDF bytes for a digital bill receipt with concurrency limiting.
 func (s *POSService) GenerateReceiptPDF(ctx context.Context, billNumber string) ([]byte, error) {
+	cacheKey := "receipt_pdf:" + billNumber
+	if cachedBytes, found := utils.GetCachedPDF(cacheKey); found {
+		return cachedBytes, nil
+	}
+
 	bill, err := s.posRepo.GetBillByNumber(ctx, billNumber)
 	if err != nil {
 		if errors.Is(err, repository.ErrBillNotFound) {
@@ -559,9 +564,14 @@ func (s *POSService) GenerateReceiptPDF(ctx context.Context, billNumber string) 
 		return nil, err
 	}
 
-	return utils.RenderPDFWithConcurrencyLimit(ctx, func() ([]byte, error) {
+	pdfBytes, err := utils.RenderPDFWithConcurrencyLimit(ctx, func() ([]byte, error) {
 		return utils.GenerateSmartBillPDF(ctx, bill)
 	})
+	if err != nil {
+		return nil, err
+	}
+	utils.SetCachedPDF(cacheKey, pdfBytes, 24*time.Hour)
+	return pdfBytes, nil
 }
 
 // GetDailyCloseReport aggregates end-of-day counter sales, khata debt repayments, and expenses to calculate physical drawer cash.

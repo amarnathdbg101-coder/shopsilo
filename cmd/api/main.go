@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"sync"
 	"shopMe/internal/handler/routes"
 	"shopMe/internal/middleware"
 	"shopMe/internal/migration"
@@ -34,18 +35,30 @@ func main() {
 
 	router := routes.RouteSetup(db, logger)
 
-	// Context for background concurrent workers
+	// Context and WaitGroup for background concurrent workers
 	appCtx, stopApp := context.WithCancel(context.Background())
 	defer stopApp()
+	var workerWG sync.WaitGroup
+
 	// Background Concurrency Workers
-	go worker.StartReservationCleaner(appCtx, db, logger)
-	go worker.StartBackupWorker(appCtx, db, logger)
-	go worker.StartOutboxWorker(appCtx, db, logger)
+	workerWG.Add(3)
+	go func() {
+		defer workerWG.Done()
+		worker.StartReservationCleaner(appCtx, db, logger)
+	}()
+	go func() {
+		defer workerWG.Done()
+		worker.StartBackupWorker(appCtx, db, logger)
+	}()
+	go func() {
+		defer workerWG.Done()
+		worker.StartOutboxWorker(appCtx, db, logger)
+	}()
 
 	server := servers.NewServer(utils.MustLoad().Port, router)
 
 	servers.StartServer(server, logger)
 
-	// Channel to listen for interrupt signals for graceful shutdown
-	servers.GracefulShutdown(server, stopApp, logger)
+	// Channel to listen for interrupt signals for graceful shutdown with worker coordination
+	servers.GracefulShutdown(server, stopApp, logger, &workerWG)
 }

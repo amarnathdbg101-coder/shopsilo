@@ -32,7 +32,7 @@ func StartBackupWorker(ctx context.Context, db *pgxpool.Pool, logger *zap.Logger
 						logger.Error("backup worker caught panic during execution", zap.Any("panic", r))
 					}
 				}()
-				cleanCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				cleanCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 				defer cancel()
 				meta, err := utils.GenerateFullDatabaseBackupDump(cleanCtx, db)
 				if err != nil {

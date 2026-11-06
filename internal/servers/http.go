@@ -8,6 +8,7 @@ import (
     "net/http"
     "os"
     "os/signal"
+    "sync"
     "syscall"
     "time"
 
@@ -35,7 +36,7 @@ func StartServer(server *http.Server, logger *zap.Logger) {
     }()
 }
 
-func GracefulShutdown(server *http.Server, stopApp context.CancelFunc, logger *zap.Logger) {
+func GracefulShutdown(server *http.Server, stopApp context.CancelFunc, logger *zap.Logger, wg ...*sync.WaitGroup) {
     // Channel to listen for interrupt signals
     stop := make(chan os.Signal, 1)
     signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
@@ -49,6 +50,21 @@ func GracefulShutdown(server *http.Server, stopApp context.CancelFunc, logger *z
 
     if err := server.Shutdown(ctx); err != nil {
         logger.Error("server forced to shutdown", zap.Error(err))
+    }
+
+    if len(wg) > 0 && wg[0] != nil {
+        logger.Info("waiting for background workers to complete cleanly...")
+        done := make(chan struct{})
+        go func() {
+            wg[0].Wait()
+            close(done)
+        }()
+        select {
+        case <-done:
+            logger.Info("all background workers terminated gracefully")
+        case <-time.After(5 * time.Second):
+            logger.Warn("background workers termination timed out, exiting")
+        }
     }
 
     logger.Info("server exited cleanly")

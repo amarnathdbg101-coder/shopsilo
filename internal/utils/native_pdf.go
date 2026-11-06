@@ -222,29 +222,31 @@ func GenerateNativeBillPDF(bill *model.POSBill, opts NativePDFOptions) ([]byte, 
 
 	// 4. ITEMS TABLE
 	tblH := 18.0
-	pdf.SetFillColor(cTblHeader[0], cTblHeader[1], cTblHeader[2])
-	pdf.RectFromUpperLeftWithStyle(contentLeft, curY, contentWidth, tblH, "F")
-
 	w1 := 22.0  // #
 	w2 := 185.0 // Description
 	w3 := 40.0  // Qty
 	w4 := 60.0  // Rate
 	w5 := 73.0  // Total
 
-	pdf.SetTextColor(255, 255, 255)
-	_ = pdf.SetFont("noto-bold", "", 8)
+	renderTableHeader := func(y float64) {
+		pdf.SetFillColor(cTblHeader[0], cTblHeader[1], cTblHeader[2])
+		pdf.RectFromUpperLeftWithStyle(contentLeft, y, contentWidth, tblH, "F")
+		pdf.SetTextColor(255, 255, 255)
+		_ = pdf.SetFont("noto-bold", "", 8)
 
-	pdf.SetXY(contentLeft, curY)
-	_ = pdf.CellWithOption(&gopdf.Rect{W: w1, H: tblH}, "#", gopdf.CellOption{Align: gopdf.Center | gopdf.Middle})
-	pdf.SetXY(contentLeft+w1+4, curY)
-	_ = pdf.CellWithOption(&gopdf.Rect{W: w2, H: tblH}, "Item Description", gopdf.CellOption{Align: gopdf.Left | gopdf.Middle})
-	pdf.SetXY(contentLeft+w1+w2, curY)
-	_ = pdf.CellWithOption(&gopdf.Rect{W: w3, H: tblH}, "Qty", gopdf.CellOption{Align: gopdf.Center | gopdf.Middle})
-	pdf.SetXY(contentLeft+w1+w2+w3, curY)
-	_ = pdf.CellWithOption(&gopdf.Rect{W: w4, H: tblH}, "Rate", gopdf.CellOption{Align: gopdf.Right | gopdf.Middle})
-	pdf.SetXY(contentLeft+w1+w2+w3+w4-4, curY)
-	_ = pdf.CellWithOption(&gopdf.Rect{W: w5, H: tblH}, "Total (₹)", gopdf.CellOption{Align: gopdf.Right | gopdf.Middle})
+		pdf.SetXY(contentLeft, y)
+		_ = pdf.CellWithOption(&gopdf.Rect{W: w1, H: tblH}, "#", gopdf.CellOption{Align: gopdf.Center | gopdf.Middle})
+		pdf.SetXY(contentLeft+w1+4, y)
+		_ = pdf.CellWithOption(&gopdf.Rect{W: w2, H: tblH}, "Item Description", gopdf.CellOption{Align: gopdf.Left | gopdf.Middle})
+		pdf.SetXY(contentLeft+w1+w2, y)
+		_ = pdf.CellWithOption(&gopdf.Rect{W: w3, H: tblH}, "Qty", gopdf.CellOption{Align: gopdf.Center | gopdf.Middle})
+		pdf.SetXY(contentLeft+w1+w2+w3, y)
+		_ = pdf.CellWithOption(&gopdf.Rect{W: w4, H: tblH}, "Rate", gopdf.CellOption{Align: gopdf.Right | gopdf.Middle})
+		pdf.SetXY(contentLeft+w1+w2+w3+w4-4, y)
+		_ = pdf.CellWithOption(&gopdf.Rect{W: w5, H: tblH}, "Total (₹)", gopdf.CellOption{Align: gopdf.Right | gopdf.Middle})
+	}
 
+	renderTableHeader(curY)
 	curY += tblH
 	rowHeight := 17.0
 
@@ -252,6 +254,8 @@ func GenerateNativeBillPDF(bill *model.POSBill, opts NativePDFOptions) ([]byte, 
 		if curY > 500 {
 			pdf.AddPage()
 			curY = 30.0
+			renderTableHeader(curY)
+			curY += tblH
 		}
 
 		if i%2 == 1 {
@@ -272,9 +276,12 @@ func GenerateNativeBillPDF(bill *model.POSBill, opts NativePDFOptions) ([]byte, 
 		// 2. Product Name
 		pdf.SetTextColor(cDark[0], cDark[1], cDark[2])
 		_ = pdf.SetFont("noto-bold", "", 8)
-		displayName := it.ProductName
+		displayName := strings.TrimSpace(it.ProductName)
+		if displayName == "" {
+			displayName = fmt.Sprintf("Item #%d", i+1)
+		}
 		if it.ProductSKU != "" {
-			displayName = fmt.Sprintf("%s [%s]", it.ProductName, it.ProductSKU)
+			displayName = fmt.Sprintf("%s [%s]", displayName, it.ProductSKU)
 		}
 		displayName = TruncateRunes(displayName, 34)
 		pdf.SetXY(contentLeft+w1+4, curY)
@@ -301,7 +308,13 @@ func GenerateNativeBillPDF(bill *model.POSBill, opts NativePDFOptions) ([]byte, 
 	}
 
 	// 5. SUMMARY & VERIFICATION BOX
-	curY += 10.0
+	// If current Y position leaves less than 120pt before footer, start summary on new page to prevent overlap
+	if curY > 430 {
+		pdf.AddPage()
+		curY = 30.0
+	} else {
+		curY += 10.0
+	}
 
 	// QR Code on Left
 	qrPayload := fmt.Sprintf("INVOICE:%s|AMT:%.2f|SHOP:%s", bill.BillNumber, bill.TotalAmount, storeName)
@@ -435,16 +448,29 @@ func GenerateNativeBillPDF(bill *model.POSBill, opts NativePDFOptions) ([]byte, 
 // GenerateNativeThermalBillPDF generates a dedicated 80mm POS thermal roll receipt.
 // It is lightweight, compact, and renders in under 15ms.
 func GenerateNativeThermalBillPDF(bill *model.POSBill) ([]byte, error) {
+	if bill == nil {
+		return nil, fmt.Errorf("pos bill is nil")
+	}
+
 	pdf := gopdf.GoPdf{}
 
-	// 80mm width = ~226 points. Height is calculated dynamically based on item count.
+	// 80mm width = ~226 points. Height is calculated accurately to prevent cutoffs.
 	pageWidth := 226.0
-	pageHeight := 240.0 + float64(len(bill.Items))*18.0
+	pageHeight := 140.0 + float64(len(bill.Items))*16.0
 	if bill.DiscountAmount > 0 {
 		pageHeight += 16.0
 	}
-	if bill.KhataAmount > 0 || bill.OnlineAmount > 0 {
-		pageHeight += 30.0
+	if bill.CashAmount > 0 {
+		pageHeight += 14.0
+	}
+	if bill.OnlineAmount > 0 {
+		pageHeight += 14.0
+	}
+	if bill.KhataAmount > 0 {
+		pageHeight += 14.0
+	}
+	if pageHeight < 210.0 {
+		pageHeight = 210.0
 	}
 
 	pdf.Start(gopdf.Config{PageSize: gopdf.Rect{W: pageWidth, H: pageHeight}})
@@ -456,6 +482,8 @@ func GenerateNativeThermalBillPDF(bill *model.POSBill) ([]byte, error) {
 
 	cDark := []uint8{15, 23, 42}
 	cMuted := []uint8{100, 116, 139}
+	cGreen := []uint8{22, 163, 74}
+	cRed := []uint8{220, 38, 38}
 
 	storeName := "ShopSilo Retail Store"
 	if bill.Shop != nil && strings.TrimSpace(bill.Shop.Name) != "" {
@@ -465,15 +493,15 @@ func GenerateNativeThermalBillPDF(bill *model.POSBill) ([]byte, error) {
 	// 1. Centered Header
 	pdf.SetTextColor(cDark[0], cDark[1], cDark[2])
 	_ = pdf.SetFont("noto-bold", "", 12)
-	pdf.SetXY(10, 12)
+	pdf.SetXY(10, 10)
 	_ = pdf.CellWithOption(&gopdf.Rect{W: 206, H: 14}, strings.ToUpper(storeName), gopdf.CellOption{Align: gopdf.Center})
 
 	pdf.SetTextColor(cMuted[0], cMuted[1], cMuted[2])
 	_ = pdf.SetFont("noto-reg", "", 7.5)
-	pdf.SetXY(10, 27)
+	pdf.SetXY(10, 25)
 	_ = pdf.CellWithOption(&gopdf.Rect{W: 206, H: 10}, "RETAIL TAX INVOICE #"+bill.BillNumber, gopdf.CellOption{Align: gopdf.Center})
 
-	pdf.SetXY(10, 38)
+	pdf.SetXY(10, 36)
 	dateStr := bill.CreatedAt.Format("02/01/2006 03:04 PM")
 	if bill.CreatedAt.IsZero() {
 		dateStr = time.Now().Format("02/01/2006 03:04 PM")
@@ -483,10 +511,10 @@ func GenerateNativeThermalBillPDF(bill *model.POSBill) ([]byte, error) {
 	// Divider
 	pdf.SetStrokeColor(200, 200, 200)
 	pdf.SetLineWidth(0.6)
-	pdf.Line(10, 50, 216, 50)
+	pdf.Line(10, 48, 216, 48)
 
 	// 2. Items Table
-	curY := 56.0
+	curY := 52.0
 	_ = pdf.SetFont("noto-bold", "", 7.5)
 	pdf.SetTextColor(cDark[0], cDark[1], cDark[2])
 	pdf.SetXY(10, curY)
@@ -501,9 +529,14 @@ func GenerateNativeThermalBillPDF(bill *model.POSBill) ([]byte, error) {
 	curY += 4.0
 
 	_ = pdf.SetFont("noto-reg", "", 7.5)
-	for _, it := range bill.Items {
+	for i, it := range bill.Items {
 		pdf.SetXY(10, curY)
-		_ = pdf.Cell(&gopdf.Rect{W: 110, H: 10}, it.ProductName)
+		displayName := strings.TrimSpace(it.ProductName)
+		if displayName == "" {
+			displayName = fmt.Sprintf("Item #%d", i+1)
+		}
+		displayName = TruncateRunes(displayName, 22)
+		_ = pdf.Cell(&gopdf.Rect{W: 110, H: 10}, displayName)
 
 		pdf.SetXY(120, curY)
 		_ = pdf.CellWithOption(&gopdf.Rect{W: 30, H: 10}, fmt.Sprintf("%d", it.Quantity), gopdf.CellOption{Align: gopdf.Center})
@@ -514,17 +547,63 @@ func GenerateNativeThermalBillPDF(bill *model.POSBill) ([]byte, error) {
 	}
 
 	pdf.Line(10, curY, 216, curY)
-	curY += 6.0
+	curY += 5.0
 
-	// 3. Grand Total
-	_ = pdf.SetFont("noto-bold", "", 10)
+	// 3. Discount (if present)
+	if bill.DiscountAmount > 0 {
+		_ = pdf.SetFont("noto-reg", "", 8)
+		pdf.SetTextColor(cGreen[0], cGreen[1], cGreen[2])
+		pdf.SetXY(10, curY)
+		_ = pdf.Cell(&gopdf.Rect{W: 100, H: 12}, "Discount Savings:")
+		pdf.SetXY(110, curY)
+		_ = pdf.CellWithOption(&gopdf.Rect{W: 106, H: 12}, fmt.Sprintf("-₹%.2f", bill.DiscountAmount), gopdf.CellOption{Align: gopdf.Right})
+		curY += 14.0
+	}
+
+	// 4. Grand Total
+	pdf.SetTextColor(cDark[0], cDark[1], cDark[2])
+	_ = pdf.SetFont("noto-bold", "", 9.5)
 	pdf.SetXY(10, curY)
 	_ = pdf.Cell(&gopdf.Rect{W: 100, H: 14}, "Grand Total:")
 	pdf.SetXY(110, curY)
 	_ = pdf.CellWithOption(&gopdf.Rect{W: 106, H: 14}, fmt.Sprintf("₹%.2f", bill.TotalAmount), gopdf.CellOption{Align: gopdf.Right})
-	curY += 18.0
+	curY += 16.0
 
-	// 4. Centered Footer Note
+	// 5. Payment Tender Breakdown (Cash, Online, Khata)
+	if bill.CashAmount > 0 || bill.OnlineAmount > 0 || bill.KhataAmount > 0 {
+		_ = pdf.SetFont("noto-reg", "", 7.5)
+		pdf.SetTextColor(cMuted[0], cMuted[1], cMuted[2])
+
+		if bill.CashAmount > 0 {
+			pdf.SetXY(10, curY)
+			_ = pdf.Cell(&gopdf.Rect{W: 90, H: 10}, "Cash Paid:")
+			pdf.SetXY(100, curY)
+			_ = pdf.CellWithOption(&gopdf.Rect{W: 116, H: 10}, fmt.Sprintf("₹%.2f", bill.CashAmount), gopdf.CellOption{Align: gopdf.Right})
+			curY += 12.0
+		}
+		if bill.OnlineAmount > 0 {
+			pdf.SetXY(10, curY)
+			_ = pdf.Cell(&gopdf.Rect{W: 90, H: 10}, "UPI / Digital:")
+			pdf.SetXY(100, curY)
+			_ = pdf.CellWithOption(&gopdf.Rect{W: 116, H: 10}, fmt.Sprintf("₹%.2f", bill.OnlineAmount), gopdf.CellOption{Align: gopdf.Right})
+			curY += 12.0
+		}
+		if bill.KhataAmount > 0 {
+			pdf.SetTextColor(cRed[0], cRed[1], cRed[2])
+			pdf.SetXY(10, curY)
+			_ = pdf.Cell(&gopdf.Rect{W: 90, H: 10}, "Khata Due:")
+			pdf.SetXY(100, curY)
+			_ = pdf.CellWithOption(&gopdf.Rect{W: 116, H: 10}, fmt.Sprintf("₹%.2f", bill.KhataAmount), gopdf.CellOption{Align: gopdf.Right})
+			curY += 12.0
+		}
+	}
+
+	pdf.SetStrokeColor(220, 220, 220)
+	pdf.SetLineWidth(0.4)
+	pdf.Line(10, curY+2, 216, curY+2)
+	curY += 6.0
+
+	// 6. Centered Footer Note
 	pdf.SetTextColor(cMuted[0], cMuted[1], cMuted[2])
 	_ = pdf.SetFont("noto-reg", "", 7)
 	pdf.SetXY(10, curY)

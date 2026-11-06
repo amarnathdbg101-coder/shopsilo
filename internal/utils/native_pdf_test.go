@@ -2,6 +2,7 @@ package utils_test
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 	"time"
 
@@ -235,4 +236,66 @@ func TestGenerateNativeCustomProcurementPDF_MultilingualAndBlankResilience(t *te
 	}
 
 	t.Logf("✅ Native Mandi Procurement PDF (13 complex items) generated in %v (%d KB)", duration, len(pdfBytes)/1024)
+}
+
+func TestGenerateNativeBillPDF_MultiPageOverflow(t *testing.T) {
+	bill := samplePOSBill()
+
+	// Populate 28 items to force multi-page table break
+	bill.Items = make([]*model.POSBillItem, 28)
+	for i := 0; i < 28; i++ {
+		bill.Items[i] = &model.POSBillItem{
+			ProductName: fmt.Sprintf("Designer Kurti / Cosmetic Item #%d", i+1),
+			ProductSKU:  fmt.Sprintf("SKU-%03d", i+1),
+			Quantity:    1 + (i % 3),
+			UnitPrice:   150.0 + float64(i*10),
+			TotalPrice:  (150.0 + float64(i*10)) * float64(1+(i%3)),
+		}
+	}
+
+	start := time.Now()
+	pdfBytes, err := utils.GenerateNativeBillPDF(bill, utils.NativePDFOptions{Format: utils.FormatA5})
+	duration := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("Multi-page bill generation failed: %v", err)
+	}
+
+	if len(pdfBytes) < 1000 {
+		t.Fatalf("Suspiciously small multi-page PDF: %d bytes", len(pdfBytes))
+	}
+
+	if !bytes.HasPrefix(pdfBytes, []byte("%PDF-")) {
+		t.Fatalf("Missing %%PDF- magic header")
+	}
+
+	t.Logf("✅ Multi-Page A5 Bill PDF (28 items) rendered successfully in %v (%d KB)", duration, len(pdfBytes)/1024)
+}
+
+func TestPDFCache_InstantDelivery(t *testing.T) {
+	key := "test_receipt:BIL-9999"
+	dummyPDF := []byte("%PDF-1.4 dummy bill content for caching test")
+
+	// 1. Initial lookup should be miss
+	if _, found := utils.GetCachedPDF(key); found {
+		t.Fatalf("Expected cache miss for uninserted key")
+	}
+
+	// 2. Insert with 10s TTL
+	utils.SetCachedPDF(key, dummyPDF, 10*time.Second)
+
+	// 3. Fast hit
+	start := time.Now()
+	cached, found := utils.GetCachedPDF(key)
+	lookupDuration := time.Since(start)
+
+	if !found {
+		t.Fatalf("Expected cache hit after insertion")
+	}
+
+	if !bytes.Equal(cached, dummyPDF) {
+		t.Fatalf("Cached bytes mismatch")
+	}
+
+	t.Logf("✅ In-Memory PDF Cache hit in %v (Instant sub-microsecond delivery)", lookupDuration)
 }

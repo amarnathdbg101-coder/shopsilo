@@ -51,12 +51,20 @@ func processOutboxEvents(ctx context.Context, db *pgxpool.Pool, wsHub *services.
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
+	// Atomic fetch-and-lock: locks up to 100 pending events and immediately marks them 'processing'
+	// using FOR UPDATE SKIP LOCKED to prevent duplicate broadcasts across multi-node or concurrent workers.
 	query := `
-		SELECT id, shop_id, event_type, payload
-		FROM outbox_events
-		WHERE status = 'pending'
-		ORDER BY created_at ASC
-		LIMIT 100
+		UPDATE outbox_events
+		SET status = 'processing', processed_at = NOW()
+		WHERE id IN (
+			SELECT id
+			FROM outbox_events
+			WHERE status = 'pending'
+			ORDER BY created_at ASC
+			LIMIT 100
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING id, shop_id, event_type, payload
 	`
 
 	rows, err := db.Query(queryCtx, query)

@@ -33,7 +33,7 @@ func StartReservationCleaner(ctx context.Context, db *pgxpool.Pool, logger *zap.
 						logger.Error("reservation cleaner caught panic during execution", zap.Any("panic", r))
 					}
 				}()
-				cleanCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				cleanCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 				defer cancel()
 				if err := resRepo.ExpireStaleReservations(cleanCtx); err != nil {
 					logger.Warn("reservation cleaner encountered an issue", zap.Error(err))
