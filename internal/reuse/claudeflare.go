@@ -209,3 +209,36 @@ func DeleteImage(imageURL string) error {
 	})
 	return err
 }
+
+// UploadBytes uploads raw image bytes to Cloudflare R2 under the specified folder.
+func UploadBytes(data []byte, contentType, folder, ext string) (string, error) {
+	if len(data) == 0 {
+		return "", errors.New("cannot upload empty data")
+	}
+
+	if !strings.HasPrefix(ext, ".") {
+		ext = "." + ext
+	}
+
+	randomSuffix := rand.Intn(900000) + 100000
+	filename := fmt.Sprintf("%d_%d%s", time.Now().UnixNano(), randomSuffix, ext)
+	key := fmt.Sprintf("%s/%s", strings.Trim(folder, "/"), filename)
+
+	cfg := utils.MustLoad()
+	svc := NewR2Client()
+
+	_, err := svc.PutObject(&s3.PutObjectInput{
+		Bucket:      aws.String(cfg.Bucket),
+		Key:         aws.String(key),
+		Body:        bytes.NewReader(data),
+		ContentType: aws.String(contentType),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to upload image bytes to storage: %w", err)
+	}
+
+	if cfg.PublicURL != "" && !strings.Contains(cfg.PublicURL, ".r2.dev") {
+		return fmt.Sprintf("%s/%s", strings.TrimRight(cfg.PublicURL, "/"), key), nil
+	}
+	return fmt.Sprintf("/images/%s", key), nil
+}

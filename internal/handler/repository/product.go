@@ -105,7 +105,7 @@ func (r *ProductRepo) setCachedSearch(key string, products []*model.Product, tot
 	r.searchCache[key] = searchCacheEntry{
 		products:   products,
 		totalCount: totalCount,
-		expiresAt:  time.Now().Add(45 * time.Second),
+		expiresAt:  time.Now().Add(60 * time.Second),
 	}
 }
 
@@ -691,24 +691,28 @@ func (r *ProductRepo) FindBySKU(ctx context.Context, shopID, sku string) (*model
 
 func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]*model.Product, int, error) {
 	cleanedSearch := utils.CleanSearchQuery(filter.Search)
-	cacheKey := ""
-	if cleanedSearch != "" {
-		latStr, lngStr, radStr := "none", "none", "none"
-		if filter.Lat != nil && filter.Lng != nil {
-			latStr = fmt.Sprintf("%.3f", *filter.Lat)
-			lngStr = fmt.Sprintf("%.3f", *filter.Lng)
-			radVal := 10.0
-			if filter.RadiusKm != nil && *filter.RadiusKm > 0 {
-				radVal = *filter.RadiusKm
-			}
-			radStr = fmt.Sprintf("%.1f", radVal)
+	latStr, lngStr, radStr := "none", "none", "none"
+	if filter.Lat != nil && filter.Lng != nil {
+		latStr = fmt.Sprintf("%.3f", *filter.Lat)
+		lngStr = fmt.Sprintf("%.3f", *filter.Lng)
+		radVal := 10.0
+		if filter.RadiusKm != nil && *filter.RadiusKm > 0 {
+			radVal = *filter.RadiusKm
 		}
-		cacheKey = fmt.Sprintf("p_srch:%s:s:%s:c:%s:sb:%s:p:%d:l:%d:min:%.0f:max:%.0f:lat:%s:lng:%s:rad:%s:city:%s",
-			cleanedSearch, filter.ShopID, filter.CategoryID, filter.SortBy, filter.Page, filter.Limit, filter.MinPrice, filter.MaxPrice,
-			latStr, lngStr, radStr, strings.ToLower(strings.TrimSpace(filter.City)))
-		if cachedProds, cachedCount, found := r.getCachedSearch(cacheKey); found {
-			return cachedProds, cachedCount, nil
-		}
+		radStr = fmt.Sprintf("%.1f", radVal)
+	}
+	featStr := "all"
+	if filter.IsFeatured != nil {
+		featStr = fmt.Sprintf("%t", *filter.IsFeatured)
+	}
+	cacheKey := fmt.Sprintf("p_srch:%s:s:%s:c:%s:bc:%s:sz:%s:col:%s:sb:%s:p:%d:l:%d:min:%.0f:max:%.0f:feat:%s:lat:%s:lng:%s:rad:%s:city:%s",
+		cleanedSearch, filter.ShopID, filter.CategoryID, strings.TrimSpace(filter.Barcode),
+		strings.ToLower(strings.TrimSpace(filter.Size)), strings.ToLower(strings.TrimSpace(filter.Color)),
+		filter.SortBy, filter.Page, filter.Limit, filter.MinPrice, filter.MaxPrice, featStr,
+		latStr, lngStr, radStr, strings.ToLower(strings.TrimSpace(filter.City)))
+
+	if cachedProds, cachedCount, found := r.getCachedSearch(cacheKey); found {
+		return cachedProds, cachedCount, nil
 	}
 
 	page := filter.Page
@@ -960,6 +964,9 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 	}
 
 	if totalCount == 0 {
+		if cacheKey != "" {
+			r.setCachedSearch(cacheKey, []*model.Product{}, 0)
+		}
 		return []*model.Product{}, 0, nil
 	}
 
@@ -1091,7 +1098,7 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 		products = append(products, p)
 	}
 
-	if cacheKey != "" && len(products) > 0 {
+	if cacheKey != "" {
 		r.setCachedSearch(cacheKey, products, totalCount)
 	}
 

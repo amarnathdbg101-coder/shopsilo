@@ -129,6 +129,43 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	locationService := services.NewLocationService(locationRepo, shopRepo, productRepo)
 	locationc := controller.NewLocationController(locationService)
 
+	// Live Margin Shield & POS Fast-Grid Hotkeys
+	hotkeyRepo := repository.NewHotkeyRepo(db, logger)
+	marginService := services.NewMarginService(shopRepo, hotkeyRepo, logger)
+	marginc := controller.NewMarginController(marginService)
+
+	// Cash Drawer Telemetry & Staff Shift Accountability
+	drawerRepo := repository.NewCashDrawerRepo(db, logger)
+	drawerService := services.NewCashDrawerService(shopRepo, drawerRepo, logger)
+	drawerc := controller.NewCashDrawerController(drawerService)
+	posService.SetDrawerRepo(drawerRepo)
+
+	// Milestone 3: Scan & Go Self-Checkout, Damage Claims Vault & Reverse Returns Lookup
+	scanRepo := repository.NewScanAndGoRepo(db, logger)
+	scanService := services.NewScanAndGoService(scanRepo, shopRepo, productRepo, posService, logger)
+	scanc := controller.NewScanAndGoController(scanService)
+
+	claimRepo := repository.NewDamageClaimRepo(db, logger)
+	claimService := services.NewDamageClaimService(claimRepo, shopRepo, logger)
+	claimc := controller.NewDamageClaimController(claimService)
+
+	returnLookupRepo := repository.NewReturnLookupRepo(db, logger)
+	returnLookupService := services.NewReturnLookupService(returnLookupRepo, shopRepo, logger)
+	returnLookupc := controller.NewReturnLookupController(returnLookupService)
+
+	// Milestone 4: Product Batches, Near-Expiry Auto-Markdown Engine & Khata Micro-Installments
+	batchRepo := repository.NewBatchRepo(db, logger)
+	batchService := services.NewBatchService(batchRepo, shopRepo, productRepo, logger)
+	batchc := controller.NewBatchController(batchService)
+
+	microPlanRepo := repository.NewMicroPlanRepo(db, logger)
+	microPlanService := services.NewMicroPlanService(microPlanRepo, shopRepo, userRepo, khataRepo, logger)
+	microPlanc := controller.NewMicroPlanController(microPlanService)
+
+	// Milestone 5: Automated End-of-Day P&L PDF via Chromedp Browser Automation
+	chromedpPDFService := services.NewChromedpPDFService(shopRepo, posRepo, drawerRepo, logger)
+	eodc := controller.NewEODReportController(chromedpPDFService)
+
 	// Wire aggregated repos to shopService for unified batch endpoints
 	shopService.SetAggregatedRepos(categoryRepo, productRepo, posRepo, loyaltyRepo)
 
@@ -187,6 +224,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/home-feed", sc.GetHomeFeed)                                // Customer
 		r.Post("/ai/customer-chat", aic.CustomerChat)                      // Customer
 		r.Post("/ai/scan-product", aic.ScanProduct)                        // Both
+		r.Post("/ai/smart-studio-scan", aic.SmartStudioScan)                // Both - Intelligent Vision + Studio Engine
 		r.Post("/ai/parse-parchi", aic.ParseParchi)                        // Both
 		r.Post("/ai/semantic-search", aic.SemanticSearch)                  // Customer
 		r.Post("/ai/voice-bill", aic.VoiceBill)                            // Shop
@@ -235,6 +273,12 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/shops/{slug}/reviews", revc.List)
 		r.Get("/offers", loyc.ListAllOffers)
 		r.Get("/receipts/{bill_number}", posc.ViewPublicReceiptPDF)
+
+		// In-Store Scan & Go Self Checkout (Customer Cart)
+		r.Post("/scan-go/session", scanc.StartSession)
+		r.Post("/scan-go/session/{id}/items", scanc.AddItem)
+		r.Put("/scan-go/session/{id}/items/{itemId}", scanc.UpdateItem)
+		r.Get("/scan-go/session/{id}", scanc.GetSessionDetails)
 
 		// Customer AI Sathi
 		r.Post("/ai/chat", aic.CustomerChat)
@@ -337,10 +381,59 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.With(middleware.IdempotencyGuard).Post("/pos/checkout", posc.CreateSale)
 		r.Get("/pos/summary", posc.GetDailySummary)
 
-		// Merchant AI Copilot
+		// POS Financial Shield & Counter Velocity Hotkeys
+		r.Post("/pos/margin-check", marginc.CheckMargin)
+		r.Get("/pos/hotkeys", marginc.ListHotkeys)
+		r.Post("/pos/hotkeys", marginc.CreateHotkey)
+		r.Delete("/pos/hotkeys/{id}", marginc.DeleteHotkey)
+		r.Post("/pos/hotkeys/auto-populate", marginc.AutoPopulateHotkeys)
+
+		// Cash Drawer Shift Accountability & Drawer Telemetry
+		r.Get("/pos/drawer/current", drawerc.GetCurrentStatus)
+		r.Post("/pos/drawer/open", drawerc.OpenSession)
+		r.Post("/pos/drawer/close", drawerc.CloseSession)
+		r.Post("/pos/drawer/safe-drop", drawerc.RecordSafeDrop)
+		r.Post("/pos/drawer/expense", drawerc.RecordPettyExpense)
+		r.Get("/pos/drawer/history", drawerc.ListHistory)
+
+		// Scan & Go Counter Verification & 1-Tap Checkout
+		r.Get("/pos/scan-go/verify/{code}", scanc.VerifyAtCounter)
+		r.Post("/pos/scan-go/convert/{code}", scanc.ConvertToBill)
+
+		// Company Damage & Expiry Claim Vault
+		r.Post("/claims", claimc.CreateClaim)
+		r.Get("/claims", claimc.ListClaims)
+		r.Patch("/claims/{id}/status", claimc.UpdateClaimStatus)
+		r.Get("/claims/distributor/summary", claimc.GetDistributorStatement)
+
+		// Reverse Return Lookup (Receiptless Returns)
+		r.Get("/pos/returns/lookup", returnLookupc.LookupReturn)
+
+		// Batch Expiry Radar & Near-Expiry Auto-Markdown Engine
+		r.Post("/batches", batchc.CreateBatch)
+		r.Get("/batches/near-expiry", batchc.ListNearExpiry)
+		r.Post("/batches/markdown-scan", batchc.RunMarkdownScan)
+
+		// Khata Micro-Installments / Daily Chillar Settle
+		r.Post("/khata/micro-plans", microPlanc.CreatePlan)
+		r.Post("/khata/micro-plans/{id}/pay", microPlanc.RecordPayment)
+		r.Get("/khata/micro-plans/{id}", microPlanc.GetPlanSummary)
+		r.Get("/khata/micro-plans", microPlanc.ListPlans)
+
+		// Automated End-of-Day P&L PDF via Chromedp Browser Automation
+		r.Get("/pos/day-close/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
+		r.Get("/shops/me/pos/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
+
+		// Merchant AI Copilot & Vision Engines
 		r.Post("/ai/copilot", aic.MerchantCopilot)
+		r.Post("/ai/scan-product", aic.ScanProduct)
+		r.Post("/ai/smart-studio-scan", aic.SmartStudioScan)
 		r.Post("/ai/voice-bill", aic.VoiceBill)
 		r.Post("/ai/marketing-campaign", aic.GenerateMarketingCampaign)
+		r.Post("/ai/supplier-invoice", aic.ParseSupplierInvoice)
+		r.Post("/ai/cross-sell", aic.GetCrossSellRecommendations)
+		r.Get("/ai/dead-stock-bundles", aic.GetDeadStockBundles)
+		r.Post("/ai/recovery-nudge", aic.GenerateSmartRecoveryNudge)
 
 		// Merchant Udhar Ledger
 		r.Get("/khata/summary", khatac.GetSummary)
@@ -349,6 +442,59 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.With(middleware.IdempotencyGuard).Post("/khata/credit", khatac.RecordCredit)
 		r.With(middleware.IdempotencyGuard).Post("/khata/payment/{mobile}", khatac.RecordPayment)
 		r.Get("/khata/reminder/{mobile}", khatac.GetPaymentReminder)
+	})
+
+	// 🌐 Direct /api Aliases for POS, Drawer, Claims, Batches, Khata & Scan-Go
+	r.Route("/api", func(r chi.Router) {
+		r.Use(middleware.JWTAuth(utils.MustLoad().Jwt))
+
+		// 1. Live Margin Floor Check & Touch Counter Hotkeys
+		r.Post("/pos/margin-check", marginc.CheckMargin)
+		r.Get("/pos/hotkeys", marginc.ListHotkeys)
+		r.Post("/pos/hotkeys", marginc.CreateHotkey)
+		r.Delete("/pos/hotkeys/{id}", marginc.DeleteHotkey)
+		r.Post("/pos/hotkeys/auto-populate", marginc.AutoPopulateHotkeys)
+
+		// 2. Cash Drawer Shift Accountability & Safe Drops
+		r.Get("/pos/drawer/current", drawerc.GetCurrentStatus)
+		r.Post("/pos/drawer/open", drawerc.OpenSession)
+		r.Post("/pos/drawer/close", drawerc.CloseSession)
+		r.Post("/pos/drawer/safe-drop", drawerc.RecordSafeDrop)
+		r.Post("/pos/drawer/expense", drawerc.RecordPettyExpense)
+		r.Get("/pos/drawer/history", drawerc.ListHistory)
+
+		// 3. Scan & Go Counter Verification & 1-Tap Checkout
+		r.Get("/pos/scan-go/verify/{code}", scanc.VerifyAtCounter)
+		r.Post("/pos/scan-go/convert/{code}", scanc.ConvertToBill)
+
+		// 4. Company Damage Claim Vault & Receiptless Return Lookup
+		r.Post("/claims", claimc.CreateClaim)
+		r.Get("/claims", claimc.ListClaims)
+		r.Patch("/claims/{id}/status", claimc.UpdateClaimStatus)
+		r.Get("/claims/distributor/summary", claimc.GetDistributorStatement)
+		r.Get("/pos/returns/lookup", returnLookupc.LookupReturn)
+
+		// 5. Batch Expiry Radar & Near-Expiry Auto-Markdown Engine
+		r.Post("/batches", batchc.CreateBatch)
+		r.Get("/batches/near-expiry", batchc.ListNearExpiry)
+		r.Post("/batches/markdown-scan", batchc.RunMarkdownScan)
+
+		// 6. Khata Daily Micro-Installments
+		r.Post("/khata/micro-plans", microPlanc.CreatePlan)
+		r.Post("/khata/micro-plans/{id}/pay", microPlanc.RecordPayment)
+		r.Get("/khata/micro-plans/{id}", microPlanc.GetPlanSummary)
+		r.Get("/khata/micro-plans", microPlanc.ListPlans)
+
+		// 7. Chromedp Automated End-of-Day P&L PDF
+		r.Get("/pos/day-close/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
+
+		// 8. 🧠 AI Layer Engines
+		r.Post("/ai/supplier-invoice", aic.ParseSupplierInvoice)
+		r.Post("/ai/cross-sell", aic.GetCrossSellRecommendations)
+		r.Get("/ai/dead-stock-bundles", aic.GetDeadStockBundles)
+		r.Post("/ai/recovery-nudge", aic.GenerateSmartRecoveryNudge)
+		r.Post("/ai/voice-bill", aic.VoiceBill)
+		r.Post("/ai/marketing-campaign", aic.GenerateMarketingCampaign)
 	})
 
 	// Protected routes (JWT authentication required)

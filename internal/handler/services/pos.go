@@ -26,6 +26,11 @@ type POSService struct {
 	shopRepo    *repository.ShopRepo
 	productRepo *repository.ProductRepo
 	khataRepo   *repository.KhataRepo
+	drawerRepo  *repository.CashDrawerRepo
+}
+
+func (s *POSService) SetDrawerRepo(drawerRepo *repository.CashDrawerRepo) {
+	s.drawerRepo = drawerRepo
 }
 
 func NewPOSService(posRepo *repository.POSRepo, shopRepo *repository.ShopRepo, productRepo *repository.ProductRepo, khataRepo *repository.KhataRepo) *POSService {
@@ -371,6 +376,15 @@ case "split":
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, errors.New("failed to commit sale transaction")
+	}
+
+	// Telemetry: Synchronize physical cash received with active shift drawer
+	if s.drawerRepo != nil && (createdBill.CashAmount > 0 || createdBill.PaymentMethod == "cash") {
+		cashToRecord := createdBill.CashAmount
+		if cashToRecord <= 0 && createdBill.PaymentMethod == "cash" {
+			cashToRecord = createdBill.TotalAmount
+		}
+		_ = s.drawerRepo.AddCashSale(ctx, shop.ID, createdBill.ID, shopOwnerUserID, cashToRecord)
 	}
 
 	wsHub := GetWebSocketHub(nil)

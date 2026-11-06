@@ -10,6 +10,7 @@ import (
 	"shopMe/internal/handler/model"
 	"shopMe/internal/utils"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -85,15 +86,69 @@ func computeShopOpenStatus(s *model.Shop) {
 	s.IsCurrentlyOpen = true
 }
 
+type shopCacheEntry struct {
+	shop      *model.Shop
+	expiresAt time.Time
+}
+
 type ShopRepo struct {
-	db     *pgxpool.Pool
-	logger *zap.Logger
+	db        *pgxpool.Pool
+	logger    *zap.Logger
+	shopMu    sync.RWMutex
+	shopCache map[string]shopCacheEntry
 }
 
 func NewShopRepo(db *pgxpool.Pool, logger *zap.Logger) *ShopRepo {
 	return &ShopRepo{
-		db:     db,
-		logger: logger,
+		db:        db,
+		logger:    logger,
+		shopCache: make(map[string]shopCacheEntry),
+	}
+}
+
+// InvalidateShopCache flushes the in-memory shop profile cache when shop details are modified.
+func (r *ShopRepo) InvalidateShopCache() {
+	r.shopMu.Lock()
+	defer r.shopMu.Unlock()
+	r.shopCache = make(map[string]shopCacheEntry)
+}
+
+func (r *ShopRepo) getCachedShop(key string) (*model.Shop, bool) {
+	r.shopMu.RLock()
+	defer r.shopMu.RUnlock()
+	if entry, ok := r.shopCache[key]; ok {
+		if time.Now().Before(entry.expiresAt) {
+			cp := *entry.shop
+			computeShopOpenStatus(&cp)
+			return &cp, true
+		}
+	}
+	return nil, false
+}
+
+func (r *ShopRepo) setCachedShop(key string, s *model.Shop) {
+	if s == nil {
+		return
+	}
+	r.shopMu.Lock()
+	defer r.shopMu.Unlock()
+	if r.shopCache == nil {
+		r.shopCache = make(map[string]shopCacheEntry)
+	}
+	if len(r.shopCache) >= 300 {
+		now := time.Now()
+		for k, v := range r.shopCache {
+			if now.After(v.expiresAt) {
+				delete(r.shopCache, k)
+			}
+		}
+		if len(r.shopCache) >= 250 {
+			r.shopCache = make(map[string]shopCacheEntry)
+		}
+	}
+	r.shopCache[key] = shopCacheEntry{
+		shop:      s,
+		expiresAt: time.Now().Add(5 * time.Minute),
 	}
 }
 
@@ -226,10 +281,18 @@ func (r *ShopRepo) CreateWithTx(ctx context.Context, tx pgx.Tx, s *model.Shop) (
 	`, created.ID)
 
 	computeShopOpenStatus(created)
+	r.InvalidateShopCache()
 	return created, nil
 }
 
 func (r *ShopRepo) FindByUserID(ctx context.Context, userID string) (*model.Shop, error) {
+	cleanUID := strings.TrimSpace(userID)
+	if cleanUID != "" {
+		if cached, ok := r.getCachedShop("user:" + cleanUID); ok {
+			return cached, nil
+		}
+	}
+
 	query := `
 		SELECT id, user_id, name, slug, COALESCE(description, ''), COALESCE(category, ''), COALESCE(phone, ''), COALESCE(address, ''),
 		       latitude, longitude, COALESCE(city, ''), COALESCE(pincode, ''), COALESCE(whatsapp_number, ''),
@@ -291,6 +354,15 @@ func (r *ShopRepo) FindByUserID(ctx context.Context, userID string) (*model.Shop
 	}
 
 	computeShopOpenStatus(s)
+	if cleanUID != "" {
+		r.setCachedShop("user:"+cleanUID, s)
+	}
+	if s.ID != "" {
+		r.setCachedShop("id:"+s.ID, s)
+	}
+	if s.Slug != "" {
+		r.setCachedShop("slug:"+strings.ToLower(strings.TrimSpace(s.Slug)), s)
+	}
 	return s, nil
 }
 
@@ -342,6 +414,13 @@ func (r *ShopRepo) ListUserShops(ctx context.Context, userID string) ([]*model.S
 }
 
 func (r *ShopRepo) FindByID(ctx context.Context, id string) (*model.Shop, error) {
+	cleanID := strings.TrimSpace(id)
+	if cleanID != "" {
+		if cached, ok := r.getCachedShop("id:" + cleanID); ok {
+			return cached, nil
+		}
+	}
+
 	query := `
 		SELECT id, user_id, name, slug, COALESCE(description, ''), COALESCE(category, ''), COALESCE(phone, ''), COALESCE(address, ''),
 		       latitude, longitude, COALESCE(city, ''), COALESCE(pincode, ''), COALESCE(whatsapp_number, ''),
@@ -403,10 +482,26 @@ func (r *ShopRepo) FindByID(ctx context.Context, id string) (*model.Shop, error)
 	}
 
 	computeShopOpenStatus(s)
+	if cleanID != "" {
+		r.setCachedShop("id:"+cleanID, s)
+	}
+	if s.UserID != "" {
+		r.setCachedShop("user:"+s.UserID, s)
+	}
+	if s.Slug != "" {
+		r.setCachedShop("slug:"+strings.ToLower(strings.TrimSpace(s.Slug)), s)
+	}
 	return s, nil
 }
 
 func (r *ShopRepo) FindBySlug(ctx context.Context, slug string) (*model.Shop, error) {
+	cleanSlug := strings.ToLower(strings.TrimSpace(slug))
+	if cleanSlug != "" {
+		if cached, ok := r.getCachedShop("slug:" + cleanSlug); ok {
+			return cached, nil
+		}
+	}
+
 	query := `
 		SELECT id, user_id, name, slug, COALESCE(description, ''), COALESCE(category, ''), COALESCE(phone, ''), COALESCE(address, ''),
 		       latitude, longitude, COALESCE(city, ''), COALESCE(pincode, ''), COALESCE(whatsapp_number, ''),
@@ -468,6 +563,15 @@ func (r *ShopRepo) FindBySlug(ctx context.Context, slug string) (*model.Shop, er
 	}
 
 	computeShopOpenStatus(s)
+	if cleanSlug != "" {
+		r.setCachedShop("slug:"+cleanSlug, s)
+	}
+	if s.ID != "" {
+		r.setCachedShop("id:"+s.ID, s)
+	}
+	if s.UserID != "" {
+		r.setCachedShop("user:"+s.UserID, s)
+	}
 	return s, nil
 }
 
@@ -834,6 +938,7 @@ func (r *ShopRepo) Update(ctx context.Context, s *model.Shop) (*model.Shop, erro
 	}
 
 	computeShopOpenStatus(updated)
+	r.InvalidateShopCache()
 	return updated, nil
 }
 
@@ -899,6 +1004,7 @@ func (r *ShopRepo) ToggleStatus(ctx context.Context, userID string, isOpen bool)
 	}
 
 	computeShopOpenStatus(updated)
+	r.InvalidateShopCache()
 	return updated, nil
 }
 
@@ -917,6 +1023,7 @@ func (r *ShopRepo) DeleteWithTx(ctx context.Context, tx pgx.Tx, userID string) e
 	if cmdTag.RowsAffected() == 0 {
 		return ErrShopNotFound
 	}
+	r.InvalidateShopCache()
 	return nil
 }
 
@@ -935,6 +1042,7 @@ func (r *ShopRepo) RestoreWithTx(ctx context.Context, tx pgx.Tx, userID string) 
 	if cmdTag.RowsAffected() == 0 {
 		return ErrShopNotFound
 	}
+	r.InvalidateShopCache()
 	return nil
 }
 

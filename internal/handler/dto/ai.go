@@ -1,4 +1,4 @@
-﻿package dto
+package dto
 
 type ChatTurn struct {
 	Role string `json:"role"`
@@ -71,6 +71,23 @@ type AIScanProductResponse struct {
 	MinStockAlert       *int              `json:"min_stock_alert,omitempty"`
 	VisualCode          string            `json:"visual_code,omitempty"`
 	VisualKeywords      []string          `json:"visual_keywords,omitempty"`
+	StudioImageURL      string            `json:"studio_image_url,omitempty"`
+	StudioTheme         string            `json:"studio_theme,omitempty"`
+}
+
+// ── AI Smart Studio & Vision Fusion DTOs ──
+type SmartStudioScanRequest struct {
+	ImageBase64 string `json:"image_base64" validate:"required"`
+	MimeType    string `json:"mime_type,omitempty"`
+	ThemeHint   string `json:"theme_hint,omitempty"` // auto, cosmetics, fashion, packaged
+}
+
+type SmartStudioScanResponse struct {
+	ScanData       AIScanProductResponse `json:"scan_data"`
+	StudioImageURL string                `json:"studio_image_url"`
+	StudioTheme    string                `json:"studio_theme"`
+	CutoutImageURL string                `json:"cutout_image_url,omitempty"`
+	ProcessingMs   int64                 `json:"processing_ms"`
 }
 
 // ── AI Semantic Search DTOs ──
@@ -130,4 +147,88 @@ type AIBargainAssistResponse struct {
 	IdealDealPrice   float64 `json:"ideal_deal_price"`
 	ShopkeeperAdvice string  `json:"shopkeeper_advice"`
 	CustomerScript   string  `json:"customer_script"`
+}
+
+// ── Supplier Invoice / Wholesale Bill OCR Ingestion DTOs (FEAT-POS-02) ──
+type ParseSupplierInvoiceRequest struct {
+	ImageBase64     string `json:"image_base64" validate:"required"`
+	MimeType        string `json:"mime_type,omitempty"`
+	DistributorHint string `json:"distributor_hint,omitempty"`
+}
+
+type SupplierInvoiceItem struct {
+	ProductName  string  `json:"product_name"`
+	BatchNumber  string  `json:"batch_number,omitempty"`
+	ExpiryDate   string  `json:"expiry_date,omitempty"` // YYYY-MM-DD
+	Quantity     int     `json:"quantity"`
+	UnitCost     float64 `json:"unit_cost"`
+	SuggestedMRP float64 `json:"suggested_mrp"`
+	GSTPercent   float64 `json:"gst_percent,omitempty"`
+	TotalPrice   float64 `json:"total_price"`
+}
+
+type ParseSupplierInvoiceResponse struct {
+	DistributorName    string                `json:"distributor_name"`
+	DistributorPhone   string                `json:"distributor_phone,omitempty"`
+	InvoiceNumber      string                `json:"invoice_number"`
+	InvoiceDate        string                `json:"invoice_date"` // YYYY-MM-DD
+	TotalAmount        float64               `json:"total_amount"`
+	Items              []SupplierInvoiceItem `json:"items"`
+	ExtractedNotes     string                `json:"extracted_notes,omitempty"`
+}
+
+// ── POS Real-Time Cross-Sell & Look-Stylist DTOs (FEAT-SLS-01 & FEAT-FSH-02) ──
+type AICrossSellRequest struct {
+	ScannedProductName string  `json:"scanned_product_name" validate:"required"`
+	CategoryHint       string  `json:"category_hint,omitempty"`
+	Price              float64 `json:"price,omitempty"`
+}
+
+type AICrossSellSuggestion struct {
+	SuggestedProductName string  `json:"suggested_product_name"`
+	Category             string  `json:"category"`
+	EstimatedPrice       float64 `json:"estimated_price"`
+	MarginBoost          float64 `json:"margin_boost"`
+	CashierScriptHinglish string `json:"cashier_script_hinglish"`
+	Reason               string  `json:"reason"`
+}
+
+type AICrossSellResponse struct {
+	ScannedProduct string                  `json:"scanned_product"`
+	Recommendations []AICrossSellSuggestion `json:"recommendations"`
+}
+
+// ── Dead-Stock Smart Bundler DTOs (FEAT-INV-02) ──
+type AIDeadStockBundle struct {
+	BundleName       string   `json:"bundle_name"`
+	SlowMovingItem   string   `json:"slow_moving_item"`
+	FastMovingAnchor string   `json:"fast_moving_anchor"`
+	OriginalTotal    float64  `json:"original_total"`
+	BundlePrice      float64  `json:"bundle_price"`
+	CustomerSavings  float64  `json:"customer_savings"`
+	EstimatedProfit  float64  `json:"estimated_profit"`
+	PitchLineHinglish string  `json:"pitch_line_hinglish"`
+}
+
+type AIDeadStockBundleResponse struct {
+	SuggestedBundles []AIDeadStockBundle `json:"suggested_bundles"`
+}
+
+// ── Respectful Psychology-Based Khata Recovery Nudges (FEAT-KHT-04) ──
+type AIRecoveryNudgeRequest struct {
+	CustomerName      string  `json:"customer_name" validate:"required"`
+	CustomerPhone     string  `json:"customer_phone" validate:"required"`
+	TotalDebt         float64 `json:"total_debt" validate:"required,min=1"`
+	DaysOverdue       int     `json:"days_overdue"`
+	DailyMicroAmount  float64 `json:"daily_micro_amount,omitempty"`
+	ShopUPIID         string  `json:"shop_upi_id,omitempty"`
+	ShopName          string  `json:"shop_name,omitempty"`
+}
+
+type AIRecoveryNudgeResponse struct {
+	CustomerName   string `json:"customer_name"`
+	GentleNudge    string `json:"gentle_nudge"`    // Soft, respectful, friendly
+	MicroPlanNudge string `json:"micro_plan_nudge"`// Option for daily chillar repayment
+	FormalNotice   string `json:"formal_notice"`   // Clear statement of balance
+	UPIPaymentLink string `json:"upi_payment_link"`
 }
