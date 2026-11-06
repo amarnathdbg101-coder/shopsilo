@@ -891,6 +891,36 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 		argIdx++
 	}
 
+	// 👗 Smart Size-First Query Filter (Apparel & Footwear)
+	if strings.TrimSpace(filter.Size) != "" {
+		cleanSize := strings.TrimSpace(filter.Size)
+		whereClauses = append(whereClauses, fmt.Sprintf(`(
+			EXISTS (
+				SELECT 1 FROM product_variants pv 
+				WHERE pv.product_id = p.id 
+				  AND pv.is_active = true 
+				  AND UPPER(TRIM(pv.size)) = UPPER(TRIM($%d))
+			) OR UPPER(TRIM(COALESCE(p.attributes->>'size', ''))) = UPPER(TRIM($%d))
+		)`, argIdx, argIdx))
+		args = append(args, cleanSize)
+		argIdx++
+	}
+
+	// 💄 Shade & Color Variant Filter (Cosmetics & Apparel)
+	if strings.TrimSpace(filter.Color) != "" {
+		cleanColor := strings.TrimSpace(filter.Color)
+		whereClauses = append(whereClauses, fmt.Sprintf(`(
+			EXISTS (
+				SELECT 1 FROM product_variants pv 
+				WHERE pv.product_id = p.id 
+				  AND pv.is_active = true 
+				  AND (UPPER(TRIM(pv.color)) = UPPER(TRIM($%d)) OR UPPER(TRIM(COALESCE(pv.shade_code, ''))) = UPPER(TRIM($%d)))
+			) OR UPPER(TRIM(COALESCE(p.attributes->>'color', ''))) = UPPER(TRIM($%d))
+		)`, argIdx, argIdx, argIdx))
+		args = append(args, cleanColor)
+		argIdx++
+	}
+
 	// Location & Distance Range Filter (strictly limits database scanning to shops within radius)
 	hasGeoFilter := filter.ShopID == "" && filter.Lat != nil && filter.Lng != nil
 	if hasGeoFilter {

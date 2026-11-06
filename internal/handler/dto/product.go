@@ -68,6 +68,8 @@ type ProductFilter struct {
 	Lng        *float64 `json:"lng,omitempty"`
 	RadiusKm   *float64 `json:"radius_km,omitempty"`
 	City       string   `json:"city,omitempty"`
+	Size       string   `json:"size,omitempty"`
+	Color      string   `json:"color,omitempty"`
 }
 
 type ProductPaginationResponse struct {

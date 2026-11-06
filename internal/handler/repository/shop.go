@@ -218,6 +218,13 @@ func (r *ShopRepo) CreateWithTx(ctx context.Context, tx pgx.Tx, s *model.Shop) (
 		_ = json.Unmarshal(bannersScanned, &created.Banners)
 	}
 
+	// Auto-provision default "Main Showroom" facility in locations table if locations table exists
+	_, _ = tx.Exec(ctx, `
+		INSERT INTO locations (shop_id, name, code, type, is_default, is_active)
+		VALUES ($1, 'Main Showroom', 'MAIN', 'RETAIL_STORE', true, true)
+		ON CONFLICT (shop_id, code) DO NOTHING;
+	`, created.ID)
+
 	computeShopOpenStatus(created)
 	return created, nil
 }

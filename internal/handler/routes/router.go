@@ -124,6 +124,11 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	staffService := services.NewStaffService(staffRepo, shopRepo)
 	staffc := controller.NewStaffController(staffService)
 
+	// Multi-Store Godown Locations, Variant Matrix & Stock Transfers
+	locationRepo := repository.NewLocationRepo(db, logger)
+	locationService := services.NewLocationService(locationRepo, shopRepo, productRepo)
+	locationc := controller.NewLocationController(locationService)
+
 	// Wire aggregated repos to shopService for unified batch endpoints
 	shopService.SetAggregatedRepos(categoryRepo, productRepo, posRepo, loyaltyRepo)
 
@@ -204,6 +209,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/products", pc.List)                                        // Customer
 		r.Get("/products/{id}", pc.GetByID)                                // Customer
 		r.Get("/products/slug/{slug}", pc.GetBySlug)                       // Customer
+		r.Get("/products/{productId}/variants", locationc.GetPublicVariants) // Public Customer Variants (Size/Color/Shades)
 		r.Get("/products/scan/{code}", loyc.ScanProduct)                   // Customer
 		r.Post("/products/{id}/notify-me", invc.SubscribeStockAlert)       // Customer
 		r.With(middleware.IdempotencyGuard).Post("/products/{id}/make-offer", pc.MakeOffer)                  // Customer
@@ -221,6 +227,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/products/nearby", pc.FindNearby)
 		r.Get("/products/{id}", pc.GetByID)
 		r.Get("/products/slug/{slug}", pc.GetBySlug)
+		r.Get("/products/{productId}/variants", locationc.GetPublicVariants)
 		r.Get("/shops", sc.List)
 		r.Get("/shops/{id}", sc.GetByID)
 		r.Get("/shops/slug/{slug}", sc.GetBySlug)
@@ -292,6 +299,26 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/inventory/low-stock", invc.GetLowStockAlerts)
 		r.Post("/inventory/adjust", invc.AdjustStock)
 		r.Get("/inventory/reorder-pdf", invc.DownloadReorderSheetPDF)
+
+		// Multi-Store Godowns & Location-Aware Inventory
+		r.Get("/locations", locationc.ListLocations)
+		r.Post("/locations", locationc.CreateLocation)
+		r.Put("/locations/{id}", locationc.UpdateLocation)
+		r.Get("/locations/{id}/inventory", locationc.GetLocationInventory)
+		r.Post("/locations/adjust", locationc.AdjustStock)
+
+		// Apparel & Beauty Variant Matrix (Sizes, Colors, Shades, Expiry)
+		r.Get("/products/{productId}/variants", locationc.ListVariants)
+		r.Post("/products/{productId}/variants", locationc.CreateVariant)
+		r.Post("/products/{productId}/variants/matrix", locationc.GenerateVariantMatrix)
+		r.Put("/products/variants/{variantId}", locationc.UpdateVariant)
+		r.Delete("/products/variants/{variantId}", locationc.DeleteVariant)
+
+		// Stock Transfers State Machine (Godown <-> Store Requisitions)
+		r.Get("/transfers", locationc.ListTransfers)
+		r.Post("/transfers", locationc.CreateTransfer)
+		r.Get("/transfers/{id}", locationc.GetTransfer)
+		r.Patch("/transfers/{id}/status", locationc.UpdateTransferStatus)
 
 		// Merchant Offers & In-Store Returns
 		r.Get("/offers", loyc.ListShopOffers)

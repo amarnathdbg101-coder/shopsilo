@@ -12,7 +12,7 @@ import (
 )
 
 func ConnectDB(database string) (*pgxpool.Pool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	config, err := pgxpool.ParseConfig(database)

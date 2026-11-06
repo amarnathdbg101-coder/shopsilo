@@ -279,28 +279,97 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"CREATE INDEX IF NOT EXISTS idx_products_tags_trgm ON products USING gin (immutable_array_to_string(tags, ' ') gin_trgm_ops);",
 		"CREATE INDEX IF NOT EXISTS idx_products_attributes_trgm ON products USING gin ((attributes::text) gin_trgm_ops);",
 
-		// Step 5 Production Optimizations: PostGIS Spatial 2D Geography & GIST Index
-		"CREATE EXTENSION IF NOT EXISTS postgis;",
-		"ALTER TABLE shops ADD COLUMN IF NOT EXISTS location geography(Point, 4326);",
-		"UPDATE shops SET location = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND location IS NULL;",
-		"CREATE INDEX IF NOT EXISTS idx_shops_location_gist ON shops USING gist (location) WHERE is_active = true AND status = 'active';",
+		// Step 5 Production Optimizations: PostGIS Spatial 2D Geography & GIST Index (Rock-solid Fallback)
+		`DO $$
+		BEGIN
+			BEGIN
+				CREATE EXTENSION IF NOT EXISTS postgis;
+			EXCEPTION WHEN OTHERS THEN
+				NULL;
+			END;
+		END;
+		$$;`,
+		`DO $$
+		BEGIN
+			IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'geography') THEN
+				IF NOT EXISTS (
+					SELECT 1 FROM information_schema.columns 
+					WHERE table_schema = current_schema() AND table_name = 'shops' AND column_name = 'location'
+				) THEN
+					ALTER TABLE shops ADD COLUMN location geography(Point, 4326);
+				END IF;
+			END IF;
+		END;
+		$$;`,
+		`DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1 FROM information_schema.columns 
+				WHERE table_schema = current_schema() AND table_name = 'shops' AND column_name = 'location'
+			) THEN
+				UPDATE shops 
+				SET location = ST_SetSRID(ST_MakePoint(longitude::double precision, latitude::double precision), 4326)::geography 
+				WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND location IS NULL
+				  AND latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180;
+			END IF;
+		EXCEPTION WHEN OTHERS THEN
+			NULL;
+		END;
+		$$;`,
+		`DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1 FROM information_schema.columns 
+				WHERE table_schema = current_schema() AND table_name = 'shops' AND column_name = 'location'
+			) THEN
+				CREATE INDEX IF NOT EXISTS idx_shops_location_gist 
+				ON shops USING gist (location) 
+				WHERE is_active = true AND status = 'active';
+			END IF;
+		EXCEPTION WHEN OTHERS THEN
+			NULL;
+		END;
+		$$;`,
 		`CREATE OR REPLACE FUNCTION sync_shop_location()
-		RETURNS TRIGGER AS $$
+		RETURNS TRIGGER 
+		SECURITY DEFINER
+		SET search_path = public, extensions, pg_catalog
+		AS $$
 		BEGIN
 		    IF NEW.latitude IS NOT NULL AND NEW.longitude IS NOT NULL THEN
-		        NEW.location := ST_SetSRID(ST_MakePoint(NEW.longitude, NEW.latitude), 4326)::geography;
+		        BEGIN
+		            IF NEW.latitude BETWEEN -90 AND 90 AND NEW.longitude BETWEEN -180 AND 180 THEN
+		                NEW.location := ST_SetSRID(ST_MakePoint(NEW.longitude::double precision, NEW.latitude::double precision), 4326)::geography;
+		            ELSE
+		                NEW.location := NULL;
+		            END IF;
+		        EXCEPTION WHEN OTHERS THEN
+		            NEW.location := NULL;
+		        END;
 		    ELSE
-		        NEW.location := NULL;
+		        BEGIN
+		            NEW.location := NULL;
+		        EXCEPTION WHEN OTHERS THEN
+		            NULL;
+		        END;
 		    END IF;
+		    RETURN NEW;
+		EXCEPTION WHEN OTHERS THEN
 		    RETURN NEW;
 		END;
 		$$ LANGUAGE plpgsql;`,
 		`DO $$
 		BEGIN
-		    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_sync_shop_location') THEN
+		    IF EXISTS (
+		        SELECT 1 FROM information_schema.columns 
+		        WHERE table_schema = current_schema() AND table_name = 'shops' AND column_name = 'location'
+		    ) THEN
+		        DROP TRIGGER IF EXISTS trg_sync_shop_location ON shops;
 		        CREATE TRIGGER trg_sync_shop_location
 		        BEFORE INSERT OR UPDATE OF latitude, longitude ON shops
 		        FOR EACH ROW EXECUTE FUNCTION sync_shop_location();
+		    ELSE
+		        DROP TRIGGER IF EXISTS trg_sync_shop_location ON shops;
 		    END IF;
 		END;
 		$$;`,
@@ -386,6 +455,103 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		('Toys & Games', 'toys-games', 'Board games, puzzles, soft toys and toy cars', '🧸', true),
 		('Bakery & Cakes', 'bakery-cakes', 'Fresh bread, cakes, pastries, cookies and patties', '🎂', true)
 		ON CONFLICT (slug) DO UPDATE SET is_active = true;`,
+
+		// Multi-Store Godown Locations, Variant Matrix & Stock Transfers
+		`CREATE TABLE IF NOT EXISTS locations (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			shop_id UUID NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+			name VARCHAR(100) NOT NULL,
+			code VARCHAR(50) NOT NULL,
+			type VARCHAR(30) NOT NULL DEFAULT 'RETAIL_STORE' CHECK (type IN ('RETAIL_STORE', 'WAREHOUSE', 'GODOWN', 'OUTLET')),
+			address TEXT,
+			contact_person VARCHAR(100),
+			contact_phone VARCHAR(20),
+			is_default BOOLEAN NOT NULL DEFAULT false,
+			is_active BOOLEAN NOT NULL DEFAULT true,
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW(),
+			UNIQUE(shop_id, code)
+		);`,
+		"CREATE INDEX IF NOT EXISTS idx_locations_shop ON locations(shop_id, is_active);",
+		"CREATE INDEX IF NOT EXISTS idx_locations_default ON locations(shop_id) WHERE is_default = true;",
+		`INSERT INTO locations (shop_id, name, code, type, is_default, is_active)
+		 SELECT id, 'Main Showroom', 'MAIN', 'RETAIL_STORE', true, true FROM shops
+		 ON CONFLICT (shop_id, code) DO NOTHING;`,
+
+		`CREATE TABLE IF NOT EXISTS product_variants (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+			shop_id UUID NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+			sku VARCHAR(100) NOT NULL,
+			barcode VARCHAR(100),
+			title VARCHAR(200) NOT NULL,
+			size VARCHAR(30),
+			color VARCHAR(50),
+			color_hex VARCHAR(10),
+			shade_code VARCHAR(50),
+			batch_number VARCHAR(50),
+			expiry_date DATE,
+			price DECIMAL(10, 2) NOT NULL,
+			cost_price DECIMAL(10, 2) DEFAULT 0,
+			compare_price DECIMAL(10, 2) DEFAULT 0,
+			floor_price DECIMAL(10, 2) DEFAULT 0,
+			weight DECIMAL(8, 2) DEFAULT 0,
+			image_url TEXT,
+			is_active BOOLEAN NOT NULL DEFAULT true,
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW(),
+			UNIQUE(shop_id, sku)
+		);`,
+		"CREATE INDEX IF NOT EXISTS idx_product_variants_product ON product_variants(product_id);",
+		"CREATE INDEX IF NOT EXISTS idx_product_variants_shop ON product_variants(shop_id, is_active);",
+		"CREATE INDEX IF NOT EXISTS idx_product_variants_barcode ON product_variants(shop_id, barcode) WHERE barcode IS NOT NULL AND barcode != '';",
+		"CREATE INDEX IF NOT EXISTS idx_product_variants_size ON product_variants(shop_id, size) WHERE size IS NOT NULL;",
+		"CREATE INDEX IF NOT EXISTS idx_product_variants_color ON product_variants(shop_id, color) WHERE color IS NOT NULL;",
+
+		`CREATE TABLE IF NOT EXISTS location_inventory (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			shop_id UUID NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+			location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+			product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+			variant_id UUID REFERENCES product_variants(id) ON DELETE CASCADE,
+			quantity INT NOT NULL DEFAULT 0 CHECK (quantity >= 0),
+			reserved_quantity INT NOT NULL DEFAULT 0 CHECK (reserved_quantity >= 0),
+			low_stock_threshold INT NOT NULL DEFAULT 5,
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		);`,
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_loc_inv_variant_uniq ON location_inventory(location_id, product_id, variant_id) WHERE variant_id IS NOT NULL;",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_loc_inv_simple_uniq ON location_inventory(location_id, product_id) WHERE variant_id IS NULL;",
+		"CREATE INDEX IF NOT EXISTS idx_loc_inv_location_prod ON location_inventory(location_id, product_id);",
+
+		`CREATE TABLE IF NOT EXISTS stock_transfers (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			shop_id UUID NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+			transfer_number VARCHAR(50) NOT NULL,
+			from_location_id UUID NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+			to_location_id UUID NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+			status VARCHAR(30) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED', 'DISPATCHED', 'IN_TRANSIT', 'RECEIVED', 'RECONCILED', 'CANCELLED')),
+			notes TEXT,
+			created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+			received_by UUID REFERENCES users(id) ON DELETE SET NULL,
+			dispatched_at TIMESTAMPTZ,
+			received_at TIMESTAMPTZ,
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW(),
+			UNIQUE(shop_id, transfer_number)
+		);`,
+		"CREATE INDEX IF NOT EXISTS idx_stock_transfers_shop_status ON stock_transfers(shop_id, status);",
+
+		`CREATE TABLE IF NOT EXISTS stock_transfer_items (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			transfer_id UUID NOT NULL REFERENCES stock_transfers(id) ON DELETE CASCADE,
+			product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+			variant_id UUID REFERENCES product_variants(id) ON DELETE SET NULL,
+			requested_qty INT NOT NULL CHECK (requested_qty > 0),
+			sent_qty INT NOT NULL DEFAULT 0 CHECK (sent_qty >= 0),
+			received_qty INT NOT NULL DEFAULT 0 CHECK (received_qty >= 0),
+			notes TEXT
+		);`,
+		"CREATE INDEX IF NOT EXISTS idx_stock_transfer_items_transfer ON stock_transfer_items(transfer_id);",
 	}
 
 	for _, q := range queries {

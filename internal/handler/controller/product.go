@@ -367,6 +367,8 @@ func (c *ProductController) List(w http.ResponseWriter, r *http.Request) {
 	}
 	city := query.Get("city")
 	barcode := strings.TrimSpace(query.Get("barcode"))
+	size := strings.TrimSpace(query.Get("size"))
+	color := strings.TrimSpace(query.Get("color"))
 
 	filter := dto.ProductFilter{
 		Search:     search,
@@ -382,6 +384,8 @@ func (c *ProductController) List(w http.ResponseWriter, r *http.Request) {
 		Lng:        lng,
 		RadiusKm:   radiusKm,
 		City:       city,
+		Size:       size,
+		Color:      color,
 	}
 
 	result, err := c.productService.ListProducts(r.Context(), filter)
@@ -495,6 +499,8 @@ func (c *ProductController) ListByShop(w http.ResponseWriter, r *http.Request) {
 	}
 
 	barcode := strings.TrimSpace(query.Get("barcode"))
+	size := strings.TrimSpace(query.Get("size"))
+	color := strings.TrimSpace(query.Get("color"))
 	filter := dto.ProductFilter{
 		ShopID:     shop.ID,
 		Barcode:    barcode,
@@ -508,6 +514,8 @@ func (c *ProductController) ListByShop(w http.ResponseWriter, r *http.Request) {
 		SortBy:     sortBy,
 		Page:       page,
 		Limit:      limit,
+		Size:       size,
+		Color:      color,
 	}
 
 	result, err := c.productService.ListProducts(r.Context(), filter)
