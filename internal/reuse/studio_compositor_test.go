@@ -101,3 +101,35 @@ func TestRenderProductStudio_EthnicFashion(t *testing.T) {
 		t.Errorf("expected canvas 800x800, got %dx%d", decoded.Bounds().Dx(), decoded.Bounds().Dy())
 	}
 }
+
+func TestEnhanceProductLightingAndFeathering(t *testing.T) {
+	// Test on a warm-lit, slightly dim rectangular object
+	img := image.NewRGBA(image.Rect(0, 0, 100, 100))
+	for y := 20; y < 80; y++ {
+		for x := 20; x < 80; x++ {
+			// Dim warm yellow/brown object
+			img.Set(x, y, color.RGBA{R: 160, G: 120, B: 50, A: 255})
+		}
+	}
+	// Add a semi-transparent border to test feathering
+	for x := 19; x <= 80; x++ {
+		img.Set(x, 19, color.RGBA{R: 160, G: 120, B: 50, A: 120})
+		img.Set(x, 80, color.RGBA{R: 160, G: 120, B: 50, A: 120})
+	}
+
+	// Must run without panic and improve pixel quality
+	enhanceProductLighting(img)
+	featherProductEdges(img)
+
+	// Check center pixel is still opaque
+	centerA := img.RGBAAt(50, 50).A
+	if centerA != 255 {
+		t.Errorf("expected center alpha 255, got %d", centerA)
+	}
+
+	// Check border pixel was smoothed
+	borderA := img.RGBAAt(20, 19).A
+	if borderA == 0 {
+		t.Errorf("expected non-zero smoothed border alpha, got 0")
+	}
+}

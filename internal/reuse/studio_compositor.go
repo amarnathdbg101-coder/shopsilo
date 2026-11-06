@@ -132,6 +132,12 @@ func RenderProductStudio(cutoutBytes []byte, opts StudioCompositorOptions) ([]by
 	scaledProduct := image.NewRGBA(image.Rect(0, 0, scaledW, scaledH))
 	bilinearScale(scaledProduct, cropped)
 
+	// Auto-lighting, white-balance neutralization & vibrance enhancement
+	enhanceProductLighting(scaledProduct)
+
+	// Soft sub-pixel alpha feathering to eliminate jagged cutout edges
+	featherProductEdges(scaledProduct)
+
 	// 4. Center horizontally, place product resting naturally on bottom third
 	posX := (canvasSize - scaledW) / 2
 	// Slightly anchor lower than exact center (offset by 3%) for natural grounded feel
@@ -302,6 +308,153 @@ func drawCategoryShadow(canvas *image.RGBA, theme StudioTheme, posX, posY, pWidt
 				newB := uint8(float64(cur.B)*(1.0-alphaFactor) + shadowB*alphaFactor)
 
 				canvas.SetRGBA(x, y, color.RGBA{R: newR, G: newG, B: newB, A: 255})
+			}
+		}
+	}
+}
+
+// enhanceProductLighting applies subtle auto-levels, white-balance neutralization,
+// and vibrance enhancement exclusively on the product pixels (alpha > 20).
+func enhanceProductLighting(img *image.RGBA) {
+	pix := img.Pix
+	n := len(pix)
+	if n < 4 {
+		return
+	}
+
+	// Pass 1: Sample average and min/max luminance of opaque pixels
+	var sumR, sumG, sumB uint64
+	var count uint64
+	minL := 255.0
+	maxL := 0.0
+
+	for i := 0; i < n; i += 4 {
+		a := pix[i+3]
+		if a > 30 {
+			r := float64(pix[i])
+			g := float64(pix[i+1])
+			b := float64(pix[i+2])
+			lum := 0.299*r + 0.587*g + 0.114*b
+
+			if lum < minL {
+				minL = lum
+			}
+			if lum > maxL {
+				maxL = lum
+			}
+			sumR += uint64(pix[i])
+			sumG += uint64(pix[i+1])
+			sumB += uint64(pix[i+2])
+			count++
+		}
+	}
+
+	if count < 100 || maxL <= minL+10 {
+		return
+	}
+
+	// Auto-contrast stretch range (target range [10, 245])
+	lumRange := maxL - minL
+	contrastScale := 235.0 / lumRange
+	if contrastScale > 1.35 {
+		contrastScale = 1.35 // Don't over-amplify noise in very dark photos
+	}
+
+	// Subtle white balance correction factor (cool down yellow indoor light by up to 6%)
+	avgR := float64(sumR) / float64(count)
+	avgB := float64(sumB) / float64(count)
+	rGain := 1.0
+	bGain := 1.0
+	if avgR > avgB*1.15 {
+		// Image is warm/yellow from shop incandescent/halogen bulbs
+		rGain = 0.96
+		bGain = 1.06
+	}
+
+	// Pass 2: Apply contrast stretch, white balance, and vibrance
+	for i := 0; i < n; i += 4 {
+		a := pix[i+3]
+		if a <= 20 {
+			continue
+		}
+
+		r := float64(pix[i]) * rGain
+		g := float64(pix[i+1])
+		b := float64(pix[i+2]) * bGain
+
+		// 1. Contrast stretch
+		r = (r-minL)*contrastScale + 10.0
+		g = (g-minL)*contrastScale + 10.0
+		b = (b-minL)*contrastScale + 10.0
+
+		// 2. Vibrance boost (+12% saturation on midtones)
+		maxRGB := math.Max(r, math.Max(g, b))
+		minRGB := math.Min(r, math.Min(g, b))
+		sat := 0.0
+		if maxRGB > 0 {
+			sat = (maxRGB - minRGB) / maxRGB
+		}
+		// Boost more if saturation is low/moderate, less if already saturated
+		vibranceBoost := (1.0 - sat) * 0.12
+		lum := 0.299*r + 0.587*g + 0.114*b
+
+		r = lum + (r-lum)*(1.0+vibranceBoost)
+		g = lum + (g-lum)*(1.0+vibranceBoost)
+		b = lum + (b-lum)*(1.0+vibranceBoost)
+
+		// Clamp to [0, 255]
+		if r < 0 {
+			r = 0
+		} else if r > 255 {
+			r = 255
+		}
+		if g < 0 {
+			g = 0
+		} else if g > 255 {
+			g = 255
+		}
+		if b < 0 {
+			b = 0
+		} else if b > 255 {
+			b = 255
+		}
+
+		pix[i] = uint8(r)
+		pix[i+1] = uint8(g)
+		pix[i+2] = uint8(b)
+	}
+}
+
+// featherProductEdges applies a gentle 1-pixel alpha feathering along the silhouette edges
+// so the product cutout blends smoothly into the canvas background without jagged artifacts.
+func featherProductEdges(img *image.RGBA) {
+	bounds := img.Bounds()
+	w := bounds.Dx()
+	h := bounds.Dy()
+	stride := img.Stride
+
+	// Create a copy of the alpha channel to read from while writing smoothed values
+	alphas := make([]uint8, w*h)
+	for y := 0; y < h; y++ {
+		rowOffset := y * stride
+		for x := 0; x < w; x++ {
+			alphas[y*w+x] = img.Pix[rowOffset+x*4+3]
+		}
+	}
+
+	for y := 1; y < h-1; y++ {
+		rowOffset := y * stride
+		for x := 1; x < w-1; x++ {
+			curA := alphas[y*w+x]
+			// Only smooth edge transition pixels (partially transparent or adjacent to transparent)
+			if curA > 0 && curA < 250 {
+				// 3x3 neighborhood average for alpha
+				var sumA int
+				sumA += int(alphas[(y-1)*w+(x-1)]) + int(alphas[(y-1)*w+x]) + int(alphas[(y-1)*w+(x+1)])
+				sumA += int(alphas[y*w+(x-1)]) + int(curA)*2 + int(alphas[y*w+(x+1)])
+				sumA += int(alphas[(y+1)*w+(x-1)]) + int(alphas[(y+1)*w+x]) + int(alphas[(y+1)*w+(x+1)])
+				smoothed := uint8(sumA / 10)
+				img.Pix[rowOffset+x*4+3] = smoothed
 			}
 		}
 	}
