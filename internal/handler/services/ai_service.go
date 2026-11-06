@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"regexp"
@@ -1405,13 +1406,18 @@ func (s *aiService) SmartStudioScan(ctx context.Context, req dto.SmartStudioScan
 	sRes := <-scanChan
 	cRes := <-cutoutChan
 
-	// If Gemini failed, return error
-	if sRes.err != nil {
-		return nil, fmt.Errorf("gemini vision scan failed: %w", sRes.err)
-	}
+	// Fallback-tolerant: If Gemini vision had a temporary rate-limit or error,
+	// do NOT crash the studio photoshoot! Provide clean fallback catalog metadata.
 	scanData := sRes.data
 	if scanData == nil {
-		scanData = &dto.AIScanProductResponse{Name: "Catalog Item"}
+		scanData = &dto.AIScanProductResponse{
+			Name:         "New Retail Product",
+			CategoryHint: "General Store",
+			Unit:         "piece",
+		}
+	}
+	if sRes.err != nil {
+		log.Printf("[SmartStudioScan] Gemini vision notice: %v (continuing with studio render)", sRes.err)
 	}
 
 	// 3. Determine Context-Aware Visual Studio Theme
