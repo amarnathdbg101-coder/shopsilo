@@ -1381,6 +1381,7 @@ func (s *aiService) SmartStudioScan(ctx context.Context, req dto.SmartStudioScan
 	}
 	type cutoutResult struct {
 		pngBytes []byte
+		provider reuse.BackgroundRemovalProvider
 		err      error
 	}
 
@@ -1396,10 +1397,10 @@ func (s *aiService) SmartStudioScan(ctx context.Context, req dto.SmartStudioScan
 		scanChan <- scanResult{data: scanResp, err: err}
 	}()
 
-	// Goroutine B: Cloudflare Workers AI for ultra-clean background removal
+	// Goroutine B: Multi-Engine Background Removal (Hugging Face RMBG / Remove.bg / Local Adaptive Chroma)
 	go func() {
-		cutout, err := reuse.RemoveBackgroundCloudflareAI(ctx, rawBytes)
-		cutoutChan <- cutoutResult{pngBytes: cutout, err: err}
+		cutout, provider, err := reuse.RemoveBackground(ctx, rawBytes)
+		cutoutChan <- cutoutResult{pngBytes: cutout, provider: provider, err: err}
 	}()
 
 	// Collect results from concurrent workers
@@ -1438,7 +1439,8 @@ func (s *aiService) SmartStudioScan(ctx context.Context, req dto.SmartStudioScan
 	var cutoutURL string
 
 	if cRes.err == nil && len(cRes.pngBytes) > 0 {
-		// Cloudflare succeeded! Composite the transparent cutout on dynamic studio canvas
+		log.Printf("[SmartStudioScan] Background processed via engine: %s (size: %d bytes)", cRes.provider, len(cRes.pngBytes))
+		// Composite cutout on dynamic studio canvas
 		studioBytes, err = reuse.RenderProductStudio(cRes.pngBytes, reuse.StudioCompositorOptions{
 			Theme:        theme,
 			CanvasSize:   1080,
@@ -1448,13 +1450,14 @@ func (s *aiService) SmartStudioScan(ctx context.Context, req dto.SmartStudioScan
 			studioBytes = rawBytes // Graceful fallback
 		}
 
-		// Save cutout to R2 optionally in background
-		go func(pBytes []byte) {
-			_, _ = reuse.UploadBytes(pBytes, "image/png", "products/cutouts", ".png")
-		}(cRes.pngBytes)
+		// Save cutout to R2 optionally in background if an actual cutout was generated
+		if cRes.provider != reuse.ProviderOriginal {
+			go func(pBytes []byte) {
+				_, _ = reuse.UploadBytes(pBytes, "image/png", "products/cutouts", ".png")
+			}(cRes.pngBytes)
+		}
 	} else {
-		// Cloudflare AI fallback (e.g. no token configured or rate limited):
-		// Use raw original image to composite studio canvas
+		// Passthrough fallback: Use raw original image to composite studio canvas
 		studioBytes, err = reuse.RenderProductStudio(rawBytes, reuse.StudioCompositorOptions{
 			Theme:        theme,
 			CanvasSize:   1080,

@@ -133,3 +133,54 @@ func TestEnhanceProductLightingAndFeathering(t *testing.T) {
 		t.Errorf("expected non-zero smoothed border alpha, got 0")
 	}
 }
+
+func TestAdaptiveBoundaryFloodCutout(t *testing.T) {
+	// Create an image with an opaque off-white/gray background and an opaque red product in center
+	img := image.NewRGBA(image.Rect(0, 0, 120, 120))
+	for y := 0; y < 120; y++ {
+		for x := 0; x < 120; x++ {
+			// Background: Off-white desk (R: 235, G: 235, B: 238, A: 255)
+			img.Set(x, y, color.RGBA{R: 235, G: 235, B: 238, A: 255})
+		}
+	}
+	// Center product: Red bottle (R: 200, G: 20, B: 20, A: 255)
+	for y := 30; y < 90; y++ {
+		for x := 40; x < 80; x++ {
+			img.Set(x, y, color.RGBA{R: 200, G: 20, B: 20, A: 255})
+		}
+	}
+
+	cutout, ok := AdaptiveBoundaryFloodCutout(img, 40.0)
+	if !ok || cutout == nil {
+		t.Fatalf("AdaptiveBoundaryFloodCutout returned false, expected background removal")
+	}
+
+	// Verify corner background is now transparent (A == 0)
+	cornerA := cutout.RGBAAt(5, 5).A
+	if cornerA != 0 {
+		t.Errorf("expected corner background alpha to be 0, got %d", cornerA)
+	}
+
+	// Verify center product is still completely opaque (A == 255)
+	centerA := cutout.RGBAAt(60, 60).A
+	if centerA != 255 {
+		t.Errorf("expected center product alpha to be 255, got %d", centerA)
+	}
+
+	// Now verify this cutout works seamlessly with RenderProductStudio
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, cutout); err != nil {
+		t.Fatalf("failed to encode cutout: %v", err)
+	}
+
+	renderedBytes, err := RenderProductStudio(buf.Bytes(), StudioCompositorOptions{
+		Theme:      StudioThemePackagedRetail,
+		CanvasSize: 500,
+	})
+	if err != nil {
+		t.Fatalf("RenderProductStudio failed on flood cutout: %v", err)
+	}
+	if len(renderedBytes) == 0 {
+		t.Fatalf("RenderProductStudio produced empty output")
+	}
+}
