@@ -133,6 +133,25 @@ func calculateParkedCartTotal(items []dto.POSSaleItemRequest, products map[strin
 	return totalAmount, nil
 }
 
+// CreateSaleSaga coordinates order checkout using distributed saga orchestration with automatic reverse compensation on failure.
+func (s *POSService) CreateSaleSaga(ctx context.Context, shopOwnerUserID string, input dto.CreatePOSSaleRequest) (*dto.POSSaleResponse, error) {
+	orchestrator := NewOrderSagaOrchestrator(s.posRepo, s.shopRepo, s.productRepo, s.drawerRepo, s.khataRepo, nil)
+	result, err := orchestrator.Execute(ctx, OrderCheckoutSagaInput{
+		ShopOwnerUserID:     shopOwnerUserID,
+		CustomerPhone:       input.CustomerPhone,
+		CustomerName:        input.CustomerName,
+		PaymentMethod:       input.PaymentMethod,
+		Items:               input.Items,
+		SplitPayments:       input.SplitPayments,
+		DiscountAmount:      input.DiscountAmount,
+		RedeemLoyaltyPoints: input.RedeemLoyaltyPoints,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.SaleResponse, nil
+}
+
 // CreateSale creates a fast walk-in counter sale, deducts stock, credits loyalty points, and generates bill.
 func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, input dto.CreatePOSSaleRequest) (*dto.POSSaleResponse, error) {
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"shopMe/internal/handler/model"
 
+	sqlscan "github.com/amarnathdbg101-coder/go/go-sqlscan"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
@@ -75,9 +76,14 @@ func (r *ExpenseRepo) ListExpenses(ctx context.Context, shopID string, year, mon
 	var total float64
 	catTotals := make(map[string]float64)
 
+	cols := make([]string, len(rows.FieldDescriptions()))
+	for i, fd := range rows.FieldDescriptions() {
+		cols[i] = fd.Name
+	}
+
 	for rows.Next() {
 		var e model.ShopExpense
-		if err := rows.Scan(&e.ID, &e.ShopID, &e.Category, &e.Amount, &e.Notes, &e.PaymentMethod, &e.ExpenseDate, &e.CreatedAt); err != nil {
+		if err := sqlscan.ScanWithColumns(cols, rows.Scan, &e); err != nil {
 			return nil, 0, nil, fmt.Errorf("failed to scan expense: %w", err)
 		}
 		expenses = append(expenses, e)

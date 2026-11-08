@@ -3,144 +3,96 @@ package middleware
 import (
 	"net"
 	"net/http"
-	"shopMe/internal/reuse"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"shopMe/internal/reuse"
+
+	"github.com/amarnathdbg101-coder/go/go-slidingwindow"
 )
 
-type clientRecord struct {
-	count         int
-	violations    int
-	windowEnd     time.Time
-	burstCount    int
-	lastBurstTime time.Time
-}
-
-// IPRateLimiter tracks request counts and sub-second burst surges per IP in memory
+// IPRateLimiter provides dual-tier sliding-window rate limiting with micro-burst surge defense.
+// Powered by zero-dep go-slidingwindow ring buffers.
 type IPRateLimiter struct {
-	mu          sync.RWMutex
-	records     map[string]*clientRecord
-	limit       int
-	burstLimit  int
-	window      time.Duration
-	stopCleanup chan struct{}
+	mu           sync.Mutex
+	window       time.Duration
+	limit        int
+	burstLimit   int
+	mainLimiter  *slidingwindow.KeyedLimiter
+	burstLimiter *slidingwindow.KeyedLimiter
+	violations   map[string]int
 }
 
-// NewIPRateLimiter creates a new rate limiter with background garbage collection and micro-burst protection
+// NewIPRateLimiter creates an atomic sliding-window rate limiter with sub-second burst protection.
 func NewIPRateLimiter(limit int, burstLimit int, window time.Duration) *IPRateLimiter {
-	limiter := &IPRateLimiter{
-		records:     make(map[string]*clientRecord),
-		limit:       limit,
-		burstLimit:  burstLimit,
-		window:      window,
-		stopCleanup: make(chan struct{}),
+	// Granular ring-buffer buckets across the window (min 10 buckets for precision)
+	bucketCount := 20
+	if window < 200*time.Millisecond {
+		bucketCount = 10
+	}
+	main, _ := slidingwindow.NewKeyedLimiter(window, bucketCount, int64(limit))
+
+	var burst *slidingwindow.KeyedLimiter
+	if burstLimit > 0 {
+		// 2-second sub-window for micro-burst protection
+		burst, _ = slidingwindow.NewKeyedLimiter(2*time.Second, 10, int64(burstLimit))
 	}
 
-	// Background routine to prune expired client records and prevent memory leak
-	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ticker.C:
-				limiter.cleanup()
-			case <-limiter.stopCleanup:
-				return
-			}
-		}
-	}()
-
-	return limiter
-}
-
-func (l *IPRateLimiter) cleanup() {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	now := time.Now()
-	for ip, rec := range l.records {
-		if now.After(rec.windowEnd) {
-			delete(l.records, ip)
-		}
+	return &IPRateLimiter{
+		window:       window,
+		limit:        limit,
+		burstLimit:   burstLimit,
+		mainLimiter:  main,
+		burstLimiter: burst,
+		violations:   make(map[string]int),
 	}
 }
 
-// Stop terminates the background cleanup routine
-func (l *IPRateLimiter) Stop() {
-	close(l.stopCleanup)
-}
+// Stop terminates rate limiter resources (sliding window ring buffers require no background threads).
+func (l *IPRateLimiter) Stop() {}
 
-// CheckAndAllow checks if the given IP is within the rate limit and burst quota
+// CheckAndAllow checks if the given IP is within the rate limit and burst quota.
 func (l *IPRateLimiter) CheckAndAllow(ip string) (allowed bool, remaining int, resetInSec int64) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	now := time.Now()
-	rec, exists := l.records[ip]
-
-	if !exists || now.After(rec.windowEnd) {
-		rec = &clientRecord{
-			count:         1,
-			violations:    0,
-			windowEnd:     now.Add(l.window),
-			burstCount:    1,
-			lastBurstTime: now,
-		}
-		l.records[ip] = rec
-		remaining = l.limit - 1
-		resetInSec = int64(time.Until(rec.windowEnd).Seconds())
-		if resetInSec < 0 {
-			resetInSec = 0
-		}
-		return true, remaining, resetInSec
-	}
-
-	resetInSec = int64(time.Until(rec.windowEnd).Seconds())
-	if resetInSec < 0 {
-		resetInSec = 0
+	resetInSec = int64(l.window.Seconds())
+	if resetInSec < 1 {
+		resetInSec = 1
 	}
 
 	// 1. Micro-burst check (2-second sub-window surge limiter)
-	if now.Sub(rec.lastBurstTime) > 2*time.Second {
-		rec.burstCount = 1
-		rec.lastBurstTime = now
-	} else {
-		rec.burstCount++
-		if l.burstLimit > 0 && rec.burstCount > l.burstLimit {
-			// Soft-throttle surge traffic without jailing legitimate users who are typing in search
-			remaining = 0
-			return false, remaining, resetInSec
+	if l.burstLimiter != nil && !l.burstLimiter.Allow(ip) {
+		return false, 0, resetInSec
+	}
+
+	// 2. Main rolling sliding-window quota check
+	if !l.mainLimiter.Allow(ip) {
+		l.mu.Lock()
+		l.violations[ip]++
+		if l.violations[ip] >= 4 {
+			// Escalate repeat abusers to IP Jail for 15 minutes
+			JailIP(ip, 15*time.Minute, "excessive rate limit violations")
 		}
+		l.mu.Unlock()
+		return false, 0, resetInSec
 	}
 
-	// 2. Sliding window quota check
-	if rec.count < l.limit {
-		rec.count++
-		remaining = l.limit - rec.count
-		return true, remaining, resetInSec
+	currentCount := int(l.mainLimiter.Count(ip))
+	remaining = l.limit - currentCount
+	if remaining < 0 {
+		remaining = 0
 	}
 
-	// Limit reached or exceeded
-	rec.violations++
-	if rec.violations >= 4 {
-		// Automatically escalate repeat abusers to IP Jail for 15 minutes
-		JailIP(ip, 15*time.Minute, "excessive rate limit violations")
-	}
-
-	remaining = 0
-	return false, remaining, resetInSec
+	return true, remaining, resetInSec
 }
 
-// Allow checks if the given IP is within the rate limit
+// Allow checks if the given IP is within the rate limit.
 func (l *IPRateLimiter) Allow(ip string) bool {
 	allowed, _, _ := l.CheckAndAllow(ip)
 	return allowed
 }
 
-// ExtractIP extracts the client IP address from request headers or remote addr
+// ExtractIP extracts the client IP address from request headers or remote addr.
 func ExtractIP(r *http.Request) string {
 	// 1. Check Cloudflare header
 	if cfIP := r.Header.Get("CF-Connecting-IP"); cfIP != "" {
@@ -168,7 +120,7 @@ func ExtractIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// Middleware returns a Chi middleware handler function
+// Middleware returns a Chi/net/http middleware handler function.
 func (l *IPRateLimiter) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

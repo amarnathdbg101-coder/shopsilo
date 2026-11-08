@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	sqlscan "github.com/amarnathdbg101-coder/go/go-sqlscan"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
@@ -67,20 +68,15 @@ func (r *CategoryRepo) FindAll(ctx context.Context) ([]*model.Category, error) {
 	}
 	defer rows.Close()
 
+	cols := make([]string, len(rows.FieldDescriptions()))
+	for i, fd := range rows.FieldDescriptions() {
+		cols[i] = fd.Name
+	}
+
 	var categories []*model.Category
 	for rows.Next() {
 		c := &model.Category{}
-		err := rows.Scan(
-			&c.ID,
-			&c.Name,
-			&c.Slug,
-			&c.Description,
-			&c.ImageURL,
-			&c.ParentID,
-			&c.IsActive,
-			&c.CreatedAt,
-		)
-		if err != nil {
+		if err := sqlscan.ScanWithColumns(cols, rows.Scan, c); err != nil {
 			r.logger.Error("failed to scan category row", zap.Error(err))
 			return nil, err
 		}

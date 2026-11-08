@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -34,5 +35,15 @@ func TestNormalizeIndianPhone(t *testing.T) {
 		if !tc.hasErr && got != tc.expected {
 			t.Errorf("NormalizeIndianPhone(%q) = %q, want %q", tc.input, got, tc.expected)
 		}
+	}
+}
+
+func TestMaskIndianPhone(t *testing.T) {
+	masked := MaskIndianPhone("+91 98765 43210")
+	if !strings.Contains(masked, "****") {
+		t.Errorf("expected masked phone to contain asterisks, got %s", masked)
+	}
+	if !strings.HasSuffix(masked, "3210") {
+		t.Errorf("expected masked phone to preserve last 4 digits (3210), got %s", masked)
 	}
 }

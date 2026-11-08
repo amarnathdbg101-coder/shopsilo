@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+
+	fuzzy "github.com/amarnathdbg101-coder/go/go-fuzzy"
 )
 
 // CanonicalCategoryInfo defines standard metadata and synonyms for a canonical category.
@@ -325,6 +327,7 @@ var (
 	nonAlphanumericRegex = regexp.MustCompile(`[^a-z0-9]+`)
 	slugLookupMap        map[string]string
 	infoMap              map[string]CanonicalCategoryInfo
+	candidateSlugs       []string
 )
 
 func init() {
@@ -344,6 +347,12 @@ func init() {
 			slugLookupMap[CleanCategorySlug(name)] = cat.Slug
 		}
 	}
+
+	// Precompute candidate slug list for high-performance fuzzy matching
+	candidateSlugs = make([]string, 0, len(slugLookupMap))
+	for k := range slugLookupMap {
+		candidateSlugs = append(candidateSlugs, k)
+	}
 }
 
 // CleanCategorySlug strips non-alphanumeric characters for clean fast matching.
@@ -355,22 +364,45 @@ func CleanCategorySlug(input string) string {
 }
 
 // ResolveCanonicalCategorySlug maps any category name, slug, or synonym into its canonical category slug.
+// Falls back to high-confidence fuzzy matching (Levenshtein/JaroWinkler ratio >= 0.70) for typos and colloquial variations.
 func ResolveCanonicalCategorySlug(raw string) (string, bool) {
+	canon, _, ok := ResolveFuzzyCategorySlug(raw, 0.70)
+	return canon, ok
+}
+
+// ResolveFuzzyCategorySlug resolves raw category input to a canonical slug with similarity score.
+// Returns canonical slug, similarity score (0.0 - 1.0), and whether a match was accepted.
+func ResolveFuzzyCategorySlug(raw string, minScore float64) (string, float64, bool) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return "", false
+		return "", 0, false
 	}
 	clean := CleanCategorySlug(trimmed)
+
+	// Tier 1: Exact canonical/synonym dictionary match (Zero-alloc, O(1))
 	if canon, ok := slugLookupMap[clean]; ok {
-		return canon, true
+		return canon, 1.0, true
 	}
+
+	// Tier 2: Hyphen-stripped direct normalization
 	noHyphens := strings.ReplaceAll(clean, "-", "")
 	for k, v := range slugLookupMap {
 		if strings.ReplaceAll(k, "-", "") == noHyphens {
-			return v, true
+			return v, 1.0, true
 		}
 	}
-	return "", false
+
+	// Tier 3: Typo-tolerant fuzzy matching (go-fuzzy)
+	if len(clean) >= 3 && len(candidateSlugs) > 0 {
+		best, found := fuzzy.FindBestMatch(clean, candidateSlugs)
+		if found && best.Score >= minScore {
+			if canon, ok := slugLookupMap[best.Target]; ok {
+				return canon, best.Score, true
+			}
+		}
+	}
+
+	return "", 0, false
 }
 
 // GetCategorySynonymSlugs returns all slug aliases for a given canonical or synonym slug.

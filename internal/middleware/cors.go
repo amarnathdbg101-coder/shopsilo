@@ -4,62 +4,54 @@ import (
 	"net/http"
 	"os"
 	"strings"
+
+	gocors "github.com/amarnathdbg101-coder/go/go-cors"
 )
 
-// CORS handles Cross-Origin Resource Sharing and injects standard Security Headers
-func CORS(next http.Handler) http.Handler {
+// buildCORSConfig parses ALLOWED_ORIGINS and creates an optimized pre-computed CORS handler.
+func buildCORSConfig() gocors.Config {
 	allowedOriginsEnv := os.Getenv("ALLOWED_ORIGINS")
-	var allowedList []string
-	if allowedOriginsEnv != "" && allowedOriginsEnv != "*" {
+	var origins []string
+
+	if allowedOriginsEnv == "" || allowedOriginsEnv == "*" {
+		origins = []string{"*"}
+	} else {
 		for _, o := range strings.Split(allowedOriginsEnv, ",") {
 			trimmed := strings.TrimSpace(o)
 			if trimmed != "" {
-				allowedList = append(allowedList, trimmed)
+				origins = append(origins, trimmed)
 			}
 		}
+		// Always permit standard development localhosts & emulators
+		origins = append(origins,
+			"http://localhost*",
+			"https://localhost*",
+			"http://127.0.0.1*",
+			"https://127.0.0.1*",
+			"http://10.0.2.2*", // Android emulator
+		)
 	}
 
+	return gocors.Config{
+		AllowedOrigins: origins,
+		AllowedMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders: []string{
+			"Content-Type", "Authorization", "X-Requested-With",
+			"Accept", "X-Device-Fingerprint", "X-Idempotency-Key", "Idempotency-Key",
+		},
+		ExposedHeaders:   []string{"Link", "X-Total-Count", "X-Cache"},
+		AllowCredentials: true,
+		MaxAge:           86400,
+	}
+}
+
+var defaultCORS = gocors.New(buildCORSConfig())
+
+// CORS handles Cross-Origin Resource Sharing with zero-allocation headers and injects standard OWASP Security Headers.
+// Powered by zero-dep go-cors with preflight OPTIONS short-circuiting.
+func CORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-
-		// 1. CORS Configuration
-		isLocalhost := origin == "" ||
-			strings.HasPrefix(origin, "http://localhost") ||
-			strings.HasPrefix(origin, "https://localhost") ||
-			strings.HasPrefix(origin, "http://127.0.0.1") ||
-			strings.HasPrefix(origin, "https://127.0.0.1") ||
-			strings.HasPrefix(origin, "http://10.0.2.2")
-
-		if allowedOriginsEnv == "" || allowedOriginsEnv == "*" || isLocalhost {
-			if origin != "" {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Access-Control-Allow-Credentials", "true")
-				w.Header().Set("Vary", "Origin")
-			} else {
-				w.Header().Set("Access-Control-Allow-Origin", "*")
-			}
-		} else {
-			// Production whitelist mode
-			matched := false
-			for _, allowed := range allowedList {
-				if strings.EqualFold(origin, allowed) {
-					matched = true
-					break
-				}
-			}
-
-			if matched {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Access-Control-Allow-Credentials", "true")
-				w.Header().Set("Vary", "Origin")
-			}
-		}
-
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept, X-Device-Fingerprint, X-Idempotency-Key, Idempotency-Key")
-		w.Header().Set("Access-Control-Max-Age", "86400")
-
-		// 2. Production Security Headers
+		// 1. Production OWASP Security Headers
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("X-XSS-Protection", "1; mode=block")
@@ -71,11 +63,7 @@ func CORS(next http.Handler) http.Handler {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
 
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-
-		next.ServeHTTP(w, r)
+		// 2. Delegate to high-performance go-cors engine
+		defaultCORS.Handler(next).ServeHTTP(w, r)
 	})
 }

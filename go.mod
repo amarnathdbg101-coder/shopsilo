@@ -3,10 +3,23 @@ module shopMe
 go 1.26.5
 
 require (
+	github.com/amarnathdbg101-coder/go/go-bizhours v1.0.0
+	github.com/amarnathdbg101-coder/go/go-colorlog v1.0.0
+	github.com/amarnathdbg101-coder/go/go-cors v1.0.0
+	github.com/amarnathdbg101-coder/go/go-env v1.0.0
+	github.com/amarnathdbg101-coder/go/go-envvalidator v1.0.0
+	github.com/amarnathdbg101-coder/go/go-fuzzy v1.0.0
+	github.com/amarnathdbg101-coder/go/go-idempotency v1.0.0
+	github.com/amarnathdbg101-coder/go/go-jwt v1.0.1
+	github.com/amarnathdbg101-coder/go/go-phone v1.0.1
+	github.com/amarnathdbg101-coder/go/go-saga v1.0.0
+	github.com/amarnathdbg101-coder/go/go-shutdown v1.0.0
+	github.com/amarnathdbg101-coder/go/go-slidingwindow v1.0.0
+	github.com/amarnathdbg101-coder/go/go-sqlscan v1.0.1
 	github.com/aws/aws-sdk-go v1.49.6
+	github.com/chromedp/chromedp v0.23.0
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/go-playground/validator/v10 v10.30.4
-	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/joho/godotenv v1.5.1
@@ -20,7 +33,6 @@ require (
 
 require (
 	github.com/chromedp/cdproto v0.159.2 // indirect
-	github.com/chromedp/chromedp v0.23.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260820222146-c27c302e5fc3 // indirect

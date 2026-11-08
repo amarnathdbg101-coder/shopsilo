@@ -3,21 +3,21 @@ package utils
 
 import (
 	"log"
-	"os"
 	"strings"
 	"sync"
 
-	"github.com/joho/godotenv" // for local .env file
+	goenv "github.com/amarnathdbg101-coder/go/go-env"
+	"github.com/amarnathdbg101-coder/go/go-envvalidator"
 )
 
 type Config struct {
-	Port      string `koanf:"PORT"`
-	DBURL     string `koanf:"DATABASE_URL"`
-	Jwt       string `koanf:"JWT_SECRET"`
-	Bucket    string `koanf:"R2_BUCKET"`
-	AccessKey string `koanf:"R2_ACCESS_KEY"`
-	SecretKey string `koanf:"R2_SECRET_KEY"`
-	Endpoint  string `koanf:"R2_ENDPOINT"`
+	Port          string   `koanf:"PORT"`
+	DBURL         string   `koanf:"DATABASE_URL"`
+	Jwt           string   `koanf:"JWT_SECRET"`
+	Bucket        string   `koanf:"R2_BUCKET"`
+	AccessKey     string   `koanf:"R2_ACCESS_KEY"`
+	SecretKey     string   `koanf:"R2_SECRET_KEY"`
+	Endpoint      string   `koanf:"R2_ENDPOINT"`
 	PublicURL     string   `koanf:"R2_PUBLIC_URL"`
 	GeminiAPIKeys []string `koanf:"GEMINI_API_KEYS"`
 }
@@ -27,56 +27,45 @@ var (
 	cachedConfig Config
 )
 
+// MustLoad loads, validates, and caches application configuration using zero-dep go-env and go-envvalidator.
 func MustLoad() Config {
 	configOnce.Do(func() {
-		// Load .env file (supports local dev and VPS deployment paths)
-		for _, envFile := range []string{".env", "../.env", "../../.env", "../../../.env", "/root/shopsilo/.env", "/root/shopsilo/cmd/api/.env"} {
-			_ = godotenv.Load(envFile)
-		}
+		// 1. Zero-dependency .env loader (searches standard and deployment locations)
+		_ = goenv.Load(".env", "../.env", "../../.env", "../../../.env", "/root/shopsilo/.env", "/root/shopsilo/cmd/api/.env")
 
-		port := os.Getenv("PORT")
-		if port == "" {
-			log.Fatalf("port is required")
-		}
+		// 2. Declarative Schema-Driven Validation
+		schema := envvalidator.New()
 
-		database := os.Getenv("DATABASE_URL")
-		if database == "" {
-			log.Fatal("database url is require")
-		}
-		jwt := os.Getenv("JWT_SECRET")
-		if jwt == "" {
-			log.Fatal("jwt is required")
-		}
-		if len(jwt) < 16 {
-			log.Printf("[SECURITY WARNING] JWT_SECRET is shorter than 16 characters! Use a strong secret in production.")
-		}
-		bucket := os.Getenv("R2_BUCKET")
-		if bucket == "" {
-			log.Fatalf("R2 BUCKET is required")
-		}
+		// Network & Database
+		schema.Require("PORT").AsInt().Between(1, 65535)
+		schema.Require("DATABASE_URL")
 
-		accessKey := os.Getenv("R2_ACCESS_KEY")
-		if accessKey == "" {
-			log.Fatalf("R2 BUCKET is required")
-		}
-		secertKey := os.Getenv("R2_SECRET_KEY")
-		if secertKey == "" {
-			log.Fatalf("R2 BUCKET is required")
-		}
-		r2Endpoint := os.Getenv("R2_ENDPOINT")
-		if r2Endpoint == "" {
-			log.Fatalf("R2 BUCKET is required")
+		// Security & Storage
+		schema.Require("JWT_SECRET").MinLength(16).Masked()
+		schema.Require("R2_BUCKET")
+		schema.Require("R2_ACCESS_KEY").Masked()
+		schema.Require("R2_SECRET_KEY").Masked()
+		schema.Require("R2_ENDPOINT")
+
+		// Optional Fields
+		schema.Optional("R2_PUBLIC_URL", "")
+		schema.Optional("GEMINI_API_KEYS", "")
+		schema.Optional("GEMINI_API_KEY", "")
+
+		env, err := schema.Validate(nil)
+		if err != nil {
+			log.Fatalf("[FATAL] Configuration validation failed:\n%v", err)
 		}
 
 		cachedConfig = Config{
-			Port:          port,
-			DBURL:         database,
-			Jwt:           jwt,
-			AccessKey:     accessKey,
-			Endpoint:      r2Endpoint,
-			SecretKey:     secertKey,
-			Bucket:        bucket,
-			PublicURL:     os.Getenv("R2_PUBLIC_URL"),
+			Port:          env.GetString("PORT"),
+			DBURL:         env.GetString("DATABASE_URL"),
+			Jwt:           env.GetString("JWT_SECRET"),
+			AccessKey:     env.GetString("R2_ACCESS_KEY"),
+			Endpoint:      env.GetString("R2_ENDPOINT"),
+			SecretKey:     env.GetString("R2_SECRET_KEY"),
+			Bucket:        env.GetString("R2_BUCKET"),
+			PublicURL:     env.GetString("R2_PUBLIC_URL"),
 			GeminiAPIKeys: getCombinedGeminiKeys(),
 		}
 	})
@@ -85,8 +74,8 @@ func MustLoad() Config {
 }
 
 func getCombinedGeminiKeys() []string {
-	k1 := os.Getenv("GEMINI_API_KEYS")
-	k2 := os.Getenv("GEMINI_API_KEY")
+	k1 := goenv.GetString("GEMINI_API_KEYS", "")
+	k2 := goenv.GetString("GEMINI_API_KEY", "")
 	var combined []string
 	seen := make(map[string]bool)
 
@@ -105,7 +94,7 @@ func parseCommaList(raw string) []string {
 	if raw == "" {
 		return []string{}
 	}
-	parts := []string{}
+	var parts []string
 	for _, p := range strings.Split(raw, ",") {
 		clean := strings.TrimSpace(strings.Trim(p, `"'`))
 		if clean != "" {

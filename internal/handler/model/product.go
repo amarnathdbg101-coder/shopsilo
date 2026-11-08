@@ -5,18 +5,18 @@ import (
 )
 
 type Category struct {
-    ID          string     `json:"id"`
-    Name        string     `json:"name"`
-    Slug        string     `json:"slug"`
-    Description string     `json:"description"`
-    ImageURL    string     `json:"image_url"`
-    Icon        string     `json:"icon,omitempty"`
-    ShopID      *string    `json:"shop_id,omitempty"`
-    IsCustom    bool       `json:"is_custom"`
-    ParentID    *string    `json:"parent_id,omitempty"`
-    IsActive    bool       `json:"is_active"`
-    CreatedAt   time.Time  `json:"created_at"`
-    SubCategories []*Category `json:"sub_categories,omitempty"`
+    ID            string      `json:"id" db:"id"`
+    Name          string      `json:"name" db:"name"`
+    Slug          string      `json:"slug" db:"slug"`
+    Description   string      `json:"description" db:"description"`
+    ImageURL      string      `json:"image_url" db:"image_url"`
+    Icon          string      `json:"icon,omitempty" db:"icon"`
+    ShopID        *string     `json:"shop_id,omitempty" db:"shop_id"`
+    IsCustom      bool        `json:"is_custom" db:"is_custom"`
+    ParentID      *string     `json:"parent_id,omitempty" db:"parent_id"`
+    IsActive      bool        `json:"is_active" db:"is_active"`
+    CreatedAt     time.Time   `json:"created_at" db:"created_at"`
+    SubCategories []*Category `json:"sub_categories,omitempty" db:"-"`
 }
 
 type Product struct {

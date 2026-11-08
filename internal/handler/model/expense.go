@@ -15,12 +15,12 @@ const (
 
 // ShopExpense represents a day-to-day store operational expense.
 type ShopExpense struct {
-	ID            string    `json:"id"`
-	ShopID        string    `json:"shop_id"`
-	Category      string    `json:"category"`
-	Amount        float64   `json:"amount"`
-	Notes         string    `json:"notes,omitempty"`
-	PaymentMethod string    `json:"payment_method"` // cash, upi, etc.
-	ExpenseDate   string    `json:"expense_date"`   // YYYY-MM-DD
-	CreatedAt     time.Time `json:"created_at"`
+	ID            string    `json:"id" db:"id"`
+	ShopID        string    `json:"shop_id" db:"shop_id"`
+	Category      string    `json:"category" db:"category"`
+	Amount        float64   `json:"amount" db:"amount"`
+	Notes         string    `json:"notes,omitempty" db:"notes"`
+	PaymentMethod string    `json:"payment_method" db:"payment_method"` // cash, upi, etc.
+	ExpenseDate   string    `json:"expense_date" db:"expense_date"`   // YYYY-MM-DD
+	CreatedAt     time.Time `json:"created_at" db:"created_at"`
 }

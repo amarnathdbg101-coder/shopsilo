@@ -6,65 +6,57 @@ import (
 	"shopMe/internal/utils"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
+	gojwt "github.com/amarnathdbg101-coder/go/go-jwt"
 )
 
+// ResetClaims holds password reset token claims.
 type ResetClaims struct {
-	UserID string `json:"user_id"`
-	Email  string `json:"email"`
-	jwt.RegisteredClaims
+	UserID    string `json:"user_id"`
+	Email     string `json:"email"`
+	ExpiresAt int64  `json:"exp,omitempty"`
+	IssuedAt  int64  `json:"iat,omitempty"`
 }
 
+// GenerateJwt creates a long-lived session token (30 days) using application JWT secret.
 func GenerateJwt(userID, email, role string) (string, error) {
-	claims := jwt.MapClaims{
+	now := time.Now()
+	claims := map[string]any{
 		"user_id": userID,
 		"email":   email,
 		"role":    role,
-		"exp":     time.Now().Add(30 * 24 * time.Hour).Unix(),
-		"iat":     time.Now().Unix(),
+		"exp":     now.Add(30 * 24 * time.Hour).Unix(),
+		"iat":     now.Unix(),
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(utils.MustLoad().Jwt))
+	return gojwt.SignCustom([]byte(utils.MustLoad().Jwt), claims)
 }
 
-// GenerateResetToken generates a short-lived (15 min) token tied to current password hash
+// GenerateResetToken generates a short-lived (15 min) token tied to current password hash.
 func GenerateResetToken(userID, email, passwordHash, secret string) (string, error) {
+	now := time.Now()
 	claims := ResetClaims{
-		UserID: userID,
-		Email:  email,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-		},
+		UserID:    userID,
+		Email:     email,
+		ExpiresAt: now.Add(15 * time.Minute).Unix(),
+		IssuedAt:  now.Unix(),
 	}
 	signingKey := fmt.Sprintf("%s:%s", secret, passwordHash)
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(signingKey))
+	return gojwt.SignCustom([]byte(signingKey), claims)
 }
 
-// VerifyResetToken validates the reset token with the user's password hash
+// VerifyResetToken validates the reset token with the user's password hash.
 func VerifyResetToken(tokenStr, secret, passwordHash string) (*ResetClaims, error) {
 	signingKey := fmt.Sprintf("%s:%s", secret, passwordHash)
 	claims := &ResetClaims{}
-	token, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-		}
-		return []byte(signingKey), nil
-	})
-
-	if err != nil || !token.Valid {
+	if err := gojwt.VerifyCustom([]byte(signingKey), tokenStr, claims); err != nil {
 		return nil, errors.New("invalid or expired reset token")
 	}
 	return claims, nil
 }
 
-// ExtractUserIDFromResetToken extracts the user_id without verifying the signature yet
+// ExtractUserIDFromResetToken extracts the user_id without verifying the signature yet.
 func ExtractUserIDFromResetToken(tokenStr string) (string, error) {
-	parser := jwt.NewParser()
 	claims := &ResetClaims{}
-	_, _, err := parser.ParseUnverified(tokenStr, claims)
-	if err != nil {
+	if err := gojwt.DecodeUnverified(tokenStr, claims); err != nil {
 		return "", errors.New("invalid reset token format")
 	}
 	if claims.UserID == "" {
@@ -73,19 +65,16 @@ func ExtractUserIDFromResetToken(tokenStr string) (string, error) {
 	return claims.UserID, nil
 }
 
-// ParseTokenForRefresh securely validates token signature (even if expired) and extracts user_id for refresh
+// ParseTokenForRefresh securely validates token signature (even if expired) and extracts user_id for refresh.
 func ParseTokenForRefresh(tokenStr string) (string, error) {
 	secret := []byte(utils.MustLoad().Jwt)
-	claims := jwt.MapClaims{}
+	engine, err := gojwt.New(secret)
+	if err != nil {
+		return "", errors.New("invalid secret")
+	}
 
-	token, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-		}
-		return secret, nil
-	}, jwt.WithoutClaimsValidation())
-
-	if err != nil || token == nil || !token.Valid {
+	claims := map[string]any{}
+	if err := engine.VerifySignatureOnly(tokenStr, &claims); err != nil {
 		return "", errors.New("invalid token signature")
 	}
 
@@ -97,40 +86,33 @@ func ParseTokenForRefresh(tokenStr string) (string, error) {
 	return userID, nil
 }
 
-// PhoneVerificationClaims stores the verified phone and verification record ID
+// PhoneVerificationClaims stores the verified phone and verification record ID.
 type PhoneVerificationClaims struct {
 	Phone          string `json:"phone"`
 	VerificationID string `json:"verification_id"`
 	Purpose        string `json:"purpose"` // "phone_registration"
-	jwt.RegisteredClaims
+	ExpiresAt      int64  `json:"exp,omitempty"`
+	IssuedAt       int64  `json:"iat,omitempty"`
 }
 
 // GeneratePhoneVerificationToken generates a short-lived (15 minute) cryptographically signed token
 // indicating that the specified phone number has been successfully verified via OTP.
 func GeneratePhoneVerificationToken(phone, verificationID, secret string) (string, error) {
+	now := time.Now()
 	claims := PhoneVerificationClaims{
 		Phone:          phone,
 		VerificationID: verificationID,
 		Purpose:        "phone_registration",
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-		},
+		ExpiresAt:      now.Add(15 * time.Minute).Unix(),
+		IssuedAt:       now.Unix(),
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(secret))
+	return gojwt.SignCustom([]byte(secret), claims)
 }
 
 // VerifyPhoneVerificationToken verifies the signature, expiration, and claims of a phone verification token.
 func VerifyPhoneVerificationToken(tokenStr, secret string) (*PhoneVerificationClaims, error) {
 	claims := &PhoneVerificationClaims{}
-	token, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-		}
-		return []byte(secret), nil
-	})
-	if err != nil || !token.Valid {
+	if err := gojwt.VerifyCustom([]byte(secret), tokenStr, claims); err != nil {
 		return nil, errors.New("invalid or expired phone verification token")
 	}
 	if claims.Purpose != "phone_registration" || claims.Phone == "" || claims.VerificationID == "" {
@@ -138,4 +120,3 @@ func VerifyPhoneVerificationToken(tokenStr, secret string) (*PhoneVerificationCl
 	}
 	return claims, nil
 }
-

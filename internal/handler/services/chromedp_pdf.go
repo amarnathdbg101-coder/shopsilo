@@ -4,6 +4,7 @@ package services
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,6 +17,17 @@ import (
 	"github.com/signintech/gopdf"
 	"go.uber.org/zap"
 )
+
+// maxConcurrentChromeRenders bounds simultaneous headless Chrome instances (each process consumes ~150-250MB RAM).
+var chromeRenderSemaphore = make(chan struct{}, 2)
+
+// SetChromeRenderSemaphoreConcurrency configures semaphore capacity (useful for tuning or tests).
+func SetChromeRenderSemaphoreConcurrency(n int) {
+	if n < 1 {
+		n = 1
+	}
+	chromeRenderSemaphore = make(chan struct{}, n)
+}
 
 // ChromedpPDFService renders pixel-perfect PDF reports using headless Chrome browser automation.
 type ChromedpPDFService struct {
@@ -292,8 +304,16 @@ func (s *ChromedpPDFService) GenerateEndOfDayPLPDF(ctx context.Context, shopOwne
 	return s.renderFallbackGoPDF(shop.Name, formattedDate, summary, totalSales, netProfit)
 }
 
-// renderChromedpPDF executes Chrome headless print-to-pdf automation.
+// renderChromedpPDF executes Chrome headless print-to-pdf automation with concurrency bounding.
 func (s *ChromedpPDFService) renderChromedpPDF(ctx context.Context, htmlContent string) ([]byte, error) {
+	// Guard: Bounded concurrency using semaphore channel to prevent VPS Out-of-Memory (OOM)
+	select {
+	case chromeRenderSemaphore <- struct{}{}:
+		defer func() { <-chromeRenderSemaphore }()
+	case <-ctx.Done():
+		return nil, fmt.Errorf("timed out waiting for available Chrome rendering slot: %w", ctx.Err())
+	}
+
 	// Allocate Chrome execution context
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.NoSandbox,
@@ -308,7 +328,7 @@ func (s *ChromedpPDFService) renderChromedpPDF(ctx context.Context, htmlContent 
 	chromeCtx, cancelChrome := chromedp.NewContext(allocCtx)
 	defer cancelChrome()
 
-	timeoutCtx, cancelTimeout := context.WithTimeout(chromeCtx, 20*time.Second)
+	timeoutCtx, cancelTimeout := context.WithTimeout(chromeCtx, 25*time.Second)
 	defer cancelTimeout()
 
 	encodedHTML := base64.StdEncoding.EncodeToString([]byte(htmlContent))
@@ -330,7 +350,20 @@ func (s *ChromedpPDFService) renderChromedpPDF(ctx context.Context, htmlContent 
 	if err != nil {
 		return nil, err
 	}
+
+	if len(pdfBuffer) < 4 || string(pdfBuffer[:4]) != "%PDF" {
+		return nil, fmt.Errorf("invalid PDF output: missing %%PDF header (bytes: %d)", len(pdfBuffer))
+	}
+
 	return pdfBuffer, nil
+}
+
+// RenderDirectHTML renders any raw HTML string into PDF using chromedp and semaphore concurrency controls.
+func (s *ChromedpPDFService) RenderDirectHTML(ctx context.Context, htmlContent string) ([]byte, error) {
+	if !isChromeInstalled() {
+		return nil, errors.New("chrome binary not found on host machine")
+	}
+	return s.renderChromedpPDF(ctx, htmlContent)
 }
 
 // renderFallbackGoPDF renders clean PDF using Go standard gopdf when Chrome binary is omitted.
