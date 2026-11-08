@@ -1,27 +1,17 @@
-// Package reuse reduce repetition task.
+// Package reuse reduces repetitive tasks across ShopSilo.
 package reuse
 
 import (
-	"regexp"
-	"strings"
+	goslug "github.com/amarnathdbg101-coder/go/go-slug"
 )
 
-var (
-	nonAlphaNumericRegex = regexp.MustCompile(`[^a-z0-9]+`)
-	multipleDashRegex    = regexp.MustCompile(`-+`)
-)
-
-// Slugify converts an arbitrary string into a URL-friendly slug
+// Slugify converts an arbitrary string into a URL-friendly slug.
+// Powered by zero-dep go-slug with Devanagari transliteration,
+// symbol conversion (& -> and, @ -> at, ₹ -> inr), and Unicode normalization.
 func Slugify(text string) string {
-	lower := strings.ToLower(strings.TrimSpace(text))
-	// Replace non-alphanumeric characters with dashes
-	withDashes := nonAlphaNumericRegex.ReplaceAllString(lower, "-")
-	// Clean multiple consecutive dashes
-	cleanDashes := multipleDashRegex.ReplaceAllLiteralString(withDashes, "-")
-	// Trim dashes from start and end
-	trimmed := strings.Trim(cleanDashes, "-")
-	if trimmed == "" {
+	res := goslug.Make(text)
+	if res == "" {
 		return "shop"
 	}
-	return trimmed
+	return res
 }

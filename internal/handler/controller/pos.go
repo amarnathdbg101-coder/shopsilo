@@ -541,17 +541,10 @@ func (c *POSController) ListSales(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	if page < 1 {
-		page = 1
-	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit < 1 || limit > 100 {
-		limit = 50
-	}
+	p := reuse.ParsePagination(r, 50)
 	dateFilter := r.URL.Query().Get("date")
 
-	res, err := c.service.ListBills(r.Context(), claims.UserID, page, limit, dateFilter)
+	res, err := c.service.ListBills(r.Context(), claims.UserID, p.Page, p.PerPage, dateFilter)
 	if err != nil {
 		if errors.Is(err, services.ErrShopNotFound) {
 			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")

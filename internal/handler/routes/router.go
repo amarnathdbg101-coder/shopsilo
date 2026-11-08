@@ -2,17 +2,19 @@
 package routes
 
 import (
-	"net/http"
+	"context"
 	"shopMe/internal/handler/controller"
 	"shopMe/internal/handler/repository"
 	"shopMe/internal/handler/services"
 	"shopMe/internal/middleware"
-	"shopMe/internal/reuse"
 	"shopMe/internal/utils"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"time"
+
+	gohealthcheck "github.com/amarnathdbg101-coder/go/go-healthcheck"
 	"go.uber.org/zap"
 )
 
@@ -184,16 +186,20 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	r.Use(middleware.SecurityHeaders)
 	r.Use(middleware.IdempotencyGuard)
 
-	// Liveness & Readiness health check for production orchestrators
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) { // Both
-		if err := db.Ping(r.Context()); err != nil {
-			reuse.Error(w, http.StatusServiceUnavailable, "database ping failed")
-			return
-		}
-		reuse.Success(w, "ShopMe API is healthy and operational", map[string]string{
-			"status": "healthy",
-		})
+	// Production Health, Readiness & Liveness Orchestrator (Render / Kubernetes / Docker)
+	// Powered by zero-dependency go-healthcheck with 1s ping caching to protect database from health probes
+	healthManager := gohealthcheck.New(gohealthcheck.Config{
+		Timeout:  2 * time.Second,
+		CacheTTL: 1 * time.Second,
 	})
+	healthManager.RegisterReadiness(gohealthcheck.NewCheckFunc("postgres", func(ctx context.Context) error {
+		return db.Ping(ctx)
+	}))
+	healthManager.RegisterLiveness(gohealthcheck.NewMemoryChecker("heap_memory", 1024*1024*1024)) // 1GB heap limit
+
+	r.Get("/health", healthManager.ReadyHandler())
+	r.Get("/readyz", healthManager.ReadyHandler())
+	r.Get("/livez", healthManager.LiveHandler())
 
 	// Public Grievance & Content Safety Report endpoint (IT Rules 2021 compliance)
 	r.Post("/reports", modc.SubmitReport) // Both

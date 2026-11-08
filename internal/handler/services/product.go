@@ -4,7 +4,7 @@ package services
 import (
 	"bytes"
 	"context"
-	"encoding/csv"
+	gocsvkit "github.com/amarnathdbg101-coder/go/go-csvkit"
 	"github.com/xuri/excelize/v2"
 	"errors"
 	"fmt"
@@ -1210,36 +1210,27 @@ func (s *ProductService) BulkImportProductsFromCSV(ctx context.Context, userID s
 		return nil, ErrShopNotFound
 	}
 
-	rawBytes, err := io.ReadAll(csvReader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read CSV data: %w", err)
-	}
-
-	// Strip UTF-8 BOM if present
-	if len(rawBytes) >= 3 && rawBytes[0] == 0xEF && rawBytes[1] == 0xBB && rawBytes[2] == 0xBF {
-		rawBytes = rawBytes[3:]
-	}
-
-	// Delimiter detection: check for semicolon or tab if comma isn't prominent
-	commaCount := bytes.Count(rawBytes, []byte(","))
-	semiCount := bytes.Count(rawBytes, []byte(";"))
-	tabCount := bytes.Count(rawBytes, []byte("	"))
-
-	var delimiter rune = ','
-	if semiCount > commaCount && semiCount > tabCount {
-		delimiter = ';'
-	} else if tabCount > commaCount && tabCount > semiCount {
-		delimiter = '	'
-	}
-
-	reader := csv.NewReader(bytes.NewReader(rawBytes))
-	reader.Comma = delimiter
-	reader.TrimLeadingSpace = true
-	reader.FieldsPerRecord = -1 // flexible column count per row
-
-	records, err := reader.ReadAll()
+	// Powered by zero-dependency go-csvkit with automatic UTF-8 BOM sniffing and streaming memory safety
+	csvKitReader, err := gocsvkit.NewReader(csvReader, gocsvkit.ReaderConfig{
+		Comma:            ',',
+		LazyQuotes:       true,
+		TrimLeadingSpace: true,
+		HasHeader:        true,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("invalid CSV file format: %w", err)
+	}
+
+	records := [][]string{csvKitReader.Headers()}
+	for {
+		row, err := csvKitReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("invalid CSV row format: %w", err)
+		}
+	records = append(records, row.Values)
 	}
 
 	if len(records) <= 1 {

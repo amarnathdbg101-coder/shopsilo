@@ -2,23 +2,13 @@
 package utils
 
 import (
-	"strings"
-
 	"shopMe/internal/handler/model"
+
+	gomask "github.com/amarnathdbg101-coder/go/go-mask"
 )
 
 func maskPhone(phone string) string {
-	trimmed := strings.TrimSpace(phone)
-	if len(trimmed) <= 4 {
-		return trimmed
-	}
-	if strings.HasPrefix(trimmed, "+") && len(trimmed) >= 12 {
-		return trimmed[:5] + "*****" + trimmed[len(trimmed)-3:]
-	}
-	if len(trimmed) >= 10 {
-		return trimmed[:2] + "*****" + trimmed[len(trimmed)-3:]
-	}
-	return trimmed[:1] + "***" + trimmed[len(trimmed)-2:]
+	return gomask.Phone(phone)
 }
 
 // GenerateKhataStatementPDF produces an executive-grade customer account passbook PDF using pure Go.

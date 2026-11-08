@@ -8,6 +8,9 @@ import (
 	"strings"
 
 	"github.com/go-playground/validator/v10"
+
+	gomask "github.com/amarnathdbg101-coder/go/go-mask"
+	gosanitize "github.com/amarnathdbg101-coder/go/go-sanitize"
 )
 
 var Validate = validator.New()
@@ -51,8 +54,9 @@ func IsValidIndiaCoordinates(lat, lng float64) bool {
 	return true
 }
 
-// SanitizeReviewText strips external promotional links or dangerous spam URLs from customer reviews.
+// SanitizeReviewText strips HTML XSS tags and external promotional spam URLs from customer reviews.
 func SanitizeReviewText(comment string) string {
+	comment = gosanitize.StripHTML(comment)
 	comment = strings.TrimSpace(comment)
 	if comment == "" {
 		return ""
@@ -70,7 +74,7 @@ func SanitizeReviewText(comment string) string {
 	}
 
 	if !hasSpam {
-		return comment
+		return strings.Join(strings.Fields(comment), " ")
 	}
 
 	// Tokenize words and replace spam links
@@ -87,19 +91,23 @@ func SanitizeReviewText(comment string) string {
 	return strings.Join(words, " ")
 }
 
-// MaskPhoneNumber masks a phone number for DPDP compliance (e.g. "+919876543210" -> "+9198*****210")
+// SanitizeUserInput strips HTML tags and normalizes whitespace for public-facing text fields.
+func SanitizeUserInput(input string) string {
+	return strings.TrimSpace(gosanitize.StripHTML(input))
+}
+
+// MaskPhoneNumber masks a phone number for DPDP compliance using go-mask.
 func MaskPhoneNumber(phone string) string {
 	trimmed := strings.TrimSpace(phone)
 	if len(trimmed) <= 4 {
 		return trimmed
 	}
-	if strings.HasPrefix(trimmed, "+") && len(trimmed) >= 12 {
-		return trimmed[:5] + "*****" + trimmed[len(trimmed)-3:]
-	}
-	if len(trimmed) >= 10 {
-		return trimmed[:2] + "*****" + trimmed[len(trimmed)-3:]
-	}
-	return trimmed[:1] + "***" + trimmed[len(trimmed)-2:]
+	return gomask.Phone(phone)
+}
+
+// MaskEmail masks an email address for privacy and DPDP compliance using go-mask.
+func MaskEmail(email string) string {
+	return gomask.Email(email)
 }
 // GeoQueryParams holds validated, sanitized, and clamped spatial parameters.
 type GeoQueryParams struct {

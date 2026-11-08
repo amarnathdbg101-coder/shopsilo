@@ -10,6 +10,7 @@ import (
 	"time"
 
 	goshutdown "github.com/amarnathdbg101-coder/go/go-shutdown"
+	"shopMe/internal/worker"
 	"go.uber.org/zap"
 )
 
@@ -67,6 +68,10 @@ func BuildShutdownCoordinator(server *http.Server, stopApp context.CancelFunc, l
 				logger.Warn("background workers termination timed out")
 			}
 		}
+
+		logger.Info("draining bounded worker task pool...")
+		worker.DrainTaskPool()
+		logger.Info("worker task pool drained successfully")
 		return nil
 	})
 

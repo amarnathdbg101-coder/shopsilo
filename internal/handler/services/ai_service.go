@@ -1359,8 +1359,8 @@ func parseMerchantAction(raw string, _ string) (string, string) {
 	return strings.TrimSpace(cleaned), action
 }
 
-// SmartStudioScan combines Gemini Vision Catalog intelligence with Cloudflare Workers AI
-// and Context-Aware Studio Compositing into a seamless, single-click product onboarding experience.
+// SmartStudioScan performs simple product scan: extracts details via Gemini Vision and uploads original image untouched.
+// Background removal and light enhancement have been completely removed per request.
 func (s *aiService) SmartStudioScan(ctx context.Context, req dto.SmartStudioScanRequest) (*dto.SmartStudioScanResponse, error) {
 	startTime := time.Now()
 
@@ -1374,42 +1374,11 @@ func (s *aiService) SmartStudioScan(ctx context.Context, req dto.SmartStudioScan
 		return nil, fmt.Errorf("invalid base64 image data: %w", err)
 	}
 
-	// 2. Run Gemini Vision Scanning & Cloudflare AI Background Removal concurrently!
-	type scanResult struct {
-		data *dto.AIScanProductResponse
-		err  error
-	}
-	type cutoutResult struct {
-		pngBytes []byte
-		provider reuse.BackgroundRemovalProvider
-		err      error
-	}
-
-	scanChan := make(chan scanResult, 1)
-	cutoutChan := make(chan cutoutResult, 1)
-
-	// Goroutine A: Gemini Vision for 10+ commercial attributes extraction
-	go func() {
-		scanResp, err := s.ScanProduct(ctx, dto.AIScanProductRequest{
-			ImageBase64: req.ImageBase64,
-			MimeType:    req.MimeType,
-		})
-		scanChan <- scanResult{data: scanResp, err: err}
-	}()
-
-	// Goroutine B: Multi-Engine Background Removal (Hugging Face RMBG / Remove.bg / Local Adaptive Chroma)
-	go func() {
-		cutout, provider, err := reuse.RemoveBackground(ctx, rawBytes)
-		cutoutChan <- cutoutResult{pngBytes: cutout, provider: provider, err: err}
-	}()
-
-	// Collect results from concurrent workers
-	sRes := <-scanChan
-	cRes := <-cutoutChan
-
-	// Fallback-tolerant: If Gemini vision had a temporary rate-limit or error,
-	// do NOT crash the studio photoshoot! Provide clean fallback catalog metadata.
-	scanData := sRes.data
+	// 2. Run Gemini Vision Scanning for catalog details extraction
+	scanData, err := s.ScanProduct(ctx, dto.AIScanProductRequest{
+		ImageBase64: req.ImageBase64,
+		MimeType:    req.MimeType,
+	})
 	if scanData == nil {
 		scanData = &dto.AIScanProductResponse{
 			Name:         "New Retail Product",
@@ -1417,75 +1386,39 @@ func (s *aiService) SmartStudioScan(ctx context.Context, req dto.SmartStudioScan
 			Unit:         "piece",
 		}
 	}
-	if sRes.err != nil {
-		log.Printf("[SmartStudioScan] Gemini vision notice: %v (continuing with studio render)", sRes.err)
-	}
-
-	// 3. Determine Context-Aware Visual Studio Theme
-	theme := reuse.DetermineStudioTheme(scanData.CategoryHint, scanData.Subcategory)
-	if req.ThemeHint != "" && req.ThemeHint != "auto" {
-		switch strings.ToLower(req.ThemeHint) {
-		case "cosmetics", "beauty":
-			theme = reuse.StudioThemeCosmetics
-		case "fashion", "ethnic", "apparel":
-			theme = reuse.StudioThemeEthnicFashion
-		case "packaged", "white", "grocery":
-			theme = reuse.StudioThemePackagedRetail
-		}
-	}
-
-	// 4. Render Studio Composite Image
-	var studioBytes []byte
-	var cutoutURL string
-
-	if cRes.err == nil && len(cRes.pngBytes) > 0 {
-		log.Printf("[SmartStudioScan] Background processed via engine: %s (size: %d bytes)", cRes.provider, len(cRes.pngBytes))
-		// Composite cutout on dynamic studio canvas
-		studioBytes, err = reuse.RenderProductStudio(cRes.pngBytes, reuse.StudioCompositorOptions{
-			Theme:        theme,
-			CanvasSize:   1080,
-			PaddingRatio: 0.10,
-		})
-		if err != nil {
-			studioBytes = rawBytes // Graceful fallback
-		}
-
-		// Save cutout to R2 optionally in background if an actual cutout was generated
-		if cRes.provider != reuse.ProviderOriginal {
-			go func(pBytes []byte) {
-				_, _ = reuse.UploadBytes(pBytes, "image/png", "products/cutouts", ".png")
-			}(cRes.pngBytes)
-		}
-	} else {
-		// Passthrough fallback: Use raw original image to composite studio canvas
-		studioBytes, err = reuse.RenderProductStudio(rawBytes, reuse.StudioCompositorOptions{
-			Theme:        theme,
-			CanvasSize:   1080,
-			PaddingRatio: 0.08,
-		})
-		if err != nil {
-			studioBytes = rawBytes
-		}
-	}
-
-	// 5. Upload Studio Final Image to Cloudflare R2
-	studioURL, err := reuse.UploadBytes(studioBytes, "image/jpeg", "products/studio", ".jpg")
 	if err != nil {
-		// If R2 upload fails, encode as data URI fallback so frontend still gets the image
-		studioURL = fmt.Sprintf("data:image/jpeg;base64,%s", base64.StdEncoding.EncodeToString(studioBytes))
+		log.Printf("[SmartStudioScan] Gemini vision notice: %v", err)
 	}
 
-	// Attach studio URLs to scanData
-	scanData.StudioImageURL = studioURL
-	scanData.StudioTheme = string(theme)
+	// 3. Upload raw original image directly to R2 (without background removal or light enhancement)
+	mimeType := req.MimeType
+	if mimeType == "" {
+		mimeType = "image/jpeg"
+	}
+	ext := ".jpg"
+	if strings.Contains(mimeType, "png") {
+		ext = ".png"
+	} else if strings.Contains(mimeType, "webp") {
+		ext = ".webp"
+	}
+
+	originalImageURL, err := reuse.UploadBytes(rawBytes, mimeType, "products/original", ext)
+	if err != nil {
+		// If R2 upload fails, encode as data URI fallback so client still gets the image
+		originalImageURL = fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(rawBytes))
+	}
+
+	// Attach image URL to scanData
+	scanData.StudioImageURL = originalImageURL
+	scanData.StudioTheme = "original"
 
 	elapsed := time.Since(startTime).Milliseconds()
 
 	return &dto.SmartStudioScanResponse{
 		ScanData:       *scanData,
-		StudioImageURL: studioURL,
-		StudioTheme:    string(theme),
-		CutoutImageURL: cutoutURL,
+		StudioImageURL: originalImageURL,
+		StudioTheme:    "original",
+		CutoutImageURL: "",
 		ProcessingMs:   elapsed,
 	}, nil
 }

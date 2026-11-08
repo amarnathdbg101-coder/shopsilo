@@ -8,10 +8,12 @@ func TestSlugify(t *testing.T) {
 		expected string
 	}{
 		{"Ramesh Electronics", "ramesh-electronics"},
-		{"Ramesh & Sons Co., Ltd.!", "ramesh-sons-co-ltd"},
+		{"Ramesh & Sons Co., Ltd.!", "ramesh-and-sons-co-ltd"},
 		{"   Multiple   Spaces   ", "multiple-spaces"},
 		{"---Leading-and-trailing---", "leading-and-trailing"},
-		{"Special @#$ Characters", "special-characters"},
+		{"Special @#$ Characters", "special-at-hash-usd-characters"},
+		{"श्री राम किराना स्टोर", "shri-ram-kirana-stor"},
+		{"₹500 Discount Hub", "inr-500-discount-hub"},
 		{"", "shop"},
 	}
 

@@ -59,6 +59,11 @@ func TestSanitizeReviewText(t *testing.T) {
 			input:    "Visit www.fakecheapsunglasses.com today",
 			expected: "Visit [link removed] today",
 		},
+		{
+			name:     "XSS Script Tag Stripped",
+			input:    "Loved the store! <script>alert('xss')</script> Will come again.",
+			expected: "Loved the store! Will come again.",
+		},
 	}
 
 	for _, tc := range tests {
@@ -76,8 +81,8 @@ func TestMaskPhoneNumber(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"9876543210", "98*****210"},
-		{"+919876543210", "+9198*****210"},
+		{"9876543210", "98****3210"},
+		{"+919876543210", "+91-98****3210"},
 		{"123", "123"},
 	}
 
@@ -89,6 +94,13 @@ func TestMaskPhoneNumber(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("MaskEmail", func(t *testing.T) {
+		masked := MaskEmail("rahul.sharma@gmail.com")
+		if masked != "r**********a@gmail.com" {
+			t.Errorf("expected r***a@gmail.com, got %q", masked)
+		}
+	})
 }
 func TestParseAndValidateGeoParams(t *testing.T) {
 	t.Run("Clean non-geo query (both empty)", func(t *testing.T) {
