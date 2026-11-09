@@ -50,11 +50,12 @@ type KhataTransaction struct {
 	ShopID           string     `json:"shop_id"`
 	Type             string     `json:"type"` // GIVE_CREDIT, RECEIVE_PAYMENT, REVERSAL
 	Amount           float64    `json:"amount"`
+	OriginalAmount   *float64   `json:"original_amount,omitempty"`
 	BalanceAfter     float64    `json:"balance_after"`
 	Notes            string     `json:"notes,omitempty"`
 	BillNumber       string     `json:"bill_number,omitempty"`
 	PaymentMode      string     `json:"payment_mode,omitempty"` // cash, upi, etc.
-	Status           string     `json:"status"`                 // CONFIRMED, DISPUTED, RESOLVED_ACCEPTED, RESOLVED_REJECTED
+	Status           string     `json:"status"`                 // CONFIRMED, DISPUTED, RESOLVED_ACCEPTED, RESOLVED_REJECTED, CANCELLED
 	DisputeReason    string     `json:"dispute_reason,omitempty"`
 	DisputedAt       *time.Time `json:"disputed_at,omitempty"`
 	ResolutionAction *string    `json:"resolution_action,omitempty"` // ACCEPT, REJECT
@@ -64,6 +65,13 @@ type KhataTransaction struct {
 	UPIRefNo         string     `json:"upi_ref_no,omitempty"`
 	ParchiImageURL   *string    `json:"parchi_image_url,omitempty"`
 	ItemsSummary     *string    `json:"items_summary,omitempty"`
+	IsDeleted        bool       `json:"is_deleted"`
+	DeletedAt        *time.Time `json:"deleted_at,omitempty"`
+	DeletedBy        *string    `json:"deleted_by,omitempty"`
+	DeleteReason     *string    `json:"delete_reason,omitempty"`
+	EditReason       *string    `json:"edit_reason,omitempty"`
+	ModifiedBy       *string    `json:"modified_by,omitempty"`
+	UpdatedAt        *time.Time `json:"updated_at,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 }
 

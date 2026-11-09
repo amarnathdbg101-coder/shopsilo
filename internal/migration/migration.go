@@ -194,6 +194,15 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS upi_ref_no VARCHAR(100);",
 		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS parchi_image_url TEXT;",
 		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS items_summary TEXT;",
+		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT false;",
+		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP;",
+		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS deleted_by VARCHAR(100);",
+		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS delete_reason TEXT;",
+		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS original_amount DECIMAL(10, 2);",
+		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS edit_reason TEXT;",
+		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS modified_by VARCHAR(100);",
+		"ALTER TABLE khata_transactions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP;",
+		"CREATE INDEX IF NOT EXISTS idx_khata_tx_active ON khata_transactions(khata_id, is_deleted, created_at DESC);",
 
 		// POS Parked Bills & Live Multi-Customer Baskets
 		`CREATE TABLE IF NOT EXISTS master_catalog_products (

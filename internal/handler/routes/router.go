@@ -307,6 +307,8 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Post("/khata/micro-plans/{id}/pay", microPlanc.RecordPayment)
 		r.Get("/khata/micro-plans/{id}", microPlanc.GetPlanSummary)
 		r.Get("/khata/micro-plans", microPlanc.ListPlans)
+		r.Put("/khata/{id}/transactions/{txId}", khatac.UpdateTransaction)
+		r.Delete("/khata/{id}/transactions/{txId}", khatac.DeleteTransaction)
 
 		// Automated End-of-Day P&L PDF via Pure Go gopdf Engine
 		r.Get("/pos/day-close/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
@@ -521,6 +523,8 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Post("/shops/me/khata/{id}/request-closure", khatac.RequestClosure)   // Shop
 		r.Post("/shops/me/khata/{id}/verify-closure-otp", khatac.VerifyClosureOTP) // Shop
 		r.Post("/shops/me/khata/{id}/transactions/{txId}/reverse", khatac.ReverseTransaction) // Shop
+		r.Put("/shops/me/khata/{id}/transactions/{txId}", khatac.UpdateTransaction)            // Shop
+		r.Delete("/shops/me/khata/{id}/transactions/{txId}", khatac.DeleteTransaction)        // Shop
 		r.Patch("/shops/me/khata/transactions/{id}/notes", khatac.UpdateTransactionNotes) // Shop
 		r.Post("/shops/me/khata/{id}/dispute/{txId}/resolve", khatac.ResolveDispute) // Shop
 		r.Post("/shops/me/khata/{id}/promise-date", khatac.SetPromiseToPay)      // Shop

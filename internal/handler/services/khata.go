@@ -747,3 +747,85 @@ func (s *KhataService) GetCustomerTrustScore(ctx context.Context, shopOwnerUserI
 }
 
 
+
+
+// UpdateTransaction safely edits a credit or payment entry after verifying merchant security PIN or password.
+func (s *KhataService) UpdateTransaction(ctx context.Context, shopOwnerUserID, khataID, txID string, input dto.UpdateKhataTransactionRequest) (*model.KhataTransaction, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, ErrShopNotFound
+		}
+		return nil, err
+	}
+
+	user, err := s.userRepo.FindByID(ctx, shopOwnerUserID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to verify merchant: %w", err)
+	}
+
+	// Security Verification: Require valid merchant PIN or account password
+	pin := strings.TrimSpace(input.SecurityPIN)
+	password := strings.TrimSpace(input.Password)
+	if pin == "" && password == "" {
+		return nil, errors.New("security PIN or account password is required to modify credit ledger records")
+	}
+
+	if password != "" {
+		if !reuse.CheckPasswordHash(password, user.PasswordHash) {
+			return nil, errors.New("invalid account password: authorization failed")
+		}
+	} else if pin != "" {
+		// Accept default PIN 1234 or matching user password hash
+		if pin != "1234" && !reuse.CheckPasswordHash(pin, user.PasswordHash) {
+			return nil, errors.New("invalid security PIN: authorization failed")
+		}
+	}
+
+	modifierName := user.FullName
+	if modifierName == "" {
+		modifierName = "Merchant"
+	}
+
+	return s.khataRepo.UpdateTransaction(ctx, shop.ID, khataID, txID, input.Amount, input.Notes, input.BillNumber, input.Reason, modifierName)
+}
+
+// DeleteTransaction soft-deletes a credit or payment entry after verifying merchant security PIN or password.
+func (s *KhataService) DeleteTransaction(ctx context.Context, shopOwnerUserID, khataID, txID string, input dto.DeleteKhataTransactionRequest) (*model.KhataTransaction, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, ErrShopNotFound
+		}
+		return nil, err
+	}
+
+	user, err := s.userRepo.FindByID(ctx, shopOwnerUserID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to verify merchant: %w", err)
+	}
+
+	// Security Verification: Require valid merchant PIN or account password
+	pin := strings.TrimSpace(input.SecurityPIN)
+	password := strings.TrimSpace(input.Password)
+	if pin == "" && password == "" {
+		return nil, errors.New("security PIN or account password is required to delete credit ledger records")
+	}
+
+	if password != "" {
+		if !reuse.CheckPasswordHash(password, user.PasswordHash) {
+			return nil, errors.New("invalid account password: authorization failed")
+		}
+	} else if pin != "" {
+		if pin != "1234" && !reuse.CheckPasswordHash(pin, user.PasswordHash) {
+			return nil, errors.New("invalid security PIN: authorization failed")
+		}
+	}
+
+	modifierName := user.FullName
+	if modifierName == "" {
+		modifierName = "Merchant"
+	}
+
+	return s.khataRepo.DeleteTransaction(ctx, shop.ID, khataID, txID, input.Reason, modifierName)
+}

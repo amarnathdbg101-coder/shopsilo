@@ -22,6 +22,23 @@ type RecordPaymentRequest struct {
 	Notes          string  `json:"notes,omitempty" validate:"omitempty,max=255"`
 }
 
+// UpdateKhataTransactionRequest is used to safely update an existing credit or payment entry.
+type UpdateKhataTransactionRequest struct {
+	Amount      float64 `json:"amount" validate:"required,gt=0"`
+	Notes       string  `json:"notes,omitempty" validate:"omitempty,max=255"`
+	BillNumber  string  `json:"bill_number,omitempty"`
+	Reason      string  `json:"reason" validate:"required,min=3,max=255"`
+	SecurityPIN string  `json:"security_pin,omitempty"`
+	Password    string  `json:"password,omitempty"`
+}
+
+// DeleteKhataTransactionRequest is used to soft-delete / cancel a credit or payment entry.
+type DeleteKhataTransactionRequest struct {
+	Reason      string `json:"reason" validate:"required,min=3,max=255"`
+	SecurityPIN string `json:"security_pin,omitempty"`
+	Password    string `json:"password,omitempty"`
+}
+
 // KhataCustomerResponse represents a customer with their total outstanding credit balance.
 type KhataCustomerResponse struct {
 	ID                 string  `json:"id"`

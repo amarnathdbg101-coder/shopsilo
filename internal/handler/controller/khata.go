@@ -591,3 +591,90 @@ func (c *KhataController) UpdateTransactionNotes(w http.ResponseWriter, r *http.
 }
 
 
+
+
+// UpdateTransaction safely edits a khata credit/payment transaction (Protected - Shop)
+func (c *KhataController) UpdateTransaction(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	khataID := strings.TrimSpace(chi.URLParam(r, "id"))
+	txID := strings.TrimSpace(chi.URLParam(r, "txId"))
+	if khataID == "" || txID == "" {
+		reuse.Error(w, http.StatusBadRequest, "khata ID and transaction ID are required")
+		return
+	}
+
+	var input dto.UpdateKhataTransactionRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := reuse.ValidateStruct(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	tx, err := c.service.UpdateTransaction(r.Context(), claims.UserID, khataID, txID, input)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "shop not found")
+			return
+		}
+		if strings.Contains(strings.ToLower(err.Error()), "authorization failed") || strings.Contains(strings.ToLower(err.Error()), "required") {
+			reuse.Error(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Transaction entry updated and balance adjusted successfully", tx)
+}
+
+// DeleteTransaction soft-deletes a khata credit/payment transaction with audit tracking (Protected - Shop)
+func (c *KhataController) DeleteTransaction(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	khataID := strings.TrimSpace(chi.URLParam(r, "id"))
+	txID := strings.TrimSpace(chi.URLParam(r, "txId"))
+	if khataID == "" || txID == "" {
+		reuse.Error(w, http.StatusBadRequest, "khata ID and transaction ID are required")
+		return
+	}
+
+	var input dto.DeleteKhataTransactionRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := reuse.ValidateStruct(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	tx, err := c.service.DeleteTransaction(r.Context(), claims.UserID, khataID, txID, input)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "shop not found")
+			return
+		}
+		if strings.Contains(strings.ToLower(err.Error()), "authorization failed") || strings.Contains(strings.ToLower(err.Error()), "required") {
+			reuse.Error(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Transaction entry cancelled/deleted and balance recalculated successfully", tx)
+}

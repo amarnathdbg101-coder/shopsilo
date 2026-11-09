@@ -201,4 +201,92 @@ func TestKhataControllerValidation(t *testing.T) {
 			t.Fatalf("expected 401 Unauthorized, got %d", w.Code)
 		}
 	})
+
+	t.Run("UpdateTransaction Unauthorized without claims", func(t *testing.T) {
+		body, _ := json.Marshal(dto.UpdateKhataTransactionRequest{
+			Amount: 250.0,
+			Reason: "Correcting wrong charge",
+		})
+		req := httptest.NewRequest(http.MethodPut, "/shops/me/khata/khata-1/transactions/tx-1", bytes.NewBuffer(body))
+		w := httptest.NewRecorder()
+
+		kc.UpdateTransaction(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401 Unauthorized, got %d", w.Code)
+		}
+	})
+
+	t.Run("UpdateTransaction Invalid Body - Missing Audit Reason", func(t *testing.T) {
+		claims := &middleware.Claims{
+			UserID: "shop-owner-123",
+			Role:   "shop",
+		}
+		body, _ := json.Marshal(dto.UpdateKhataTransactionRequest{
+			Amount: 250.0,
+			Reason: "", // reason is mandatory for financial audit
+		})
+		req := httptest.NewRequest(http.MethodPut, "/shops/me/khata/khata-1/transactions/tx-1", bytes.NewBuffer(body))
+		req = req.WithContext(context.WithValue(req.Context(), middleware.ContextKeyUser, claims))
+		w := httptest.NewRecorder()
+
+		kc.UpdateTransaction(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request on missing reason, got %d", w.Code)
+		}
+	})
+
+	t.Run("UpdateTransaction Invalid Body - Zero/Negative Amount", func(t *testing.T) {
+		claims := &middleware.Claims{
+			UserID: "shop-owner-123",
+			Role:   "shop",
+		}
+		body, _ := json.Marshal(dto.UpdateKhataTransactionRequest{
+			Amount: -100.0,
+			Reason: "Trying negative amount",
+		})
+		req := httptest.NewRequest(http.MethodPut, "/shops/me/khata/khata-1/transactions/tx-1", bytes.NewBuffer(body))
+		req = req.WithContext(context.WithValue(req.Context(), middleware.ContextKeyUser, claims))
+		w := httptest.NewRecorder()
+
+		kc.UpdateTransaction(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request on invalid amount, got %d", w.Code)
+		}
+	})
+
+	t.Run("DeleteTransaction Unauthorized without claims", func(t *testing.T) {
+		body, _ := json.Marshal(dto.DeleteKhataTransactionRequest{
+			Reason: "Cancel wrong entry",
+		})
+		req := httptest.NewRequest(http.MethodDelete, "/shops/me/khata/khata-1/transactions/tx-1", bytes.NewBuffer(body))
+		w := httptest.NewRecorder()
+
+		kc.DeleteTransaction(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401 Unauthorized, got %d", w.Code)
+		}
+	})
+
+	t.Run("DeleteTransaction Invalid Body - Missing Audit Reason", func(t *testing.T) {
+		claims := &middleware.Claims{
+			UserID: "shop-owner-123",
+			Role:   "shop",
+		}
+		body, _ := json.Marshal(dto.DeleteKhataTransactionRequest{
+			Reason: "", // reason is mandatory for financial audit
+		})
+		req := httptest.NewRequest(http.MethodDelete, "/shops/me/khata/khata-1/transactions/tx-1", bytes.NewBuffer(body))
+		req = req.WithContext(context.WithValue(req.Context(), middleware.ContextKeyUser, claims))
+		w := httptest.NewRecorder()
+
+		kc.DeleteTransaction(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request on missing delete reason, got %d", w.Code)
+		}
+	})
 }

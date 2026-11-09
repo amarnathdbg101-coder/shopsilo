@@ -446,7 +446,10 @@ func (r *KhataRepo) GetCustomerHistory(ctx context.Context, shopID, customerMobi
 	txQuery := `
 		SELECT id, khata_id, shop_id, type, amount, balance_after, COALESCE(notes, ''), COALESCE(bill_number, ''), COALESCE(payment_mode, ''),
 		       COALESCE(status, 'CONFIRMED'), COALESCE(dispute_reason, ''), disputed_at, resolution_action, resolution_notes, resolved_at, reversal_of_id, COALESCE(upi_ref_no, ''),
-		       COALESCE(parchi_image_url, ''), COALESCE(items_summary, ''), created_at
+		       COALESCE(parchi_image_url, ''), COALESCE(items_summary, ''),
+		       COALESCE(is_deleted, false), deleted_at, COALESCE(deleted_by, ''), COALESCE(delete_reason, ''),
+		       original_amount, COALESCE(edit_reason, ''), COALESCE(modified_by, ''), updated_at,
+		       created_at
 		FROM khata_transactions
 		WHERE khata_id = $1
 		ORDER BY created_at DESC
@@ -460,10 +463,13 @@ func (r *KhataRepo) GetCustomerHistory(ctx context.Context, shopID, customerMobi
 	var transactions []model.KhataTransaction
 	for rows.Next() {
 		var t model.KhataTransaction
-		var pImg, itmSum string
+		var pImg, itmSum, delBy, delReas, edReas, modBy string
 		if err := rows.Scan(&t.ID, &t.KhataID, &t.ShopID, &t.Type, &t.Amount, &t.BalanceAfter, &t.Notes, &t.BillNumber, &t.PaymentMode,
 			&t.Status, &t.DisputeReason, &t.DisputedAt, &t.ResolutionAction, &t.ResolutionNotes, &t.ResolvedAt, &t.ReversalOfID, &t.UPIRefNo,
-			&pImg, &itmSum, &t.CreatedAt); err != nil {
+			&pImg, &itmSum,
+			&t.IsDeleted, &t.DeletedAt, &delBy, &delReas,
+			&t.OriginalAmount, &edReas, &modBy, &t.UpdatedAt,
+			&t.CreatedAt); err != nil {
 			return nil, nil, fmt.Errorf("failed to scan transaction: %w", err)
 		}
 		if pImg != "" {
@@ -471,6 +477,18 @@ func (r *KhataRepo) GetCustomerHistory(ctx context.Context, shopID, customerMobi
 		}
 		if itmSum != "" {
 			t.ItemsSummary = &itmSum
+		}
+		if delBy != "" {
+			t.DeletedBy = &delBy
+		}
+		if delReas != "" {
+			t.DeleteReason = &delReas
+		}
+		if edReas != "" {
+			t.EditReason = &edReas
+		}
+		if modBy != "" {
+			t.ModifiedBy = &modBy
 		}
 		transactions = append(transactions, t)
 	}
@@ -672,7 +690,10 @@ func (r *KhataRepo) GetCustomerKhataWithShop(ctx context.Context, khataID, userI
 	txQuery := `
 		SELECT id, khata_id, shop_id, type, amount, balance_after, COALESCE(notes, ''), COALESCE(bill_number, ''), COALESCE(payment_mode, ''),
 		       COALESCE(status, 'CONFIRMED'), COALESCE(dispute_reason, ''), disputed_at, resolution_action, resolution_notes, resolved_at, reversal_of_id, COALESCE(upi_ref_no, ''),
-		       COALESCE(parchi_image_url, ''), COALESCE(items_summary, ''), created_at
+		       COALESCE(parchi_image_url, ''), COALESCE(items_summary, ''),
+		       COALESCE(is_deleted, false), deleted_at, COALESCE(deleted_by, ''), COALESCE(delete_reason, ''),
+		       original_amount, COALESCE(edit_reason, ''), COALESCE(modified_by, ''), updated_at,
+		       created_at
 		FROM khata_transactions
 		WHERE khata_id = $1
 		ORDER BY created_at DESC
@@ -686,10 +707,13 @@ func (r *KhataRepo) GetCustomerKhataWithShop(ctx context.Context, khataID, userI
 	transactions := make([]model.KhataTransaction, 0)
 	for rows.Next() {
 		var t model.KhataTransaction
-		var pImg, itmSum string
+		var pImg, itmSum, delBy, delReas, edReas, modBy string
 		if err := rows.Scan(&t.ID, &t.KhataID, &t.ShopID, &t.Type, &t.Amount, &t.BalanceAfter, &t.Notes, &t.BillNumber, &t.PaymentMode,
 			&t.Status, &t.DisputeReason, &t.DisputedAt, &t.ResolutionAction, &t.ResolutionNotes, &t.ResolvedAt, &t.ReversalOfID, &t.UPIRefNo,
-			&pImg, &itmSum, &t.CreatedAt); err != nil {
+			&pImg, &itmSum,
+			&t.IsDeleted, &t.DeletedAt, &delBy, &delReas,
+			&t.OriginalAmount, &edReas, &modBy, &t.UpdatedAt,
+			&t.CreatedAt); err != nil {
 			return nil, "", nil, fmt.Errorf("failed to scan transaction: %w", err)
 		}
 		if pImg != "" {
@@ -697,6 +721,18 @@ func (r *KhataRepo) GetCustomerKhataWithShop(ctx context.Context, khataID, userI
 		}
 		if itmSum != "" {
 			t.ItemsSummary = &itmSum
+		}
+		if delBy != "" {
+			t.DeletedBy = &delBy
+		}
+		if delReas != "" {
+			t.DeleteReason = &delReas
+		}
+		if edReas != "" {
+			t.EditReason = &edReas
+		}
+		if modBy != "" {
+			t.ModifiedBy = &modBy
 		}
 		transactions = append(transactions, t)
 	}
@@ -1208,4 +1244,235 @@ func (r *KhataRepo) SetPromiseToPay(ctx context.Context, khataID string, promise
 		return ErrKhataNotFound
 	}
 	return nil
+}
+
+
+// UpdateTransaction safely edits a credit or payment entry with atomic balance recalculation & audit logging.
+func (r *KhataRepo) UpdateTransaction(ctx context.Context, shopID, khataID, txID string, newAmount float64, newNotes, newBillNumber, editReason, modifiedBy string) (*model.KhataTransaction, error) {
+	if newAmount <= 0 {
+		return nil, errors.New("amount must be greater than zero")
+	}
+	if strings.TrimSpace(editReason) == "" {
+		return nil, errors.New("edit reason is required for financial audit tracking")
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin database transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// 1. Lock and fetch target transaction
+	var origTx model.KhataTransaction
+	var isDel bool
+	fetchQuery := `
+		SELECT id, khata_id, shop_id, type, amount, balance_after, COALESCE(notes, ''), COALESCE(bill_number, ''),
+		       COALESCE(payment_mode, ''), COALESCE(status, 'CONFIRMED'), COALESCE(is_deleted, false)
+		FROM khata_transactions
+		WHERE id = $1::uuid AND khata_id = $2::uuid AND shop_id = $3::uuid
+		FOR UPDATE
+	`
+	err = tx.QueryRow(ctx, fetchQuery, txID, khataID, shopID).Scan(
+		&origTx.ID, &origTx.KhataID, &origTx.ShopID, &origTx.Type, &origTx.Amount, &origTx.BalanceAfter,
+		&origTx.Notes, &origTx.BillNumber, &origTx.PaymentMode, &origTx.Status, &isDel,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("transaction not found")
+		}
+		return nil, fmt.Errorf("failed to query transaction: %w", err)
+	}
+
+	if isDel {
+		return nil, errors.New("cannot edit a cancelled or deleted transaction")
+	}
+	if origTx.Type == model.KhataTxTypeReversal {
+		return nil, errors.New("cannot edit an automated reversal entry")
+	}
+
+	// 2. Lock customer_khata to recalculate balance
+	var currentBalance float64
+	err = tx.QueryRow(ctx, `SELECT current_balance FROM customer_khata WHERE id = $1::uuid FOR UPDATE`, khataID).Scan(&currentBalance)
+	if err != nil {
+		return nil, fmt.Errorf("failed to lock customer khata: %w", err)
+	}
+
+	// 3. Compute balance adjustment
+	delta := newAmount - origTx.Amount
+	var newBalance float64
+	if origTx.Type == model.KhataTxTypeGiveCredit {
+		// More credit means higher balance
+		newBalance = currentBalance + delta
+		if newBalance < 0 {
+			newBalance = 0
+		}
+	} else if origTx.Type == model.KhataTxTypeReceivePayment {
+		// More payment means lower balance
+		newBalance = currentBalance - delta
+	} else {
+		return nil, errors.New("unsupported transaction type for edit")
+	}
+
+	// 4. Update customer_khata balance
+	_, err = tx.Exec(ctx, `UPDATE customer_khata SET current_balance = $1, updated_at = NOW() WHERE id = $2::uuid`, newBalance, khataID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update customer khata balance: %w", err)
+	}
+
+	// 5. Update the transaction with audit trail
+	updateTxQuery := `
+		UPDATE khata_transactions
+		SET original_amount = COALESCE(original_amount, amount),
+		    amount = $1,
+		    notes = $2,
+		    bill_number = $3,
+		    balance_after = $4,
+		    edit_reason = $5,
+		    modified_by = $6,
+		    updated_at = NOW()
+		WHERE id = $7::uuid
+		RETURNING id, khata_id, shop_id, type, amount, balance_after, COALESCE(notes, ''), COALESCE(bill_number, ''),
+		          COALESCE(payment_mode, ''), COALESCE(status, 'CONFIRMED'), COALESCE(is_deleted, false),
+		          deleted_at, COALESCE(deleted_by, ''), COALESCE(delete_reason, ''),
+		          original_amount, COALESCE(edit_reason, ''), COALESCE(modified_by, ''), updated_at, created_at
+	`
+	var updatedTx model.KhataTransaction
+	var delBy, delReas, modByStr, edReas string
+	err = tx.QueryRow(ctx, updateTxQuery,
+		newAmount,
+		strings.TrimSpace(newNotes),
+		strings.TrimSpace(newBillNumber),
+		newBalance,
+		strings.TrimSpace(editReason),
+		strings.TrimSpace(modifiedBy),
+		txID,
+	).Scan(
+		&updatedTx.ID, &updatedTx.KhataID, &updatedTx.ShopID, &updatedTx.Type, &updatedTx.Amount, &updatedTx.BalanceAfter,
+		&updatedTx.Notes, &updatedTx.BillNumber, &updatedTx.PaymentMode, &updatedTx.Status, &updatedTx.IsDeleted,
+		&updatedTx.DeletedAt, &delBy, &delReas,
+		&updatedTx.OriginalAmount, &edReas, &modByStr, &updatedTx.UpdatedAt, &updatedTx.CreatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update transaction entry: %w", err)
+	}
+	if delBy != "" { updatedTx.DeletedBy = &delBy }
+	if delReas != "" { updatedTx.DeleteReason = &delReas }
+	if modByStr != "" { updatedTx.ModifiedBy = &modByStr }
+	if edReas != "" { updatedTx.EditReason = &edReas }
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction update: %w", err)
+	}
+
+	return &updatedTx, nil
+}
+
+// DeleteTransaction soft-deletes a credit or payment entry with atomic balance reversal & audit logging.
+func (r *KhataRepo) DeleteTransaction(ctx context.Context, shopID, khataID, txID string, deleteReason, deletedBy string) (*model.KhataTransaction, error) {
+	if strings.TrimSpace(deleteReason) == "" {
+		return nil, errors.New("delete reason is required for financial audit tracking")
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin database transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// 1. Lock and fetch target transaction
+	var origTx model.KhataTransaction
+	var isDel bool
+	fetchQuery := `
+		SELECT id, khata_id, shop_id, type, amount, balance_after, COALESCE(notes, ''), COALESCE(bill_number, ''),
+		       COALESCE(payment_mode, ''), COALESCE(status, 'CONFIRMED'), COALESCE(is_deleted, false)
+		FROM khata_transactions
+		WHERE id = $1::uuid AND khata_id = $2::uuid AND shop_id = $3::uuid
+		FOR UPDATE
+	`
+	err = tx.QueryRow(ctx, fetchQuery, txID, khataID, shopID).Scan(
+		&origTx.ID, &origTx.KhataID, &origTx.ShopID, &origTx.Type, &origTx.Amount, &origTx.BalanceAfter,
+		&origTx.Notes, &origTx.BillNumber, &origTx.PaymentMode, &origTx.Status, &isDel,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("transaction not found")
+		}
+		return nil, fmt.Errorf("failed to query transaction: %w", err)
+	}
+
+	if isDel {
+		return nil, errors.New("transaction is already deleted or cancelled")
+	}
+	if origTx.Type == model.KhataTxTypeReversal {
+		return nil, errors.New("cannot delete an automated reversal entry")
+	}
+
+	// 2. Lock customer_khata to recalculate balance
+	var currentBalance float64
+	err = tx.QueryRow(ctx, `SELECT current_balance FROM customer_khata WHERE id = $1::uuid FOR UPDATE`, khataID).Scan(&currentBalance)
+	if err != nil {
+		return nil, fmt.Errorf("failed to lock customer khata: %w", err)
+	}
+
+	// 3. Compute balance adjustment on deletion
+	var newBalance float64
+	if origTx.Type == model.KhataTxTypeGiveCredit {
+		// Deleting credit reduces the customer debt
+		newBalance = currentBalance - origTx.Amount
+		if newBalance < 0 {
+			newBalance = 0
+		}
+	} else if origTx.Type == model.KhataTxTypeReceivePayment {
+		// Deleting payment restores customer debt
+		newBalance = currentBalance + origTx.Amount
+	} else {
+		return nil, errors.New("unsupported transaction type for deletion")
+	}
+
+	// 4. Update customer_khata balance
+	_, err = tx.Exec(ctx, `UPDATE customer_khata SET current_balance = $1, updated_at = NOW() WHERE id = $2::uuid`, newBalance, khataID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update customer khata balance: %w", err)
+	}
+
+	// 5. Soft-delete the transaction with status CANCELLED and audit information
+	updateTxQuery := `
+		UPDATE khata_transactions
+		SET is_deleted = true,
+		    status = 'CANCELLED',
+		    deleted_at = NOW(),
+		    deleted_by = $1,
+		    delete_reason = $2,
+		    updated_at = NOW()
+		WHERE id = $3::uuid
+		RETURNING id, khata_id, shop_id, type, amount, balance_after, COALESCE(notes, ''), COALESCE(bill_number, ''),
+		          COALESCE(payment_mode, ''), COALESCE(status, 'CANCELLED'), COALESCE(is_deleted, true),
+		          deleted_at, COALESCE(deleted_by, ''), COALESCE(delete_reason, ''),
+		          original_amount, COALESCE(edit_reason, ''), COALESCE(modified_by, ''), updated_at, created_at
+	`
+	var deletedTx model.KhataTransaction
+	var delBy, delReas, modByStr, edReas string
+	err = tx.QueryRow(ctx, updateTxQuery,
+		strings.TrimSpace(deletedBy),
+		strings.TrimSpace(deleteReason),
+		txID,
+	).Scan(
+		&deletedTx.ID, &deletedTx.KhataID, &deletedTx.ShopID, &deletedTx.Type, &deletedTx.Amount, &deletedTx.BalanceAfter,
+		&deletedTx.Notes, &deletedTx.BillNumber, &deletedTx.PaymentMode, &deletedTx.Status, &deletedTx.IsDeleted,
+		&deletedTx.DeletedAt, &delBy, &delReas,
+		&deletedTx.OriginalAmount, &edReas, &modByStr, &deletedTx.UpdatedAt, &deletedTx.CreatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to soft-delete transaction: %w", err)
+	}
+	if delBy != "" { deletedTx.DeletedBy = &delBy }
+	if delReas != "" { deletedTx.DeleteReason = &delReas }
+	if modByStr != "" { deletedTx.ModifiedBy = &modByStr }
+	if edReas != "" { deletedTx.EditReason = &edReas }
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction deletion: %w", err)
+	}
+
+	return &deletedTx, nil
 }
