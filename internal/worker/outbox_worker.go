@@ -3,21 +3,19 @@ package worker
 import (
 	"context"
 	"encoding/json"
-	"shopMe/internal/handler/services"
 	"time"
 
+	gooutbox "github.com/amarnathdbg101-coder/go/go-outbox"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 	"go.uber.org/zap"
+
+	"shopMe/internal/handler/services"
 )
 
-type OutboxEvent struct {
-	ID        string `json:"id"`
-	ShopID    string `json:"shop_id"`
-	EventType string `json:"event_type"`
-	Payload   []byte `json:"payload"`
-}
-
-// StartOutboxWorker runs an atomic Background Event Dispatcher (Transactional Outbox Pattern)
+// StartOutboxWorker runs an atomic Background Event Dispatcher using go-outbox.
+// It leverages PostgreSQL FOR UPDATE SKIP LOCKED concurrency, exponential backoff,
+// and dead-letter queue handling without duplicating events across cluster replicas.
 func StartOutboxWorker(ctx context.Context, db *pgxpool.Pool, logger *zap.Logger) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -25,79 +23,45 @@ func StartOutboxWorker(ctx context.Context, db *pgxpool.Pool, logger *zap.Logger
 		}
 	}()
 
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
+	sqlDB := stdlib.OpenDBFromPool(db)
+	store := gooutbox.NewSQLStore(sqlDB, &gooutbox.SQLOptions{
+		TableName:         "outbox_events",
+		TopicColumn:       "event_type",
+		AggregateIDColumn: "shop_id",
+	})
 
 	wsHub := services.GetWebSocketHub(logger)
 
-	for {
-		select {
-		case <-ctx.Done():
-			logger.Info("outbox worker stopped cleanly")
-			return
-		case <-ticker.C:
-			processOutboxEvents(ctx, db, wsHub)
+	// Publisher forwards committed events to WebSocket hub in real-time
+	publisher := gooutbox.FuncPublisher(func(ctx context.Context, evt *gooutbox.Event) error {
+		var parsedPayload any
+		if err := json.Unmarshal(evt.Payload, &parsedPayload); err != nil {
+			parsedPayload = string(evt.Payload)
 		}
-	}
-}
-
-func processOutboxEvents(ctx context.Context, db *pgxpool.Pool, wsHub *services.WebSocketHub) {
-	defer func() {
-		if r := recover(); r != nil {
-			// Catch panic in single tick without killing background worker loop
-		}
-	}()
-
-	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	// Atomic fetch-and-lock: locks up to 100 pending events and immediately marks them 'processing'
-	// using FOR UPDATE SKIP LOCKED to prevent duplicate broadcasts across multi-node or concurrent workers.
-	query := `
-		UPDATE outbox_events
-		SET status = 'processing', processed_at = NOW()
-		WHERE id IN (
-			SELECT id
-			FROM outbox_events
-			WHERE status = 'pending'
-			ORDER BY created_at ASC
-			LIMIT 100
-			FOR UPDATE SKIP LOCKED
-		)
-		RETURNING id, shop_id, event_type, payload
-	`
-
-	rows, err := db.Query(queryCtx, query)
-	if err != nil {
-		return
-	}
-	defer rows.Close()
-
-	var events []*OutboxEvent
-	for rows.Next() {
-		var e OutboxEvent
-		if err := rows.Scan(&e.ID, &e.ShopID, &e.EventType, &e.Payload); err == nil {
-			events = append(events, &e)
-		}
-	}
-
-	if len(events) == 0 {
-		return
-	}
-
-	processedIDs := make([]string, 0, len(events))
-	for _, e := range events {
-		var parsedPayload interface{}
-		_ = json.Unmarshal(e.Payload, &parsedPayload)
 
 		// Broadcast real-time WebSocket alert to shopkeeper counter in 0ms!
-		wsHub.BroadcastToShop(e.ShopID, e.EventType, parsedPayload)
-		processedIDs = append(processedIDs, e.ID)
+		wsHub.BroadcastToShop(evt.AggregateID, evt.Topic, parsedPayload)
+		return nil
+	})
+
+	engine, err := gooutbox.New(store, publisher,
+		gooutbox.WithPollInterval(1*time.Second),
+		gooutbox.WithBatchSize(100),
+		gooutbox.WithMaxRetries(5),
+		gooutbox.WithCallbacks(nil, func(evt *gooutbox.Event, err error) {
+			logger.Warn("outbox event dispatch failed, scheduled for retry",
+				zap.String("id", evt.ID),
+				zap.String("topic", evt.Topic),
+				zap.Int("retry_count", evt.RetryCount),
+				zap.Error(err),
+			)
+		}),
+	)
+	if err != nil {
+		logger.Error("failed to initialize outbox engine", zap.Error(err))
+		return
 	}
 
-	// Batch update all dispatched event statuses in a single DB query (100x faster than N queries)
-	if len(processedIDs) > 0 {
-		updateQuery := `UPDATE outbox_events SET status = 'processed', processed_at = NOW() WHERE id = ANY($1)`
-		_, _ = db.Exec(queryCtx, updateQuery, processedIDs)
-	}
+	logger.Info("resilient transactional outbox worker started successfully (go-outbox)")
+	engine.Start(ctx)
 }

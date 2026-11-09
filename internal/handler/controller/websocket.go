@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"shopMe/internal/middleware"
 	"shopMe/internal/reuse"
 
+	gowshub "github.com/amarnathdbg101-coder/go/go-wshub"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
@@ -56,46 +58,11 @@ func (c *WebSocketController) ServeShopWebSocket(w http.ResponseWriter, r *http.
 		return
 	}
 
-	safeConn := services.NewSafeConn(conn)
-	c.wsHub.Register(shop.ID, safeConn)
-
-	// Keep-Alive Ping/Pong & Heartbeat Loop
-	stopPing := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(25 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				if err := safeConn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(5*time.Second)); err != nil {
-					return
-				}
-			case <-stopPing:
-				return
-			}
-		}
-	}()
-
-	go func() {
-		defer func() {
-			close(stopPing)
-			c.wsHub.Unregister(shop.ID, safeConn)
-		}()
-
-		conn.SetReadLimit(2048)
-		_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		conn.SetPongHandler(func(string) error {
-			_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-			return nil
-		})
-
-		for {
-			_, _, err := conn.ReadMessage()
-			if err != nil {
-				break
-			}
-		}
-	}()
+	c.handleWebSocketLifecycle(conn, func(sc *services.SafeConn) {
+		c.wsHub.Register(shop.ID, sc)
+	}, func(sc *services.SafeConn) {
+		c.wsHub.Unregister(shop.ID, sc)
+	})
 }
 
 // ServePublicStorefrontWebSocket handles real-time catalog & inventory updates for customers browsing a storefront
@@ -112,45 +79,11 @@ func (c *WebSocketController) ServePublicStorefrontWebSocket(w http.ResponseWrit
 		return
 	}
 
-	safeConn := services.NewSafeConn(conn)
-	c.wsHub.RegisterStorefront(slug, safeConn)
-
-	stopPing := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(25 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				if err := safeConn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(5*time.Second)); err != nil {
-					return
-				}
-			case <-stopPing:
-				return
-			}
-		}
-	}()
-
-	go func() {
-		defer func() {
-			close(stopPing)
-			c.wsHub.UnregisterStorefront(slug, safeConn)
-		}()
-
-		conn.SetReadLimit(2048)
-		_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		conn.SetPongHandler(func(string) error {
-			_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-			return nil
-		})
-
-		for {
-			_, _, err := conn.ReadMessage()
-			if err != nil {
-				break
-			}
-		}
-	}()
+	c.handleWebSocketLifecycle(conn, func(sc *services.SafeConn) {
+		c.wsHub.RegisterStorefront(slug, sc)
+	}, func(sc *services.SafeConn) {
+		c.wsHub.UnregisterStorefront(slug, sc)
+	})
 }
 
 // ServeCustomerWebSocket handles personal order & pickup notifications for authenticated customers
@@ -167,43 +100,41 @@ func (c *WebSocketController) ServeCustomerWebSocket(w http.ResponseWriter, r *h
 		return
 	}
 
+	c.handleWebSocketLifecycle(conn, func(sc *services.SafeConn) {
+		c.wsHub.RegisterCustomer(claims.UserID, sc)
+	}, func(sc *services.SafeConn) {
+		c.wsHub.UnregisterCustomer(claims.UserID, sc)
+	})
+}
+
+// handleWebSocketLifecycle encapsulates the connection heartbeat and read-deadlines using go-wshub.
+func (c *WebSocketController) handleWebSocketLifecycle(
+	conn *websocket.Conn,
+	register func(*services.SafeConn),
+	unregister func(*services.SafeConn),
+) {
 	safeConn := services.NewSafeConn(conn)
-	c.wsHub.RegisterCustomer(claims.UserID, safeConn)
+	register(safeConn)
 
-	stopPing := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(25 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				if err := safeConn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(5*time.Second)); err != nil {
-					return
-				}
-			case <-stopPing:
-				return
-			}
-		}
+	// Keepalive ping loop managed cleanly by go-wshub
+	stopHeartbeat := gowshub.StartHeartbeat(context.Background(), safeConn, 25*time.Second, 5*time.Second)
+
+	defer func() {
+		stopHeartbeat()
+		unregister(safeConn)
 	}()
 
-	go func() {
-		defer func() {
-			close(stopPing)
-			c.wsHub.UnregisterCustomer(claims.UserID, safeConn)
-		}()
-
-		conn.SetReadLimit(2048)
+	conn.SetReadLimit(2048)
+	_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	conn.SetPongHandler(func(string) error {
 		_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		conn.SetPongHandler(func(string) error {
-			_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-			return nil
-		})
+		return nil
+	})
 
-		for {
-			_, _, err := conn.ReadMessage()
-			if err != nil {
-				break
-			}
+	for {
+		_, _, err := conn.ReadMessage()
+		if err != nil {
+			break
 		}
-	}()
+	}
 }

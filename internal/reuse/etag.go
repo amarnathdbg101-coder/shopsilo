@@ -1,33 +1,31 @@
+// Package reuse provides reusable application helpers and utilities.
 package reuse
 
 import (
-	"crypto/md5"
-	"encoding/hex"
 	"net/http"
-	"strings"
+
+	goetag "github.com/amarnathdbg101-coder/go/go-etag"
 )
 
-// GenerateETag computes a MD5 hex hash for a given data version or payload string
+// GenerateETag computes a strong cryptographic ETag for a given data version or payload string.
 func GenerateETag(dataVersion string) string {
-	hash := md5.Sum([]byte(dataVersion))
-	return `"` + hex.EncodeToString(hash[:]) + `"`
+	return goetag.GenerateFromString(dataVersion)
 }
 
 // CheckAndSetETag checks incoming 'If-None-Match' header against dataVersion.
-// If matched, it sets 304 Not Modified and returns true.
+// If matched, it sets 304 Not Modified and returns true (saving egress bandwidth).
 // If not matched, it sets the ETag header and returns false.
 func CheckAndSetETag(w http.ResponseWriter, r *http.Request, dataVersion string) bool {
 	if dataVersion == "" {
 		return false
 	}
 	etag := GenerateETag(dataVersion)
-	w.Header().Set("ETag", etag)
-	w.Header().Set("Cache-Control", "private, no-cache, must-revalidate")
+	return goetag.CheckIfNoneMatch(w, r, etag)
+}
 
-	ifNoneMatch := r.Header.Get("If-None-Match")
-	if ifNoneMatch != "" && (ifNoneMatch == etag || strings.Contains(ifNoneMatch, etag)) {
-		w.WriteHeader(http.StatusNotModified)
-		return true
-	}
-	return false
+// CheckOptimisticLock verifies incoming 'If-Match' header for safe concurrent updates (Lost Update Prevention).
+// If client has a stale ETag, it writes HTTP 412 Precondition Failed and returns false.
+func CheckOptimisticLock(w http.ResponseWriter, r *http.Request, currentVersion string) bool {
+	etag := GenerateETag(currentVersion)
+	return goetag.CheckIfMatch(w, r, etag)
 }

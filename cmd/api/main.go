@@ -3,9 +3,13 @@ package main
 import (
 	"context"
 	"sync"
+	"github.com/jackc/pgx/v5/stdlib"
+	"shopMe/internal/handler/repository"
 	"shopMe/internal/handler/routes"
+	"shopMe/internal/handler/services"
 	"shopMe/internal/middleware"
 	"shopMe/internal/migration"
+	"shopMe/internal/reuse"
 	"shopMe/internal/servers"
 	"shopMe/internal/utils"
 	"shopMe/internal/worker"
@@ -39,6 +43,12 @@ func main() {
 	}
 	migration.EnsureSchemaColumns(db)
 
+	// Initialize asynchronous PostgreSQL batch audit logging engine
+	if err := reuse.InitAuditEngine(stdlib.OpenDBFromPool(db)); err != nil {
+		logger.Warn("audit engine failed to initialize with postgres store, falling back to memory", zap.Error(err))
+	}
+	defer reuse.CloseAuditEngine()
+
 	router := routes.RouteSetup(db, logger)
 
 	// Context and WaitGroup for background concurrent workers
@@ -47,7 +57,7 @@ func main() {
 	var workerWG sync.WaitGroup
 
 	// Background Concurrency Workers
-	workerWG.Add(3)
+	workerWG.Add(4)
 	go func() {
 		defer workerWG.Done()
 		worker.StartReservationCleaner(appCtx, db, logger)
@@ -59,6 +69,12 @@ func main() {
 	go func() {
 		defer workerWG.Done()
 		worker.StartOutboxWorker(appCtx, db, logger)
+	}()
+	go func() {
+		defer workerWG.Done()
+		aiBrainRepo := repository.NewAIBrainRepo(db, logger)
+		aiPartnerService := services.NewAIPartnerService(aiBrainRepo, nil, logger)
+		worker.StartDreamingWorker(appCtx, aiPartnerService, logger)
 	}()
 
 	server := servers.NewServer(utils.MustLoad().Port, router)

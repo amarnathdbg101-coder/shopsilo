@@ -32,18 +32,34 @@ require (
 )
 
 require (
+	github.com/amarnathdbg101-coder/go/go-auditlog v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-circuitbreaker v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-cloudflare v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-csvkit v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-escpos v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-etag v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-gemini v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-geodistance v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-healthcheck v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-humanize v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-imagefx v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-imghash v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-ledger v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-lru v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-mask v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-money v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-otp v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-outbox v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-paginate v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-password v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-reservation v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-retry v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-sanitize v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-slug v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-tamperseal v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-urlsigner v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-workerpool v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-wshub v1.0.0 // indirect
 	github.com/chromedp/cdproto v0.159.2 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/gabriel-vasile/mimetype v1.4.15 // indirect

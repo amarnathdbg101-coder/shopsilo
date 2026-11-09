@@ -23,6 +23,8 @@ import (
 	"shopMe/internal/reuse"
 	"shopMe/internal/reuse/ai"
 	"shopMe/internal/utils"
+
+	gogemini "github.com/amarnathdbg101-coder/go/go-gemini"
 )
 
 type AIService interface {
@@ -1254,17 +1256,7 @@ func hashString(s string) string {
 }
 
 func extractCleanJSON(raw string) string {
-	cleaned := strings.TrimSpace(raw)
-	if strings.HasPrefix(cleaned, "```json") {
-		cleaned = strings.TrimPrefix(cleaned, "```json")
-	} else if strings.HasPrefix(cleaned, "```") {
-		cleaned = strings.TrimPrefix(cleaned, "```")
-	}
-	if strings.HasSuffix(cleaned, "```") {
-		cleaned = strings.TrimSuffix(cleaned, "```")
-	}
-	cleaned = strings.TrimSpace(cleaned)
-
+	cleaned := gogemini.ExtractJSON(raw)
 	start := strings.Index(cleaned, "{")
 	end := strings.LastIndex(cleaned, "}")
 	if start != -1 && end != -1 && end > start {

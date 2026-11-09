@@ -434,6 +434,23 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"CREATE INDEX IF NOT EXISTS idx_shop_expenses_shop_created ON shop_expenses(shop_id, created_at DESC);",
 		"CREATE INDEX IF NOT EXISTS idx_shop_expenses_category ON shop_expenses(shop_id, category);",
 
+		`CREATE TABLE IF NOT EXISTS audit_logs (
+			id VARCHAR(64) PRIMARY KEY,
+			actor_id VARCHAR(64),
+			actor_email VARCHAR(255),
+			action VARCHAR(64) NOT NULL,
+			entity VARCHAR(64) NOT NULL,
+			entity_id VARCHAR(64),
+			old_state JSONB,
+			new_state JSONB,
+			ip_address VARCHAR(45),
+			user_agent TEXT,
+			created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+		);`,
+		"CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity, entity_id);",
+		"CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_logs(actor_id);",
+		"CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_logs(created_at DESC);",
+
 		`INSERT INTO categories (name, slug, description, icon, is_active) VALUES
 		('Kirana & Grocery', 'kirana-grocery', 'Daily essentials, rice, flour, oil, pulses and spices', '🛒', true),
 		('Dairy & Breakfast', 'dairy-breakfast', 'Milk, curd, butter, paneer, eggs and bread', '🥛', true),

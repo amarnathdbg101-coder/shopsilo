@@ -4,81 +4,37 @@ package middleware
 import (
 	"context"
 	"net/http"
+	"strings"
+	"time"
+
+	golru "github.com/amarnathdbg101-coder/go/go-lru"
 	"shopMe/internal/handler/model"
 	"shopMe/internal/handler/repository"
-	"strings"
-	"sync"
-	"time"
 )
 
-type banCacheEntry struct {
-	banned    bool
-	expiresAt time.Time
-}
+// banLRU is a bounded, thread-safe O(1) Least Recently Used cache with per-item 60s TTL.
+// Caps memory to 10,000 active entries to eliminate memory exhaustion under DDoS attacks.
+var banLRU, _ = golru.New[string, bool](10000, nil)
 
-var (
-	banCacheMu sync.RWMutex
-	banCache   = make(map[string]banCacheEntry)
-)
-
-func init() {
-	// Background routine to prune expired cache records to prevent memory leak and CPU spikes
-	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
-		for range ticker.C {
-			banCacheMu.Lock()
-			now := time.Now()
-			for k, v := range banCache {
-				if now.After(v.expiresAt) {
-					delete(banCache, k)
-				}
-			}
-			banCacheMu.Unlock()
-		}
-	}()
-}
-
-// InvalidateBanCache clears cached blacklist lookups (called when admin updates blacklist)
+// InvalidateBanCache clears cached blacklist lookups (called when admin updates blacklist).
 func InvalidateBanCache() {
-	banCacheMu.Lock()
-	banCache = make(map[string]banCacheEntry)
-	banCacheMu.Unlock()
+	banLRU.Purge()
 }
 
 func checkBannedCached(ctx context.Context, modRepo *repository.ModerationRepo, entityType, entityValue string) (bool, error) {
 	key := entityType + ":" + entityValue
-	now := time.Now()
 
-	banCacheMu.RLock()
-	if entry, found := banCache[key]; found && now.Before(entry.expiresAt) {
-		banCacheMu.RUnlock()
-		return entry.banned, nil
+	if banned, found := banLRU.Get(key); found {
+		return banned, nil
 	}
-	banCacheMu.RUnlock()
 
 	banned, err := modRepo.IsEntityBanned(ctx, entityType, entityValue)
 	if err != nil {
 		return false, err
 	}
 
-	banCacheMu.Lock()
-	// Protect against unbounded memory growth under attack by pruning expired entries first
-	if len(banCache) > 50000 {
-		for k, v := range banCache {
-			if now.After(v.expiresAt) {
-				delete(banCache, k)
-			}
-		}
-		if len(banCache) > 25000 {
-			banCache = make(map[string]banCacheEntry) // Emergency reset
-		}
-	}
-	banCache[key] = banCacheEntry{
-		banned:    banned,
-		expiresAt: now.Add(60 * time.Second),
-	}
-	banCacheMu.Unlock()
-
+	// Cache lookup for 60 seconds with automatic LRU eviction and expiry
+	banLRU.Set(key, banned, 60*time.Second)
 	return banned, nil
 }
 

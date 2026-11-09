@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	gohumanize "github.com/amarnathdbg101-coder/go/go-humanize"
 	"github.com/skip2/go-qrcode"
 	"github.com/signintech/gopdf"
 	"shopMe/internal/handler/model"
@@ -154,7 +155,7 @@ func GenerateNativeKhataStatementPDF(customer *model.CustomerKhata, transactions
 	_ = pdf.Cell(&gopdf.Rect{W: cardW - 16, H: 12}, "TOTAL UDHAR GIVEN (DR)")
 	_ = pdf.SetFont("noto-bold", "", 12)
 	pdf.SetXY(x1+8, curY+20)
-	_ = pdf.Cell(&gopdf.Rect{W: cardW - 16, H: 18}, fmt.Sprintf("₹%.2f", totalDebit))
+	_ = pdf.Cell(&gopdf.Rect{W: cardW - 16, H: 18}, fmt.Sprintf("Rs. %s", gohumanize.FormatIndian(int64(totalDebit))))
 
 	// Card 2: Total Jama Repaid (Credit)
 	x2 := x1 + cardW + cardGap
@@ -168,7 +169,7 @@ func GenerateNativeKhataStatementPDF(customer *model.CustomerKhata, transactions
 	_ = pdf.Cell(&gopdf.Rect{W: cardW - 16, H: 12}, "TOTAL REPAID / JAMA (CR)")
 	_ = pdf.SetFont("noto-bold", "", 12)
 	pdf.SetXY(x2+8, curY+20)
-	_ = pdf.Cell(&gopdf.Rect{W: cardW - 16, H: 18}, fmt.Sprintf("₹%.2f", totalCredit))
+	_ = pdf.Cell(&gopdf.Rect{W: cardW - 16, H: 18}, fmt.Sprintf("Rs. %s", gohumanize.FormatIndian(int64(totalCredit))))
 
 	// Card 3: Net Outstanding Balance
 	x3 := x2 + cardW + cardGap
@@ -188,7 +189,7 @@ func GenerateNativeKhataStatementPDF(customer *model.CustomerKhata, transactions
 	_ = pdf.Cell(&gopdf.Rect{W: cardW - 16, H: 12}, "CURRENT OUTSTANDING DUE")
 	_ = pdf.SetFont("noto-bold", "", 13)
 	pdf.SetXY(x3+8, curY+20)
-	dueLabel := fmt.Sprintf("₹%.2f", currentDue)
+	dueLabel := fmt.Sprintf("Rs. %s", gohumanize.FormatIndian(int64(currentDue)))
 	if currentDue <= 0 {
 		dueLabel += " (SETTLED)"
 	} else {

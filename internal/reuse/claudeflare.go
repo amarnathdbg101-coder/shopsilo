@@ -3,6 +3,7 @@ package reuse
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -131,11 +132,17 @@ func UploadImage(file multipart.File, header *multipart.FileHeader, folder strin
 	cfg := utils.MustLoad()
 	svc := NewR2Client()
 
-	_, err = svc.PutObject(&s3.PutObjectInput{
-		Bucket:      aws.String(cfg.Bucket),
-		Key:         aws.String(key),
-		Body:        uploadBody,
-		ContentType: aws.String(uploadContentType),
+	_, err = ExecuteResilient(context.Background(), R2StorageBreaker, 3, func(ctx context.Context) (struct{}, error) {
+		if seeker, ok := uploadBody.(io.Seeker); ok {
+			_, _ = seeker.Seek(0, io.SeekStart)
+		}
+		_, putErr := svc.PutObject(&s3.PutObjectInput{
+			Bucket:      aws.String(cfg.Bucket),
+			Key:         aws.String(key),
+			Body:        uploadBody,
+			ContentType: aws.String(uploadContentType),
+		})
+		return struct{}{}, putErr
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to upload image to storage: %w", err)
@@ -227,11 +234,14 @@ func UploadBytes(data []byte, contentType, folder, ext string) (string, error) {
 	cfg := utils.MustLoad()
 	svc := NewR2Client()
 
-	_, err := svc.PutObject(&s3.PutObjectInput{
-		Bucket:      aws.String(cfg.Bucket),
-		Key:         aws.String(key),
-		Body:        bytes.NewReader(data),
-		ContentType: aws.String(contentType),
+	_, err := ExecuteResilient(context.Background(), R2StorageBreaker, 3, func(ctx context.Context) (struct{}, error) {
+		_, putErr := svc.PutObject(&s3.PutObjectInput{
+			Bucket:      aws.String(cfg.Bucket),
+			Key:         aws.String(key),
+			Body:        bytes.NewReader(data),
+			ContentType: aws.String(contentType),
+		})
+		return struct{}{}, putErr
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to upload image bytes to storage: %w", err)

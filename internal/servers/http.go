@@ -10,6 +10,7 @@ import (
 	"time"
 
 	goshutdown "github.com/amarnathdbg101-coder/go/go-shutdown"
+	"shopMe/internal/reuse"
 	"shopMe/internal/worker"
 	"go.uber.org/zap"
 )
@@ -72,6 +73,10 @@ func BuildShutdownCoordinator(server *http.Server, stopApp context.CancelFunc, l
 		logger.Info("draining bounded worker task pool...")
 		worker.DrainTaskPool()
 		logger.Info("worker task pool drained successfully")
+
+		logger.Info("flushing and closing audit logging engine...")
+		reuse.CloseAuditEngine()
+		logger.Info("audit logging engine drained and closed")
 		return nil
 	})
 

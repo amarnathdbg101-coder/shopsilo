@@ -113,10 +113,16 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	aiService := services.NewAIService(shopRepo)
 	aic := controller.NewAIController(aiService)
 
+	// Autonomous AI Business Partner Layer (Multi-Persona COO, CA, Analyst, Staff)
+	aiBrainRepo := repository.NewAIBrainRepo(db, logger)
+	aiPartnerService := services.NewAIPartnerService(aiBrainRepo, nil, logger)
+	aiPartnerCtrl := controller.NewAIPartnerController(aiPartnerService, shopService, logger)
+
 	// POS layer (Counter billing POS, daily summary, digital receipts, credit integration)
 	posRepo := repository.NewPOSRepo(db, logger)
 	posService := services.NewPOSService(posRepo, shopRepo, productRepo, khataRepo)
 	posc := controller.NewPOSController(posService)
+	aiPartnerService.SetSubsystems(productService, khataService, posService)
 
 	// Real-Time WebSocket Layer
 	wsc := controller.NewWebSocketController(shopService, logger)
@@ -538,6 +544,14 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 
 		// Authenticated merchant intelligence
 		r.Post("/ai/merchant-copilot", aic.MerchantCopilot) // Shop
+
+		// Autonomous AI Business Partner (COO, CA, Analyst, Staff)
+		r.Post("/shops/me/ai/chat", aiPartnerCtrl.Chat)
+		r.Get("/shops/me/ai/briefings", aiPartnerCtrl.GetBriefings)
+		r.Post("/shops/me/ai/briefings/{id}/dismiss", aiPartnerCtrl.DismissBriefing)
+		r.Post("/shops/me/ai/actions/execute", aiPartnerCtrl.ExecuteAction)
+		r.Post("/shops/me/ai/actions/{id}/rollback", aiPartnerCtrl.RollbackAction)
+		r.Get("/shops/me/ai/actions/logs", aiPartnerCtrl.ListActionLogs)
 
 		// Shop Staff & Cashier sub-accounts
 		r.Get("/shops/me/staff", staffc.ListStaff)             // Shop
