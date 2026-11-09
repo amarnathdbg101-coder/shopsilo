@@ -1,4 +1,4 @@
-// Package controller handles HTTP requests for End-of-Day P&L PDF reports and browser automation.
+// Package controller handles HTTP requests for End-of-Day P&L PDF reports.
 package controller
 
 import (
@@ -13,17 +13,17 @@ import (
 
 // EODReportController handles End-of-Day P&L statement generation and PDF downloads.
 type EODReportController struct {
-	pdfService *services.ChromedpPDFService
+	pdfService *services.EODPDFService
 }
 
 // NewEODReportController initializes EODReportController.
-func NewEODReportController(pdfService *services.ChromedpPDFService) *EODReportController {
+func NewEODReportController(pdfService *services.EODPDFService) *EODReportController {
 	return &EODReportController{
 		pdfService: pdfService,
 	}
 }
 
-// DownloadEndOfDayPLPDF generates and streams an executive P&L PDF report using Chromedp browser automation.
+// DownloadEndOfDayPLPDF generates and streams an executive P&L PDF report using high-performance pure Go gopdf engine.
 func (c *EODReportController) DownloadEndOfDayPLPDF(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())
 	if claims == nil || claims.UserID == "" {

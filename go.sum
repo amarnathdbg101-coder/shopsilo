@@ -12,8 +12,6 @@ github.com/amarnathdbg101-coder/go/go-cors v1.0.0 h1:mUT7P2ChxWpp2RBF8rQP/Ez395q
 github.com/amarnathdbg101-coder/go/go-cors v1.0.0/go.mod h1:L9V2+Q9T9WXaqts8RBbMuSSdt+XIAneTn0iyywbEWi4=
 github.com/amarnathdbg101-coder/go/go-csvkit v1.0.0 h1:mHW4NZ/5jpkMcTE42p7gmon9icr0tgct9yY5SXJ/YHw=
 github.com/amarnathdbg101-coder/go/go-csvkit v1.0.0/go.mod h1:MFQfaLzIo/qoL7LJA64efQli8jVJiDes6B/GWUReMBY=
-github.com/amarnathdbg101-coder/go/go-dbbackup v1.0.0 h1:TM8yT/yU4EugCFvvirLu0hbA+lebGWmHLE69LSMmvgY=
-github.com/amarnathdbg101-coder/go/go-dbbackup v1.0.0/go.mod h1:bi5+d9zqHqzV3xNA/lVa+pQiJzSuHJtBGppyBbfjdno=
 github.com/amarnathdbg101-coder/go/go-dbbackup v1.0.1 h1:asmCGKB49smnQdvJ//RtlUYvkUFbJ4iPwX+grJabkCc=
 github.com/amarnathdbg101-coder/go/go-dbbackup v1.0.1/go.mod h1:bi5+d9zqHqzV3xNA/lVa+pQiJzSuHJtBGppyBbfjdno=
 github.com/amarnathdbg101-coder/go/go-env v1.0.0 h1:6Isd/m3zkfB2s571dml6cuCqZlCxmiuJ+o9PZVL9AU4=
@@ -26,8 +24,6 @@ github.com/amarnathdbg101-coder/go/go-etag v1.0.0 h1:PpY34O/X4XpEVIPB8dFNQO646p8
 github.com/amarnathdbg101-coder/go/go-etag v1.0.0/go.mod h1:lZZSPqTBuklWGVXI8Pqx7KyrfOQFTZzYxsDGiIwpy4M=
 github.com/amarnathdbg101-coder/go/go-fuzzy v1.0.0 h1:YLRlv6NwkTtbfet9PvF/9g0klrsqbmVQeXEuiX4qV2M=
 github.com/amarnathdbg101-coder/go/go-fuzzy v1.0.0/go.mod h1:4xvgEvJcZpJ1DaOoF1jH71+0hRZqLS96U/qFUATqKXE=
-github.com/amarnathdbg101-coder/go/go-gemini v1.0.0 h1:MhfkTK3vt1y8Nz0kj9lstYAdDt5H2YriL7Qesxcjqrg=
-github.com/amarnathdbg101-coder/go/go-gemini v1.0.0/go.mod h1:cFUEh5xj+NrIElXAolyEQSE5st0aVloEHBpRql057PA=
 github.com/amarnathdbg101-coder/go/go-gemini v1.1.0 h1:UvW0BoEKCFt9Ts7Mf6PoowZbIJLX74niS3GFLmOpaUY=
 github.com/amarnathdbg101-coder/go/go-gemini v1.1.0/go.mod h1:cFUEh5xj+NrIElXAolyEQSE5st0aVloEHBpRql057PA=
 github.com/amarnathdbg101-coder/go/go-geodistance v1.0.0 h1:x0QYwIWfrA3l6+v4rpf/k+pM98wnid6mwXX0+suA1p8=
@@ -96,10 +92,6 @@ github.com/amarnathdbg101-coder/go/go-wshub v1.0.0 h1:uUYp+M/xo+44pO9mnYaLgxI7vO
 github.com/amarnathdbg101-coder/go/go-wshub v1.0.0/go.mod h1:9+vZ/na3vakRdXIa8sMo0FElPIUp4n3/CPTJ6OwrKSs=
 github.com/aws/aws-sdk-go v1.49.6 h1:yNldzF5kzLBRvKlKz1S0bkvc2+04R1kt13KfBWQBfFA=
 github.com/aws/aws-sdk-go v1.49.6/go.mod h1:LF8svs817+Nz+DmiMQKTO3ubZ/6IaTpq3TjupRn3Eqk=
-github.com/chromedp/cdproto v0.159.2 h1:tKn8DG0Nx5+ZfPSxQMm4KtCR9onPrF4kCify/oZQYNQ=
-github.com/chromedp/cdproto v0.159.2/go.mod h1:h68JaIuFr9o3yiayxEYhBdvaxgYO3shDrPSYhNlyfu0=
-github.com/chromedp/chromedp v0.23.0 h1:iNGzFz+exVgG4OynS2CnYzlAjHiOFW++fUPbbmSwy0w=
-github.com/chromedp/chromedp v0.23.0/go.mod h1:hJcPsoPrgxu4ulIXhO1WmtKjosCD8jbZh0+TeVFsod8=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
@@ -107,8 +99,6 @@ github.com/gabriel-vasile/mimetype v1.4.15 h1:05iP/CYtZ/w455R/KZM6rZ5ieAdh99UPtd
 github.com/gabriel-vasile/mimetype v1.4.15/go.mod h1:azpTcoLcDZRNgFou5j+APrqQx9HqVPWa6ijYQIIVswQ=
 github.com/go-chi/chi/v5 v5.3.2 h1:5YQkICvTCSZ25hoRsyJazN0scjzKGiu4VAUc7H1o1nY=
 github.com/go-chi/chi/v5 v5.3.2/go.mod h1:R+tYY2hNuVUUjxoPtqUdgBqevM9s9njzkTLutVsOCto=
-github.com/go-json-experiment/json v0.0.0-20260820222146-c27c302e5fc3 h1:UADEEmDKgfXbtnGJZ97beY5XLo9ZechG1nlU4KnRrkE=
-github.com/go-json-experiment/json v0.0.0-20260820222146-c27c302e5fc3/go.mod h1:tphK2c80bpPhMOI4v6bIc2xWywPfbqi1Z06+RcrMkDg=
 github.com/go-playground/assert/v2 v2.2.0 h1:JvknZsQTYeFEAhQwI4qEt9cyV5ONwRHC+lYKSsYSR8s=
 github.com/go-playground/assert/v2 v2.2.0/go.mod h1:VDjEfimB/XKnb+ZQfWdccd7VUvScMdVu0Titje2rxJ4=
 github.com/go-playground/locales v0.14.1 h1:EWaQ/wswjilfKLTECiXz7Rh+3BjFhfDFKv/oXslEjJA=

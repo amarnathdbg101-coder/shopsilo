@@ -51,8 +51,8 @@ func TruncateRunes(s string, maxRunes int) string {
 	return string(runes[:maxRunes-3]) + "..."
 }
 
-// setupInvoiceFonts registers the embedded Noto Sans Devanagari TTF fonts in memory.
-func setupInvoiceFonts(pdf *gopdf.GoPdf) error {
+// SetupInvoiceFonts registers the embedded Noto Sans Devanagari TTF fonts in memory.
+func SetupInvoiceFonts(pdf *gopdf.GoPdf) error {
 	if err := pdf.AddTTFFontData("noto-reg", fontNotoRegular); err != nil {
 		return fmt.Errorf("failed to register regular font: %w", err)
 	}
@@ -60,6 +60,10 @@ func setupInvoiceFonts(pdf *gopdf.GoPdf) error {
 		return fmt.Errorf("failed to register bold font: %w", err)
 	}
 	return nil
+}
+
+func setupInvoiceFonts(pdf *gopdf.GoPdf) error {
+	return SetupInvoiceFonts(pdf)
 }
 
 // GenerateSmartBillPDF is a drop-in replacement for legacy chromedp bill generator,

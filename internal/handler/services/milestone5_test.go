@@ -17,7 +17,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func setupMilestone5Test(t *testing.T) (*pgxpool.Pool, *services.ChromedpPDFService, string) {
+func setupMilestone5Test(t *testing.T) (*pgxpool.Pool, *services.EODPDFService, string) {
 	for _, envPath := range []string{"../../../.env", "../../.env", "../.env", ".env"} {
 		if data, err := os.ReadFile(envPath); err == nil {
 			for _, line := range strings.Split(string(data), "\n") {
@@ -48,7 +48,7 @@ func setupMilestone5Test(t *testing.T) (*pgxpool.Pool, *services.ChromedpPDFServ
 	posRepo := repository.NewPOSRepo(pool, logger)
 	drawerRepo := repository.NewCashDrawerRepo(pool, logger)
 
-	pdfService := services.NewChromedpPDFService(shopRepo, posRepo, drawerRepo, logger)
+	pdfService := services.NewEODPDFService(shopRepo, posRepo, drawerRepo, logger)
 
 	var ownerUserID string
 	err = pool.QueryRow(context.Background(), "SELECT user_id FROM shops WHERE is_active = true LIMIT 1;").Scan(&ownerUserID)
@@ -69,7 +69,7 @@ func TestAutomatedEndOfDayPLPDF(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
-	t.Run("Generate End-of-Day P&L PDF via Chromedp Browser Automation", func(t *testing.T) {
+	t.Run("Generate End-of-Day P&L PDF via Pure Go gopdf Engine", func(t *testing.T) {
 		pdfBytes, err := pdfService.GenerateEndOfDayPLPDF(ctx, ownerUserID, time.Now())
 		if err != nil {
 			t.Fatalf("GenerateEndOfDayPLPDF failed: %v", err)

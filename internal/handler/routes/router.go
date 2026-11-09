@@ -3,179 +3,51 @@ package routes
 
 import (
 	"context"
-	"shopMe/internal/handler/controller"
-	"shopMe/internal/handler/repository"
-	"shopMe/internal/handler/services"
+	"time"
+
+	"shopMe/internal/app"
 	"shopMe/internal/middleware"
 	"shopMe/internal/utils"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"time"
-
 	gohealthcheck "github.com/amarnathdbg101-coder/go/go-healthcheck"
 	"go.uber.org/zap"
 )
 
-func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
-	// User layer
-	userRepo := repository.NewUserRepo(db, logger)
-	phoneVerificationRepo := repository.NewPhoneVerificationRepo(db, logger)
-	userService := services.NewUserService(userRepo)
-	userService.SetPhoneVerificationRepo(phoneVerificationRepo)
-	uc := controller.NewUserController(userService)
-
-	// Moderation & Anti-Abuse layer
-	modRepo := repository.NewModerationRepo(db, logger)
-	modService := services.NewModerationService(modRepo, nil, userRepo) // shopRepo injected below
-	modc := controller.NewModerationController(modService)
-	// Shop layer
-	shopRepo := repository.NewShopRepo(db, logger)
-	shopService := services.NewShopService(shopRepo, userRepo, modRepo)
-	sc := controller.NewShopController(shopService)
-
-	// Wire shopRepo to modService
-	modService = services.NewModerationService(modRepo, shopRepo, userRepo)
-	modc = controller.NewModerationController(modService)
-
-	// Category layer
-	categoryRepo := repository.NewCategoryRepo(db, logger)
-	categoryService := services.NewCategoryService(categoryRepo, shopRepo)
-	catc := controller.NewCategoryController(categoryService)
-
-	// Wire repos to userService for consolidated bootstrap initial state
-	userService.SetShopRepo(shopRepo)
-	userService.SetCategoryRepo(categoryRepo)
-
-	// Product layer
-	productRepo := repository.NewProductRepo(db, logger)
-	productService := services.NewProductService(productRepo, shopRepo, categoryRepo)
-	pc := controller.NewProductController(productService, shopService)
-
-	// Upload layer (Cloudflare R2 image management)
-	uploadService := services.NewUploadService(userRepo, shopRepo, modRepo)
-	upc := controller.NewUploadController(uploadService)
-
-	// Reservation layer (In-Store item hold & counter pickup verification)
-	resRepo := repository.NewReservationRepo(db, logger)
-	resService := services.NewReservationService(resRepo, shopRepo, productRepo)
-	resService.SetUserRepo(userRepo)
-	resc := controller.NewReservationController(resService)
-
-	// Review layer (Shop reviews & trust ratings)
-	reviewRepo := repository.NewReviewRepo(db, logger)
-	reviewService := services.NewReviewService(reviewRepo, shopRepo)
-	revc := controller.NewReviewController(reviewService)
-
-	// Inventory layer (Stock management, low stock alerts, wholesale reorder PDF)
-	inventoryService := services.NewInventoryService(productRepo, shopRepo)
-	invc := controller.NewInventoryController(inventoryService)
-
-	// Expense layer (Daily store operational expenses)
-	expenseRepo := repository.NewExpenseRepo(db, logger)
-	expenseService := services.NewExpenseService(expenseRepo, shopRepo)
-	expc := controller.NewExpenseController(expenseService)
-
-	// Procurement layer (Mandi purchase reorder checklists & vendor sync)
-	procurementRepo := repository.NewProcurementRepo(db, logger)
-	procurementService := services.NewProcurementService(procurementRepo, shopRepo)
-	procurementc := controller.NewProcurementController(procurementService)
-
-	// Khata layer (Customer credit & udhar book)
-	khataRepo := repository.NewKhataRepo(db, logger)
-	khataService := services.NewKhataService(khataRepo, shopRepo, userRepo)
-	userService.SetKhataRepo(khataRepo)
-	khatac := controller.NewKhataController(khataService)
-	custKhatac := controller.NewCustomerKhataController(khataService)
-
-	// Analytics layer (Monthly profit, Best/Worst/Old/New product matrix, Net Pocket Profit)
-	analyticsService := services.NewAnalyticsService(productRepo, shopRepo, expenseRepo)
-	ac := controller.NewAnalyticsController(analyticsService)
-
-	// Loyalty & Returns layer (Customer loyalty points, in-store returns, VIP offers, barcode scan)
-	loyaltyRepo := repository.NewLoyaltyRepo(db, logger)
-	loyaltyService := services.NewLoyaltyService(loyaltyRepo, shopRepo, productRepo)
-	loyc := controller.NewLoyaltyController(loyaltyService)
-
-	// Master Barcode Catalog layer (Global FMCG crowdsourced auto-fill engine)
-	catalogRepo := repository.NewCatalogRepo(db, logger)
-	catalogService := services.NewCatalogService(catalogRepo)
-	catalogc := controller.NewCatalogController(catalogService)
-	productService.SetCatalogService(catalogService)
-
-	// Telemetry & Error Audit layer
-	telemetryRepo := repository.NewTelemetryRepo(db, logger)
-	telemetryService := services.NewTelemetryService(telemetryRepo)
-	telc := controller.NewTelemetryController(telemetryService)
-
-	// AI Layer (Gemini Flash - Customer Shopping Sathi & Merchant Copilot)
-	aiService := services.NewAIService(shopRepo)
-	aic := controller.NewAIController(aiService)
-
-	// Autonomous AI Business Partner Layer (Multi-Persona COO, CA, Analyst, Staff)
-	aiBrainRepo := repository.NewAIBrainRepo(db, logger)
-	aiPartnerService := services.NewAIPartnerService(aiBrainRepo, nil, logger)
-	aiPartnerCtrl := controller.NewAIPartnerController(aiPartnerService, shopService, logger)
-
-	// POS layer (Counter billing POS, daily summary, digital receipts, credit integration)
-	posRepo := repository.NewPOSRepo(db, logger)
-	posService := services.NewPOSService(posRepo, shopRepo, productRepo, khataRepo)
-	posc := controller.NewPOSController(posService)
-	aiPartnerService.SetSubsystems(productService, khataService, posService)
-
-	// Real-Time WebSocket Layer
-	wsc := controller.NewWebSocketController(shopService, logger)
-
-	// Shop Staff & Cashier sub-account layer
-	staffRepo := repository.NewStaffRepo(db, logger)
-	staffService := services.NewStaffService(staffRepo, shopRepo)
-	staffc := controller.NewStaffController(staffService)
-
-	// Multi-Store Godown Locations, Variant Matrix & Stock Transfers
-	locationRepo := repository.NewLocationRepo(db, logger)
-	locationService := services.NewLocationService(locationRepo, shopRepo, productRepo)
-	locationc := controller.NewLocationController(locationService)
-
-	// Live Margin Shield & POS Fast-Grid Hotkeys
-	hotkeyRepo := repository.NewHotkeyRepo(db, logger)
-	marginService := services.NewMarginService(shopRepo, hotkeyRepo, logger)
-	marginc := controller.NewMarginController(marginService)
-
-	// Cash Drawer Telemetry & Staff Shift Accountability
-	drawerRepo := repository.NewCashDrawerRepo(db, logger)
-	drawerService := services.NewCashDrawerService(shopRepo, drawerRepo, logger)
-	drawerc := controller.NewCashDrawerController(drawerService)
-	posService.SetDrawerRepo(drawerRepo)
-
-	// Milestone 3: Scan & Go Self-Checkout, Damage Claims Vault & Reverse Returns Lookup
-	scanRepo := repository.NewScanAndGoRepo(db, logger)
-	scanService := services.NewScanAndGoService(scanRepo, shopRepo, productRepo, posService, logger)
-	scanc := controller.NewScanAndGoController(scanService)
-
-	claimRepo := repository.NewDamageClaimRepo(db, logger)
-	claimService := services.NewDamageClaimService(claimRepo, shopRepo, logger)
-	claimc := controller.NewDamageClaimController(claimService)
-
-	returnLookupRepo := repository.NewReturnLookupRepo(db, logger)
-	returnLookupService := services.NewReturnLookupService(returnLookupRepo, shopRepo, logger)
-	returnLookupc := controller.NewReturnLookupController(returnLookupService)
-
-	// Milestone 4: Product Batches, Near-Expiry Auto-Markdown Engine & Khata Micro-Installments
-	batchRepo := repository.NewBatchRepo(db, logger)
-	batchService := services.NewBatchService(batchRepo, shopRepo, productRepo, logger)
-	batchc := controller.NewBatchController(batchService)
-
-	microPlanRepo := repository.NewMicroPlanRepo(db, logger)
-	microPlanService := services.NewMicroPlanService(microPlanRepo, shopRepo, userRepo, khataRepo, logger)
-	microPlanc := controller.NewMicroPlanController(microPlanService)
-
-	// Milestone 5: Automated End-of-Day P&L PDF via Chromedp Browser Automation
-	chromedpPDFService := services.NewChromedpPDFService(shopRepo, posRepo, drawerRepo, logger)
-	eodc := controller.NewEODReportController(chromedpPDFService)
-
-	// Wire aggregated repos to shopService for unified batch endpoints
-	shopService.SetAggregatedRepos(categoryRepo, productRepo, posRepo, loyaltyRepo)
+// RouteSetup configures all HTTP routes using components from the centralized Container.
+func RouteSetup(c *app.Container) chi.Router {
+	uc := c.Controllers.User
+	modc := c.Controllers.Moderation
+	sc := c.Controllers.Shop
+	catc := c.Controllers.Category
+	pc := c.Controllers.Product
+	upc := c.Controllers.Upload
+	resc := c.Controllers.Reservation
+	revc := c.Controllers.Review
+	invc := c.Controllers.Inventory
+	expc := c.Controllers.Expense
+	procurementc := c.Controllers.Procurement
+	khatac := c.Controllers.Khata
+	custKhatac := c.Controllers.CustomerKhata
+	ac := c.Controllers.Analytics
+	loyc := c.Controllers.Loyalty
+	catalogc := c.Controllers.Catalog
+	telc := c.Controllers.Telemetry
+	aic := c.Controllers.AI
+	posc := c.Controllers.POS
+	wsc := c.Controllers.WebSocket
+	staffc := c.Controllers.Staff
+	locationc := c.Controllers.Location
+	marginc := c.Controllers.Margin
+	drawerc := c.Controllers.CashDrawer
+	scanc := c.Controllers.ScanAndGo
+	claimc := c.Controllers.DamageClaim
+	returnLookupc := c.Controllers.ReturnLookup
+	batchc := c.Controllers.Batch
+	microPlanc := c.Controllers.MicroPlan
+	eodc := c.Controllers.EODReport
 
 	r := chi.NewRouter()
 
@@ -186,7 +58,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	r.Use(middleware.BodySizeGuard(2 << 20))
 	r.Use(chimw.Compress(5))
 	r.Use(middleware.GlobalRateLimiter.Middleware())
-	r.Use(middleware.BanGuard(modRepo))
+	r.Use(middleware.BanGuard(c.Repos.Moderation))
 	r.Use(chimw.Recoverer)
 	r.Use(middleware.CORS)
 	r.Use(middleware.SecurityHeaders)
@@ -199,13 +71,17 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		CacheTTL: 1 * time.Second,
 	})
 	healthManager.RegisterReadiness(gohealthcheck.NewCheckFunc("postgres", func(ctx context.Context) error {
-		return db.Ping(ctx)
+		return c.DB.Ping(ctx)
 	}))
 	healthManager.RegisterLiveness(gohealthcheck.NewMemoryChecker("heap_memory", 1024*1024*1024)) // 1GB heap limit
 
 	r.Get("/health", healthManager.ReadyHandler())
 	r.Get("/readyz", healthManager.ReadyHandler())
 	r.Get("/livez", healthManager.LiveHandler())
+
+	// Centralized Feature Registry & Discovery endpoint
+	r.Get("/features", c.Features.ServeHTTP)
+	r.Get("/api/features", c.Features.ServeHTTP)
 
 	// Public Grievance & Content Safety Report endpoint (IT Rules 2021 compliance)
 	r.Post("/reports", modc.SubmitReport) // Both
@@ -432,7 +308,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/khata/micro-plans/{id}", microPlanc.GetPlanSummary)
 		r.Get("/khata/micro-plans", microPlanc.ListPlans)
 
-		// Automated End-of-Day P&L PDF via Chromedp Browser Automation
+		// Automated End-of-Day P&L PDF via Pure Go gopdf Engine
 		r.Get("/pos/day-close/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
 		r.Get("/shops/me/pos/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
 
@@ -503,7 +379,7 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Get("/khata/micro-plans/{id}", microPlanc.GetPlanSummary)
 		r.Get("/khata/micro-plans", microPlanc.ListPlans)
 
-		// 7. Chromedp Automated End-of-Day P&L PDF
+		// 7. Automated End-of-Day P&L PDF (Pure Go)
 		r.Get("/pos/day-close/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
 
 		// 8. 🧠 AI Layer Engines
@@ -556,16 +432,6 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 
 		// Authenticated merchant intelligence
 		r.Post("/ai/merchant-copilot", aic.MerchantCopilot) // Shop
-
-		// Autonomous AI Business Partner (COO, CA, Analyst, Staff)
-		r.Post("/shops/me/ai/chat", aiPartnerCtrl.Chat)
-		r.Get("/shops/me/ai/briefings", aiPartnerCtrl.GetBriefings)
-		r.Post("/shops/me/ai/briefings/{id}/dismiss", aiPartnerCtrl.DismissBriefing)
-		r.Post("/shops/me/ai/actions/execute", aiPartnerCtrl.ExecuteAction)
-		r.Post("/shops/me/ai/actions/{id}/rollback", aiPartnerCtrl.RollbackAction)
-		r.Get("/shops/me/ai/actions/logs", aiPartnerCtrl.ListActionLogs)
-		r.Get("/shops/me/ai/memory", aiPartnerCtrl.GetMemoryNodes)
-		r.Delete("/shops/me/ai/memory/{id}", aiPartnerCtrl.DeleteMemoryNode)
 
 		// Shop Staff & Cashier sub-accounts
 		r.Get("/shops/me/staff", staffc.ListStaff)             // Shop
@@ -731,6 +597,12 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	})
 
 	return r
+}
+
+// RouteSetupWithDB initializes a new centralized Container and returns the configured router.
+// Retained for backward compatibility.
+func RouteSetupWithDB(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
+	return RouteSetup(app.NewContainer(db, logger))
 }
 
 

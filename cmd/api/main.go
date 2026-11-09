@@ -3,16 +3,15 @@ package main
 import (
 	"context"
 	"sync"
+
 	"github.com/jackc/pgx/v5/stdlib"
-	"shopMe/internal/handler/repository"
+	"shopMe/internal/app"
 	"shopMe/internal/handler/routes"
-	"shopMe/internal/handler/services"
 	"shopMe/internal/middleware"
 	"shopMe/internal/migration"
 	"shopMe/internal/reuse"
 	"shopMe/internal/servers"
 	"shopMe/internal/utils"
-	"shopMe/internal/worker"
 
 	colorlog "github.com/amarnathdbg101-coder/go/go-colorlog"
 	"go.uber.org/zap"
@@ -49,43 +48,21 @@ func main() {
 	}
 	defer reuse.CloseAuditEngine()
 
-	router := routes.RouteSetup(db, logger)
+	// 1. Centralized Application Container (Repositories, Services, Controllers, Features)
+	appContainer := app.NewContainer(db, logger)
 
-	// Context and WaitGroup for background concurrent workers
+	// 2. Centralized HTTP Router
+	router := routes.RouteSetup(appContainer)
+
+	// 3. Centralized Background Workers Coordination
 	appCtx, stopApp := context.WithCancel(context.Background())
 	defer stopApp()
 	var workerWG sync.WaitGroup
 
-	aiBrainRepo := repository.NewAIBrainRepo(db, logger)
-	aiPartnerService := services.NewAIPartnerService(aiBrainRepo, nil, logger)
+	appContainer.StartWorkers(appCtx, &workerWG)
 
-	// Background Concurrency Workers
-	workerWG.Add(5)
-	go func() {
-		defer workerWG.Done()
-		worker.StartReservationCleaner(appCtx, db, logger)
-	}()
-	go func() {
-		defer workerWG.Done()
-		worker.StartBackupWorker(appCtx, db, logger)
-	}()
-	go func() {
-		defer workerWG.Done()
-		worker.StartOutboxWorker(appCtx, db, logger)
-	}()
-	go func() {
-		defer workerWG.Done()
-		worker.StartDreamingWorker(appCtx, aiPartnerService, logger)
-	}()
-	go func() {
-		defer workerWG.Done()
-		worker.StartAnomalyWorker(appCtx, db, aiBrainRepo, logger)
-	}()
-
+	// 4. Server Start & Graceful Shutdown
 	server := servers.NewServer(utils.MustLoad().Port, router)
-
 	servers.StartServer(server, logger)
-
-	// Channel to listen for interrupt signals for graceful shutdown with worker coordination
 	servers.GracefulShutdown(server, stopApp, logger, &workerWG)
 }
