@@ -56,8 +56,11 @@ func main() {
 	defer stopApp()
 	var workerWG sync.WaitGroup
 
+	aiBrainRepo := repository.NewAIBrainRepo(db, logger)
+	aiPartnerService := services.NewAIPartnerService(aiBrainRepo, nil, logger)
+
 	// Background Concurrency Workers
-	workerWG.Add(4)
+	workerWG.Add(5)
 	go func() {
 		defer workerWG.Done()
 		worker.StartReservationCleaner(appCtx, db, logger)
@@ -72,9 +75,11 @@ func main() {
 	}()
 	go func() {
 		defer workerWG.Done()
-		aiBrainRepo := repository.NewAIBrainRepo(db, logger)
-		aiPartnerService := services.NewAIPartnerService(aiBrainRepo, nil, logger)
 		worker.StartDreamingWorker(appCtx, aiPartnerService, logger)
+	}()
+	go func() {
+		defer workerWG.Done()
+		worker.StartAnomalyWorker(appCtx, db, aiBrainRepo, logger)
 	}()
 
 	server := servers.NewServer(utils.MustLoad().Port, router)

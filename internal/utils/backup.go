@@ -2,15 +2,14 @@ package utils
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"path"
 	"strings"
 	"time"
 
+	"github.com/amarnathdbg101-coder/go/go-dbbackup"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -19,13 +18,13 @@ import (
 )
 
 type DatabaseBackupMeta struct {
-	BackupID          string    `json:"backup_id"`
-	Filename          string    `json:"filename"`
-	SizeBytes         int64     `json:"size_bytes"`
-	PublicURL         string    `json:"public_url"`
-	TablesIncluded    []string  `json:"tables_included"`
-	CreatedAt         time.Time `json:"created_at"`
-	BackupStatus      string    `json:"backup_status"`
+	BackupID       string    `json:"backup_id"`
+	Filename       string    `json:"filename"`
+	SizeBytes      int64     `json:"size_bytes"`
+	PublicURL      string    `json:"public_url"`
+	TablesIncluded []string  `json:"tables_included"`
+	CreatedAt      time.Time `json:"created_at"`
+	BackupStatus   string    `json:"backup_status"`
 }
 
 // GenerateFullDatabaseBackupDump dumps key business tables into a gzip-compressed JSON backup stream and uploads it to Cloudflare R2
@@ -44,55 +43,27 @@ func GenerateFullDatabaseBackupDump(ctx context.Context, db *pgxpool.Pool) (*Dat
 		"store_offers",
 	}
 
-	timestamp := time.Now().Format("2006_01_02_150405")
-	filename := fmt.Sprintf("db_backup_%s.json.gz", timestamp)
+	meta := map[string]any{
+		"system": "ShopMe Retail OS Cloud Backup Engine",
+	}
+
+	compressedBytes, summary, err := dbbackup.DumpTablesBytes(ctx, dbbackup.AdaptQueryRow(db.QueryRow), tables, meta)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate database dump: %w", err)
+	}
+
+	filename := summary.Filename
 	key := fmt.Sprintf("backups/%s", filename)
-
-	var gzBuf bytes.Buffer
-	gzWriter := gzip.NewWriter(&gzBuf)
-
-	// Stream JSON construction to avoid parsing giant tables into RAM (OOM Prevention)
-	gzWriter.Write([]byte("{\n"))
-
-	// Write meta
-	metaJSON, _ := json.Marshal(map[string]interface{}{
-		"system":          "ShopMe Retail OS Cloud Backup Engine",
-		"created_at":      time.Now().Format(time.RFC3339),
-		"tables_included": tables,
-	})
-	gzWriter.Write([]byte(`"meta": `))
-	gzWriter.Write(metaJSON)
-
-	// Fetch table row dumps
-	for _, tbl := range tables {
-		gzWriter.Write([]byte(",\n\"" + tbl + "\": "))
-
-		query := fmt.Sprintf("SELECT COALESCE(json_agg(t)::text, '[]') FROM (SELECT * FROM %s) t", tbl)
-		var jsonRaw string
-		err := db.QueryRow(ctx, query).Scan(&jsonRaw)
-		if err != nil || jsonRaw == "" {
-			gzWriter.Write([]byte("[]"))
-		} else {
-			gzWriter.Write([]byte(jsonRaw))
-		}
-	}
-	gzWriter.Write([]byte("\n}"))
-
-	if err := gzWriter.Close(); err != nil {
-		return nil, fmt.Errorf("failed to close gzip writer: %w", err)
-	}
-
-	compressedBytes := gzBuf.Bytes()
 
 	cfg := MustLoad()
 	if cfg.Endpoint == "" || cfg.Bucket == "" {
 		return &DatabaseBackupMeta{
-			BackupID:       timestamp,
+			BackupID:       summary.BackupID,
 			Filename:       filename,
-			SizeBytes:      int64(len(compressedBytes)),
+			SizeBytes:      summary.SizeBytes,
 			PublicURL:      "/admin/backups/local",
 			TablesIncluded: tables,
-			CreatedAt:      time.Now(),
+			CreatedAt:      summary.CreatedAt,
 			BackupStatus:   "COMPLETED_LOCAL",
 		}, nil
 	}
@@ -105,7 +76,7 @@ func GenerateFullDatabaseBackupDump(ctx context.Context, db *pgxpool.Pool) (*Dat
 	}))
 	s3Client := s3.New(sess)
 
-	_, err := s3Client.PutObjectWithContext(ctx, &s3.PutObjectInput{
+	_, err = s3Client.PutObjectWithContext(ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(cfg.Bucket),
 		Key:         aws.String(key),
 		Body:        bytes.NewReader(compressedBytes),
@@ -118,12 +89,12 @@ func GenerateFullDatabaseBackupDump(ctx context.Context, db *pgxpool.Pool) (*Dat
 	publicURL := fmt.Sprintf("%s/%s", strings.TrimRight(cfg.PublicURL, "/"), key)
 
 	return &DatabaseBackupMeta{
-		BackupID:       timestamp,
+		BackupID:       summary.BackupID,
 		Filename:       filename,
-		SizeBytes:      int64(len(compressedBytes)),
+		SizeBytes:      summary.SizeBytes,
 		PublicURL:      publicURL,
 		TablesIncluded: tables,
-		CreatedAt:      time.Now(),
+		CreatedAt:      summary.CreatedAt,
 		BackupStatus:   "COMPLETED_R2_CLOUD",
 	}, nil
 }

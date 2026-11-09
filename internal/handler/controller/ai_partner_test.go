@@ -143,4 +143,58 @@ func TestAIPartnerController_AuthAndValidation(t *testing.T) {
 			t.Fatalf("expected status 503 Service Unavailable, got %d", w.Code)
 		}
 	})
+
+	t.Run("GetMemoryNodes Unauthorized without claims", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/shops/me/ai/memory", nil)
+		w := httptest.NewRecorder()
+
+		ctrl.GetMemoryNodes(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected status 401 Unauthorized, got %d", w.Code)
+		}
+	})
+
+	t.Run("GetMemoryNodes returns ServiceUnavailable when services are nil", func(t *testing.T) {
+		claims := &middleware.Claims{
+			UserID: "user_test_1",
+			Role:   "shop",
+		}
+		ctx := context.WithValue(context.Background(), middleware.ContextKeyUser, claims)
+		req := httptest.NewRequest(http.MethodGet, "/shops/me/ai/memory", nil).WithContext(ctx)
+		w := httptest.NewRecorder()
+
+		ctrl.GetMemoryNodes(w, req)
+
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("expected status 503 Service Unavailable, got %d", w.Code)
+		}
+	})
+
+	t.Run("DeleteMemoryNode Unauthorized without claims", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodDelete, "/shops/me/ai/memory/mem_123", nil)
+		w := httptest.NewRecorder()
+
+		ctrl.DeleteMemoryNode(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected status 401 Unauthorized, got %d", w.Code)
+		}
+	})
+
+	t.Run("DeleteMemoryNode returns ServiceUnavailable when services are nil", func(t *testing.T) {
+		claims := &middleware.Claims{
+			UserID: "user_test_1",
+			Role:   "shop",
+		}
+		ctx := context.WithValue(context.Background(), middleware.ContextKeyUser, claims)
+		req := httptest.NewRequest(http.MethodDelete, "/shops/me/ai/memory/mem_123", nil).WithContext(ctx)
+		w := httptest.NewRecorder()
+
+		ctrl.DeleteMemoryNode(w, req)
+
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("expected status 503 Service Unavailable, got %d", w.Code)
+		}
+	})
 }

@@ -253,3 +253,70 @@ func (c *AIPartnerController) ListActionLogs(w http.ResponseWriter, r *http.Requ
 
 	reuse.Success(w, "Action audit logs retrieved successfully", logs)
 }
+
+// GetMemoryNodes returns the learned semantic memory nodes for the shop.
+func (c *AIPartnerController) GetMemoryNodes(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	if c.shopService == nil || c.partnerService == nil {
+		reuse.Error(w, http.StatusServiceUnavailable, "ai partner service temporarily unavailable")
+		return
+	}
+
+	shop, err := c.shopService.GetMyShop(r.Context(), claims.UserID)
+	if err != nil || shop == nil {
+		reuse.Error(w, http.StatusNotFound, "merchant shop not found")
+		return
+	}
+
+	nodes, err := c.partnerService.GetMemoryNodes(r.Context(), shop.ID)
+	if err != nil {
+		if c.logger != nil {
+			c.logger.Error("failed to get memory nodes", zap.Error(err), zap.String("shop_id", shop.ID))
+		}
+		reuse.Error(w, http.StatusInternalServerError, "failed to get memory nodes")
+		return
+	}
+
+	reuse.Success(w, "Memory nodes retrieved successfully", nodes)
+}
+
+// DeleteMemoryNode deletes an outdated or unwanted learned memory node.
+func (c *AIPartnerController) DeleteMemoryNode(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	if c.shopService == nil || c.partnerService == nil {
+		reuse.Error(w, http.StatusServiceUnavailable, "ai partner service temporarily unavailable")
+		return
+	}
+
+	shop, err := c.shopService.GetMyShop(r.Context(), claims.UserID)
+	if err != nil || shop == nil {
+		reuse.Error(w, http.StatusNotFound, "merchant shop not found")
+		return
+	}
+
+	nodeID := chi.URLParam(r, "id")
+	if strings.TrimSpace(nodeID) == "" {
+		reuse.Error(w, http.StatusBadRequest, "memory node id is required")
+		return
+	}
+
+	if err := c.partnerService.DeleteMemoryNode(r.Context(), shop.ID, nodeID); err != nil {
+		if c.logger != nil {
+			c.logger.Error("failed to delete memory node", zap.Error(err), zap.String("node_id", nodeID))
+		}
+		reuse.Error(w, http.StatusInternalServerError, "failed to delete memory node")
+		return
+	}
+
+	reuse.Success(w, "Memory node deleted successfully", nil)
+}

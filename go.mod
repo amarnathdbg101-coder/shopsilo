@@ -36,11 +36,13 @@ require (
 	github.com/amarnathdbg101-coder/go/go-circuitbreaker v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-cloudflare v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-csvkit v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-dbbackup v1.0.1 // indirect
 	github.com/amarnathdbg101-coder/go/go-escpos v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-etag v1.0.0 // indirect
-	github.com/amarnathdbg101-coder/go/go-gemini v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-gemini v1.1.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-geodistance v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-healthcheck v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-hinglish v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-humanize v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-imagefx v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-imghash v1.0.0 // indirect
@@ -51,11 +53,14 @@ require (
 	github.com/amarnathdbg101-coder/go/go-otp v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-outbox v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-paginate v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-parchi v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-password v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-reservation v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-retailtaxo v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-retry v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-sanitize v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-slug v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-studiocomp v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-tamperseal v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-urlsigner v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-workerpool v1.0.0 // indirect

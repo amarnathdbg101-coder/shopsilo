@@ -28,6 +28,11 @@ func NewAIBrainRepo(db *pgxpool.Pool, logger *zap.Logger) *AIBrainRepo {
 	}
 }
 
+// DB returns the underlying PostgreSQL connection pool.
+func (r *AIBrainRepo) DB() *pgxpool.Pool {
+	return r.db
+}
+
 // GetOrCreateConversation retrieves the latest conversation for the shop and user, or initializes a new session.
 func (r *AIBrainRepo) GetOrCreateConversation(ctx context.Context, shopID, userID, persona string) (*model.AIConversation, error) {
 	if persona == "" {
@@ -180,7 +185,26 @@ func (r *AIBrainRepo) GetTopMemoryNodes(ctx context.Context, shopID string, limi
 		nodes = append(nodes, &n)
 	}
 
+	// Reinforce recalled memory nodes asynchronously (Hebbian learning)
+	if len(nodes) > 0 && r.db != nil {
+		var ids []string
+		for _, n := range nodes {
+			ids = append(ids, fmt.Sprintf("'%s'", n.ID))
+		}
+		go func() {
+			bumpQuery := fmt.Sprintf("UPDATE ai_memory_nodes SET access_count = access_count + 1, last_recalled_at = NOW() WHERE id IN (%s)", strings.Join(ids, ","))
+			_, _ = r.db.Exec(context.Background(), bumpQuery)
+		}()
+	}
+
 	return nodes, nil
+}
+
+// DeleteMemoryNode removes a learned semantic memory node for a shop.
+func (r *AIBrainRepo) DeleteMemoryNode(ctx context.Context, shopID, nodeID string) error {
+	query := `DELETE FROM ai_memory_nodes WHERE id = $1 AND shop_id = $2`
+	_, err := r.db.Exec(ctx, query, nodeID, shopID)
+	return err
 }
 
 // RecordActionLog writes a deterministic action audit entry for AI tool executions.

@@ -24,10 +24,18 @@ const (
 
 // AI Action execution statuses
 const (
+	ActionStatusProposed        = "PENDING_APPROVAL"
 	ActionStatusPendingApproval = "PENDING_APPROVAL"
 	ActionStatusExecuted        = "EXECUTED"
 	ActionStatusCancelled       = "CANCELLED"
 	ActionStatusRolledBack      = "ROLLED_BACK"
+)
+
+// AI Action tool names
+const (
+	ToolUpdateProductPrice      = "update_product_price"
+	ToolRestockInventory        = "restock_inventory"
+	ToolRecordCreditTransaction = "record_credit_transaction"
 )
 
 // AI Proactive Briefing types

@@ -441,11 +441,17 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Post("/ai/scan-product", aic.ScanProduct)
 		r.Post("/ai/smart-studio-scan", aic.SmartStudioScan)
 		r.Post("/ai/voice-bill", aic.VoiceBill)
+		r.Post("/api/ai/voice-bill", aic.VoiceBill)
 		r.Post("/ai/marketing-campaign", aic.GenerateMarketingCampaign)
+		r.Post("/api/ai/marketing-campaign", aic.GenerateMarketingCampaign)
 		r.Post("/ai/supplier-invoice", aic.ParseSupplierInvoice)
+		r.Post("/api/ai/supplier-invoice", aic.ParseSupplierInvoice)
 		r.Post("/ai/cross-sell", aic.GetCrossSellRecommendations)
+		r.Post("/api/ai/cross-sell", aic.GetCrossSellRecommendations)
 		r.Get("/ai/dead-stock-bundles", aic.GetDeadStockBundles)
+		r.Get("/api/ai/dead-stock-bundles", aic.GetDeadStockBundles)
 		r.Post("/ai/recovery-nudge", aic.GenerateSmartRecoveryNudge)
+		r.Post("/api/ai/recovery-nudge", aic.GenerateSmartRecoveryNudge)
 
 		// Merchant Udhar Ledger
 		r.Get("/khata/summary", khatac.GetSummary)
@@ -502,11 +508,17 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 
 		// 8. 🧠 AI Layer Engines
 		r.Post("/ai/supplier-invoice", aic.ParseSupplierInvoice)
+		r.Post("/api/ai/supplier-invoice", aic.ParseSupplierInvoice)
 		r.Post("/ai/cross-sell", aic.GetCrossSellRecommendations)
+		r.Post("/api/ai/cross-sell", aic.GetCrossSellRecommendations)
 		r.Get("/ai/dead-stock-bundles", aic.GetDeadStockBundles)
+		r.Get("/api/ai/dead-stock-bundles", aic.GetDeadStockBundles)
 		r.Post("/ai/recovery-nudge", aic.GenerateSmartRecoveryNudge)
+		r.Post("/api/ai/recovery-nudge", aic.GenerateSmartRecoveryNudge)
 		r.Post("/ai/voice-bill", aic.VoiceBill)
+		r.Post("/api/ai/voice-bill", aic.VoiceBill)
 		r.Post("/ai/marketing-campaign", aic.GenerateMarketingCampaign)
+		r.Post("/api/ai/marketing-campaign", aic.GenerateMarketingCampaign)
 	})
 
 	// Protected routes (JWT authentication required)
@@ -552,6 +564,8 @@ func RouteSetup(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 		r.Post("/shops/me/ai/actions/execute", aiPartnerCtrl.ExecuteAction)
 		r.Post("/shops/me/ai/actions/{id}/rollback", aiPartnerCtrl.RollbackAction)
 		r.Get("/shops/me/ai/actions/logs", aiPartnerCtrl.ListActionLogs)
+		r.Get("/shops/me/ai/memory", aiPartnerCtrl.GetMemoryNodes)
+		r.Delete("/shops/me/ai/memory/{id}", aiPartnerCtrl.DeleteMemoryNode)
 
 		// Shop Staff & Cashier sub-accounts
 		r.Get("/shops/me/staff", staffc.ListStaff)             // Shop

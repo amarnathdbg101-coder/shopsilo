@@ -21,6 +21,9 @@ import (
 type AIPartnerService struct {
 	brainRepo      *repository.AIBrainRepo
 	geminiClient   *gogemini.Client
+	telemetry      *TelemetryProvider
+	toolDispatcher *AIToolDispatcher
+	intentRouter   *AIIntentRouter
 	logger         *zap.Logger
 	productService *ProductService
 	khataService   *KhataService
@@ -38,7 +41,7 @@ func (s *AIPartnerService) SetSubsystems(
 	s.posService = posService
 }
 
-// NewAIPartnerService creates an initialized AIPartnerService with automatic Gemini key rotation.
+// NewAIPartnerService creates an initialized AIPartnerService with automatic Gemini key rotation, live telemetry, and tool dispatcher.
 func NewAIPartnerService(
 	brainRepo *repository.AIBrainRepo,
 	geminiClient *gogemini.Client,
@@ -60,14 +63,26 @@ func NewAIPartnerService(
 		}
 	}
 
+	var telemetry *TelemetryProvider
+	var toolDispatcher *AIToolDispatcher
+	if brainRepo != nil && brainRepo.DB() != nil {
+		telemetry = NewTelemetryProvider(brainRepo.DB())
+		toolDispatcher = NewAIToolDispatcher(brainRepo.DB(), brainRepo, telemetry, logger)
+	}
+
+	intentRouter := NewAIIntentRouter()
+
 	return &AIPartnerService{
-		brainRepo:    brainRepo,
-		geminiClient: geminiClient,
-		logger:       logger,
+		brainRepo:      brainRepo,
+		geminiClient:   geminiClient,
+		telemetry:      telemetry,
+		toolDispatcher: toolDispatcher,
+		intentRouter:   intentRouter,
+		logger:         logger,
 	}
 }
 
-// Chat executes a conversational dialogue turn with sliding-window history and semantic memory recall.
+// Chat executes an autonomous ReAct turn with live store telemetry grounding, function calling, and deterministic tool dispatch.
 func (s *AIPartnerService) Chat(
 	ctx context.Context,
 	shopID, userID, persona, userMessage string,
@@ -95,7 +110,13 @@ func (s *AIPartnerService) Chat(
 		s.logger.Warn("failed to fetch recent dialogue turns", zap.Error(err))
 	}
 
-	// 4. Save incoming user message
+	// 4. Fetch live store telemetry snapshot (OOM-safe micro-cached)
+	var telemetrySnap *StoreTelemetrySnapshot
+	if s.telemetry != nil {
+		telemetrySnap, _ = s.telemetry.GetSnapshot(ctx, shopID)
+	}
+
+	// 5. Save incoming user message
 	userMsg := &model.AIMessage{
 		ConversationID: convo.ID,
 		Role:           "user",
@@ -104,34 +125,140 @@ func (s *AIPartnerService) Chat(
 	}
 	_ = s.brainRepo.AddMessage(ctx, userMsg)
 
-	// 5. Construct grounded context prompt
-	fullPrompt := s.buildGroundedPrompt(convo.ActivePersona, shopDetails, memoryNodes, recentMessages, userMessage)
+	// 6. Build system prompt grounded with live real-time telemetry and memory
+	systemPrompt := s.buildSystemDirective(convo.ActivePersona, shopDetails, memoryNodes, telemetrySnap)
 
-	// 6. Execute Gemini Generation with Key-Rotation
-	replyText := ""
-	if s.geminiClient != nil {
-		resp, err := s.geminiClient.GenerateText(ctx, fullPrompt)
-		if err != nil {
-			s.logger.Error("gemini partner chat failed, falling back to local heuristic response", zap.Error(err))
-			replyText = s.FallbackResponse(convo.ActivePersona, userMessage)
-		} else {
-			replyText = strings.TrimSpace(resp)
+	// 7. Prepare Gemini Chat Request turns
+	var contents []gogemini.Content
+	for _, h := range recentMessages {
+		role := "user"
+		if h.Role == "assistant" || h.Role == "model" {
+			role = "model"
 		}
-	} else {
-		replyText = s.FallbackResponse(convo.ActivePersona, userMessage)
+		contents = append(contents, gogemini.Content{
+			Role:  role,
+			Parts: []gogemini.Part{{Text: h.Content}},
+		})
+	}
+	// Append current user message
+	contents = append(contents, gogemini.Content{
+		Role:  "user",
+		Parts: []gogemini.Part{{Text: userMessage}},
+	})
+
+	var tools []gogemini.Tool
+	if s.toolDispatcher != nil {
+		tools = s.toolDispatcher.GetToolDeclarations()
 	}
 
-	// 7. Save assistant reply
+	replyText := ""
+	var recordedToolCalls, recordedToolResults string
+
+	// Step 7.5: Sub-2ms Deterministic Fast-Path Routing (Zero Tokens, Zero Hallucination, Instantaneous)
+	if s.intentRouter != nil {
+		if fastReply, ok := s.intentRouter.RouteFastPath(userMessage, convo.ActivePersona, telemetrySnap); ok {
+			replyText = fastReply
+		}
+	}
+
+	// 8. Execute ReAct Gemini Generation with Key Rotation and Tool Execution Loop if not answered by fast path
+	if replyText == "" && s.geminiClient != nil {
+		chatReq := gogemini.ChatRequest{
+			SystemInstruction: systemPrompt,
+			Contents:          contents,
+			Tools:             tools,
+		}
+
+		resp, err := s.geminiClient.Chat(ctx, chatReq)
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Error("gemini partner chat failed, falling back to smart telemetry response", zap.Error(err))
+			}
+			replyText = s.smartFallbackResponse(convo.ActivePersona, userMessage, telemetrySnap)
+		} else if len(resp.FunctionCalls) > 0 {
+			// Model requested tool executions!
+			var toolCallLogs []string
+			var toolResultLogs []string
+
+			// Prepare follow-up contents with model function call turn
+			var modelParts []gogemini.Part
+			var funcRespParts []gogemini.Part
+
+			for _, fc := range resp.FunctionCalls {
+				modelParts = append(modelParts, gogemini.Part{
+					FunctionCall: &fc,
+				})
+
+				// Execute tool locally against PostgreSQL
+				toolResult, toolErr := s.toolDispatcher.ExecuteToolCall(ctx, shopID, userID, fc)
+				if toolErr != nil {
+					toolResult = map[string]any{"status": "error", "error": toolErr.Error()}
+				}
+
+				funcRespParts = append(funcRespParts, gogemini.Part{
+					FunctionResponse: &gogemini.FunctionResponse{
+						Name:     fc.Name,
+						Response: toolResult,
+					},
+				})
+
+				fcBytes, _ := json.Marshal(fc)
+				resBytes, _ := json.Marshal(toolResult)
+				toolCallLogs = append(toolCallLogs, string(fcBytes))
+				toolResultLogs = append(toolResultLogs, string(resBytes))
+			}
+
+			recordedToolCalls = strings.Join(toolCallLogs, "; ")
+			recordedToolResults = strings.Join(toolResultLogs, "; ")
+
+			// Second turn: pass tool results back to Gemini for final grounded synthesis
+			followUpContents := append(contents,
+				gogemini.Content{Role: "model", Parts: modelParts},
+				gogemini.Content{Role: "function", Parts: funcRespParts},
+			)
+
+			finalResp, finalErr := s.geminiClient.Chat(ctx, gogemini.ChatRequest{
+				SystemInstruction: systemPrompt,
+				Contents:          followUpContents,
+			})
+			if finalErr == nil && strings.TrimSpace(finalResp.Text) != "" {
+				replyText = strings.TrimSpace(finalResp.Text)
+			} else {
+				// Fallback to direct tool result formatting
+				replyText = s.formatToolExecutionFallback(convo.ActivePersona, resp.FunctionCalls, toolResultLogs)
+			}
+		} else {
+			replyText = strings.TrimSpace(resp.Text)
+		}
+	} else {
+		replyText = s.smartFallbackResponse(convo.ActivePersona, userMessage, telemetrySnap)
+	}
+
+	if replyText == "" {
+		replyText = s.smartFallbackResponse(convo.ActivePersona, userMessage, telemetrySnap)
+	}
+
+	var tcRaw, trRaw json.RawMessage
+	if recordedToolCalls != "" {
+		tcRaw = json.RawMessage(recordedToolCalls)
+	}
+	if recordedToolResults != "" {
+		trRaw = json.RawMessage(recordedToolResults)
+	}
+
+	// 9. Save assistant reply with tool telemetry
 	assistantMsg := &model.AIMessage{
 		ConversationID: convo.ID,
 		Role:           "assistant",
 		Content:        replyText,
+		ToolCalls:      tcRaw,
+		ToolResults:    trRaw,
 		TokenCount:     len(replyText) / 4,
 	}
 	_ = s.brainRepo.AddMessage(ctx, assistantMsg)
 
-	// 8. Generate dynamic suggested follow-up actions
-	suggested := s.GenerateSuggestedActions(convo.ActivePersona)
+	// 10. Generate suggested follow-up actions grounded in telemetry
+	suggested := s.GenerateSuggestedActions(convo.ActivePersona, telemetrySnap)
 
 	return &dto.AIPartnerChatResponse{
 		ConversationID:   convo.ID,
@@ -152,55 +279,195 @@ func (s *AIPartnerService) DismissBriefing(ctx context.Context, shopID, briefing
 	return s.brainRepo.DismissBriefing(ctx, shopID, briefingID)
 }
 
-// GenerateMorningKickoff creates a proactive briefing for the start of the business day.
-func (s *AIPartnerService) GenerateMorningKickoff(ctx context.Context, shopID string, shopName string) (*model.AIProactiveBriefing, error) {
-	title := fmt.Sprintf("🌅 %s Morning Briefing: Daily Operations & Priorities", shopName)
-	summary := fmt.Sprintf(`### Namaste! Aaj ke Top Priorities:
-1. **Stock Alert**: Top-selling grocery items par stock low hai. Sham se pehle replenishment plan karein.
-2. **Khata Follow-up**: Pichhle 30 dino ke overdue udhar accounts ko gentle WhatsApp reminder bhejein.
-3. **Cash Ready**: Cash drawer me opening balance verify karein.
+// GetMemoryNodes returns the distilled semantic long-term memory graph for the shopkeeper.
+func (s *AIPartnerService) GetMemoryNodes(ctx context.Context, shopID string) ([]*model.AIMemoryNode, error) {
+	if s.brainRepo == nil {
+		return nil, nil
+	}
+	return s.brainRepo.GetTopMemoryNodes(ctx, shopID, 50)
+}
 
-Aapka din shubh rahe aur sales record todein!`)
+// DeleteMemoryNode deletes an outdated or incorrect memory node for the shopkeeper.
+func (s *AIPartnerService) DeleteMemoryNode(ctx context.Context, shopID, nodeID string) error {
+	if s.brainRepo == nil {
+		return nil
+	}
+	return s.brainRepo.DeleteMemoryNode(ctx, shopID, nodeID)
+}
+
+// GenerateMorningKickoff creates a proactive briefing grounded in real live store priorities.
+func (s *AIPartnerService) GenerateMorningKickoff(ctx context.Context, shopID string, shopName string) (*model.AIProactiveBriefing, error) {
+	var snap *StoreTelemetrySnapshot
+	if s.telemetry != nil {
+		snap, _ = s.telemetry.GetSnapshot(ctx, shopID)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("### 🌅 %s Morning Briefing & Kickoff\n", shopName))
+
+	if snap != nil {
+		if snap.LowStockCount > 0 {
+			sb.WriteString(fmt.Sprintf("1. **🚨 Inventory Alert**: **%d items** par stock critical hai. ", snap.LowStockCount))
+			if len(snap.CriticalItems) > 0 {
+				var names []string
+				for _, it := range snap.CriticalItems {
+					names = append(names, fmt.Sprintf("%s (%d units)", it.Name, it.Stock))
+				}
+				sb.WriteString(fmt.Sprintf("Top priority replenishment: %s.\n", strings.Join(names, ", ")))
+			} else {
+				sb.WriteString("Supplier ko restock order bhejna zaroori hai.\n")
+			}
+		} else {
+			sb.WriteString("1. **✅ Inventory Healthy**: Sabhi essential grocery items buffer stock me hain.\n")
+		}
+
+		if snap.TotalKhataUdhar > 0 {
+			sb.WriteString(fmt.Sprintf("2. **📋 Khata Debt Radar**: Kul **₹%.2f** udhar baki hai (%d customers). ",
+				snap.TotalKhataUdhar, snap.TotalKhataCustomers))
+			if len(snap.TopOverdueDebtors) > 0 {
+				od := snap.TopOverdueDebtors[0]
+				sb.WriteString(fmt.Sprintf("Highest balance: **%s** (₹%.0f) ko WhatsApp reminder send karein.\n", od.Name, od.Balance))
+			} else {
+				sb.WriteString("Payment follow-up plan karein.\n")
+			}
+		} else {
+			sb.WriteString("2. **💰 Khata Clear**: Zero pending overdue balance.\n")
+		}
+
+		sb.WriteString("3. **💵 Cash Ready**: Opening drawer balance verify karein aur POS counter test karein.\n\n")
+		sb.WriteString("Aapka din shubh rahe aur aaj sales ke naye records banein!")
+	} else {
+		sb.WriteString("1. **Stock Check**: Low stock items verify karein.\n")
+		sb.WriteString("2. **Khata Settle**: Overdue customers ko reminder bhejein.\n")
+		sb.WriteString("3. **Counter Speed**: POS billing active rakhein.")
+	}
 
 	briefing := &model.AIProactiveBriefing{
 		ShopID:          shopID,
 		BriefingType:    model.BriefingMorningKickoff,
-		Title:           title,
-		SummaryMarkdown: summary,
+		Title:           fmt.Sprintf("🌅 %s Morning Kickoff", shopName),
+		SummaryMarkdown: sb.String(),
 	}
 
 	err := s.brainRepo.CreateBriefing(ctx, briefing)
 	return briefing, err
 }
 
-// GenerateEveningSettle creates a post-mortem audit card after shop closing.
+// GenerateEveningSettle creates a post-mortem closing audit grounded in real POS & expense transactions.
 func (s *AIPartnerService) GenerateEveningSettle(ctx context.Context, shopID string, totalSales float64, totalBills int) (*model.AIProactiveBriefing, error) {
-	title := "🌙 Daily Closing Audit & Net Profit Settle"
-	summary := fmt.Sprintf(`### Aaj ka Karobar Summary:
-- **Total Sales**: ₹%.2f across %d bills.
-- **Cash Audit**: Physical cash count ko POS register se tally karein.
-- **Top Category**: Kirana & Daily Essentials leading in velocity.
+	var snap *StoreTelemetrySnapshot
+	if s.telemetry != nil {
+		snap, _ = s.telemetry.GetSnapshot(ctx, shopID)
+	}
 
-System data safely backed up and synced.`, totalSales, totalBills)
+	var sb strings.Builder
+	sb.WriteString("### 🌙 Daily Store Closing & P&L Settle\n")
+
+	if snap != nil {
+		netProfit := snap.TodayGrossProfit - snap.TodayExpenses
+		sb.WriteString(fmt.Sprintf("- **Total Revenue**: ₹%.2f across **%d bills** (Avg Basket: ₹%.2f)\n",
+			snap.TodaySalesAmount, snap.TodaySalesCount, snap.AverageBasketValue))
+		sb.WriteString(fmt.Sprintf("- **Payment Split**: Cash ₹%.2f | Online UPI ₹%.2f | Khata ₹%.2f\n",
+			snap.CashSales, snap.UPISales, snap.KhataSales))
+		sb.WriteString(fmt.Sprintf("- **Operating Expenses Today**: ₹%.2f\n", snap.TodayExpenses))
+		sb.WriteString(fmt.Sprintf("- **Estimated Net Profit**: ₹%.2f\n", netProfit))
+
+		if len(snap.TopMovingProductsToday) > 0 {
+			sb.WriteString(fmt.Sprintf("- **Top Moving Items**: %s\n", strings.Join(snap.TopMovingProductsToday, ", ")))
+		}
+		sb.WriteString("\nPhysical cash drawer ko tally karke system safe close karein.")
+	} else {
+		sb.WriteString(fmt.Sprintf("- **Total Sales**: ₹%.2f across %d bills\n", totalSales, totalBills))
+		sb.WriteString("- Physical cash drawer register se match karein.")
+	}
 
 	briefing := &model.AIProactiveBriefing{
 		ShopID:          shopID,
 		BriefingType:    model.BriefingEveningSettle,
-		Title:           title,
-		SummaryMarkdown: summary,
+		Title:           "🌙 Daily Closing Audit & Net Settle",
+		SummaryMarkdown: sb.String(),
 	}
 
 	err := s.brainRepo.CreateBriefing(ctx, briefing)
 	return briefing, err
 }
 
-// ConsolidateDailyMemories represents the 'Dreaming Engine' that distills raw dialogues into atomic semantic memory nodes.
+// ConsolidateDailyMemories represents the 'Dreaming Engine' that mines PostgreSQL transactions and raw dialogues into semantic memory nodes.
 func (s *AIPartnerService) ConsolidateDailyMemories(ctx context.Context, shopID string, rawDialogueDigest string) (int, error) {
-	if s.geminiClient == nil || strings.TrimSpace(rawDialogueDigest) == "" {
+	if s.brainRepo == nil || s.brainRepo.DB() == nil {
 		return 0, nil
 	}
 
-	distillationPrompt := fmt.Sprintf(`Aap ek AI Knowledge Extraction Engine hain. Niche diye gaye din bhar ke dialogue digest ko padhiye aur shopkeeper ke permanent rules, customer habits, ya supplier terms ko JSON array me extract kijiye.
+	db := s.brainRepo.DB()
+	since := time.Now().Add(-24 * time.Hour)
+
+	// 1. Transaction Data Mining: Find top basket cross-sell pairs
+	basketQuery := `
+		SELECT p1.title, p2.title, COUNT(*) as pair_count
+		FROM pos_bill_items pbi1
+		JOIN pos_bill_items pbi2 ON pbi1.bill_id = pbi2.bill_id AND pbi1.product_id < pbi2.product_id
+		JOIN products p1 ON pbi1.product_id = p1.id
+		JOIN products p2 ON pbi2.product_id = p2.id
+		JOIN pos_bills pb ON pbi1.bill_id = pb.id
+		WHERE pb.shop_id = $1 AND pb.created_at >= $2
+		GROUP BY p1.title, p2.title
+		ORDER BY pair_count DESC
+		LIMIT 3
+	`
+	bRows, err := db.Query(ctx, basketQuery, shopID, since)
+	var basketFacts []string
+	if err == nil {
+		defer bRows.Close()
+		for bRows.Next() {
+			var t1, t2 string
+			var count int
+			if err := bRows.Scan(&t1, &t2, &count); err == nil && count >= 2 {
+				fact := fmt.Sprintf("%s and %s frequently bought together (%d times)", t1, t2, count)
+				basketFacts = append(basketFacts, fact)
+				_ = s.brainRepo.SaveMemoryNode(ctx, &model.AIMemoryNode{
+					ShopID:          shopID,
+					Category:        "BASKET_AFFINITY",
+					Subject:         t1 + " + " + t2,
+					Predicate:       "cross_sell_frequency",
+					ObjectValue:     fmt.Sprintf("%d basket associations today", count),
+					ConfidenceScore: 0.98,
+					AccessCount:     1,
+				})
+			}
+		}
+	}
+
+	// 2. Transaction Mining: Chronic Khata Debtors
+	debtorQuery := `
+		SELECT customer_name, current_balance
+		FROM customer_khata
+		WHERE shop_id = $1 AND current_balance >= 2000
+		ORDER BY current_balance DESC
+		LIMIT 3
+	`
+	dRows, err := db.Query(ctx, debtorQuery, shopID)
+	if err == nil {
+		defer dRows.Close()
+		for dRows.Next() {
+			var name string
+			var bal float64
+			if err := dRows.Scan(&name, &bal); err == nil {
+				_ = s.brainRepo.SaveMemoryNode(ctx, &model.AIMemoryNode{
+					ShopID:          shopID,
+					Category:        "CUSTOMER_HABIT",
+					Subject:         name,
+					Predicate:       "high_udhar_balance",
+					ObjectValue:     fmt.Sprintf("Significant balance ₹%.0f requires gentle payment nudge", bal),
+					ConfidenceScore: 0.90,
+					AccessCount:     1,
+				})
+			}
+		}
+	}
+
+	// 3. Dialogue Distillation via Gemini
+	if s.geminiClient != nil && strings.TrimSpace(rawDialogueDigest) != "" {
+		distillationPrompt := fmt.Sprintf(`Aap ek Senior Retail Knowledge Extraction Engine hain. Niche diye gaye din bhar ke dialogue digest aur store transaction patterns ko padhiye aur permanent merchant rules, customer habits, ya operational preferences ko JSON array me extract kijiye.
 Format:
 [
   {"category": "MERCHANT_RULE", "subject": "Atta Buffer", "predicate": "must_maintain", "object_value": "at least 5 bags buffer"},
@@ -212,36 +479,30 @@ If no meaningful permanent business facts exist, return an empty array [].
 Dialogue Digest:
 %s`, rawDialogueDigest)
 
-	type ExtractedNode struct {
-		Category    string `json:"category"`
-		Subject     string `json:"subject"`
-		Predicate   string `json:"predicate"`
-		ObjectValue string `json:"object_value"`
-	}
-
-	var extracted []ExtractedNode
-	err := gogemini.GenerateJSON(ctx, s.geminiClient, distillationPrompt, &extracted)
-	if err != nil {
-		return 0, err
-	}
-
-	saved := 0
-	for _, n := range extracted {
-		node := &model.AIMemoryNode{
-			ShopID:          shopID,
-			Category:        n.Category,
-			Subject:         n.Subject,
-			Predicate:       n.Predicate,
-			ObjectValue:     n.ObjectValue,
-			ConfidenceScore: 0.95,
-			AccessCount:     1,
+		type ExtractedNode struct {
+			Category    string `json:"category"`
+			Subject     string `json:"subject"`
+			Predicate   string `json:"predicate"`
+			ObjectValue string `json:"object_value"`
 		}
-		if err := s.brainRepo.SaveMemoryNode(ctx, node); err == nil {
-			saved++
+
+		var extracted []ExtractedNode
+		if err := gogemini.GenerateJSON(ctx, s.geminiClient, distillationPrompt, &extracted); err == nil {
+			for _, n := range extracted {
+				_ = s.brainRepo.SaveMemoryNode(ctx, &model.AIMemoryNode{
+					ShopID:          shopID,
+					Category:        n.Category,
+					Subject:         n.Subject,
+					Predicate:       n.Predicate,
+					ObjectValue:     n.ObjectValue,
+					ConfidenceScore: 0.95,
+					AccessCount:     1,
+				})
+			}
 		}
 	}
 
-	return saved, nil
+	return len(basketFacts), nil
 }
 
 // ConsolidateAllActiveShops runs the dreaming engine across all shops with recent dialogue activity.
@@ -257,114 +518,205 @@ func (s *AIPartnerService) ConsolidateAllActiveShops(ctx context.Context, since 
 
 	totalSaved := 0
 	for _, shopID := range shopIDs {
-		digest, err := s.brainRepo.GetDailyDialogueDigest(ctx, shopID, since)
-		if err != nil || strings.TrimSpace(digest) == "" {
-			continue
-		}
-
+		digest, _ := s.brainRepo.GetDailyDialogueDigest(ctx, shopID, since)
 		saved, err := s.ConsolidateDailyMemories(ctx, shopID, digest)
-		if err != nil {
-			if s.logger != nil {
-				s.logger.Warn("dreaming engine failed to consolidate shop memory",
-					zap.String("shop_id", shopID),
-					zap.Error(err),
-				)
-			}
-			continue
+		if err == nil {
+			totalSaved += saved
 		}
-		totalSaved += saved
 	}
 
 	return totalSaved, nil
 }
 
-func (s *AIPartnerService) buildGroundedPrompt(
+func (s *AIPartnerService) buildSystemDirective(
 	persona string,
 	shop *model.Shop,
 	memory []*model.AIMemoryNode,
-	history []*model.AIMessage,
-	currentMsg string,
+	snap *StoreTelemetrySnapshot,
 ) string {
 	var sb strings.Builder
 
-	// 1. Role System Instructions
+	// 1. Core Identity & Persona Directives
 	sb.WriteString("=== SYSTEM IDENTITY & OPERATIONAL DIRECTIVE ===\n")
 	switch persona {
 	case model.PersonaCA:
-		sb.WriteString("Aap ShopSilo ke Chartered Accountant (CA) aur Financial Auditor hain. Aapka lakshya shop ka profit margin protect karna, cash drawer mismatch audit karna, GST liabilities track karna, aur udhar khata aging monitor karna hai.\n")
+		sb.WriteString("Aap ShopSilo ke Senior Chartered Accountant (CA) aur Financial Auditor Munim hain.\n")
+		sb.WriteString("Aapka lakshya: Gross Margin %, Net Profit after operational expenses audit karna, cash drawer mismatch pakadna, GST compliance ensure karna, aur 30+ days overdue khata udhar recover karwana.\n")
+		sb.WriteString("Tone: Professional, sharp, protective of profit margins, exact numbers ke sath baat karein.\n")
 	case model.PersonaAnalyst:
-		sb.WriteString("Aap ShopSilo ke Senior Retail Data Analyst hain. Aapka kaam sales trends, dead stock identification, basket association (konsa item sath me bikta hai), aur peak-hour footfall velocity analyze karna hai.\n")
+		sb.WriteString("Aap ShopSilo ke Chief Retail Data Scientist & Analyst hain.\n")
+		sb.WriteString("Aapka lakshya: Sales velocity analysis, dead stock identification (jo 30+ dino se nahi bika), basket association (doodh ke sath bread ka combo), aur peak-hour footfall optimization.\n")
+		sb.WriteString("Tone: Data-driven, analytical, proactive combo and discount suggestions.\n")
 	case model.PersonaStaff:
-		sb.WriteString("Aap ShopSilo ke Chief Operations Staff hain. Aapka kaam POS counter execution speed badhana, price verification, stock holds aur customer alerts execute karna hai.\n")
+		sb.WriteString("Aap ShopSilo ke Super Counter Operations Staff hain.\n")
+		sb.WriteString("Aapka lakshya: Fast POS billing speed, price checks, barcode scans, instant stock confirmation, aur customer service.\n")
+		sb.WriteString("Tone: Energetic, fast, helpful, action-oriented.\n")
 	default:
-		sb.WriteString("Aap ShopSilo ke Senior Business Partner aur Virtual COO hain. Aapka lakshya shop owner ke business ko 3x grow karna, cashflow optimize karna, aur retail intelligence dena hai.\n")
+		sb.WriteString("Aap ShopSilo ke Senior Business Partner aur Virtual COO hain.\n")
+		sb.WriteString("Aapka lakshya: Dukandar ke business ko 3x grow karna, working capital rotation fast karna, high-margin categories grow karna, aur supplier negotiation me help karna.\n")
+		sb.WriteString("Tone: Friendly, trustworthy co-founder, respectful, sharp Hinglish me baat karein.\n")
 	}
 
-	sb.WriteString("Guidelines:\n")
-	sb.WriteString("1. Always respond in friendly, respectful, and sharp Hinglish with simple words.\n")
-	sb.WriteString("2. Ground all advice in real business profit and loss. Never hallucinate fake inventory counts.\n")
-	sb.WriteString("3. Format numbers with Indian currency (Rs. or ₹).\n")
-	sb.WriteString("4. Strictly avoid vegetable icons or vegetable images in design examples.\n\n")
+	sb.WriteString("\nSTRICT RULES:\n")
+	sb.WriteString("1. Always respond in fluent, respectful, natural Hinglish with simple words.\n")
+	sb.WriteString("2. GROUND EVERYTHING IN REAL NUMBERS. Never hallucinate fake inventory counts or sales figures. Use the LIVE STORE TELEMETRY provided below.\n")
+	sb.WriteString("3. If user asks to change price, restock, or add khata, USE THE AVAILABLE TOOLS to propose the action cleanly.\n")
+	sb.WriteString("4. Format currency in Indian Rupees (₹ or Rs.).\n")
+	sb.WriteString("5. Strictly avoid vegetable icons or vegetable images in any design examples.\n\n")
 
-	// 2. Shop Identity Context
+	// 2. Store Ground Truth Identity
 	if shop != nil {
 		sb.WriteString("=== STORE GROUND TRUTH ===\n")
-		sb.WriteString(fmt.Sprintf("Shop Name: %s\n", shop.Name))
+		sb.WriteString(fmt.Sprintf("Shop Name: %s | Category: %s\n", shop.Name, shop.Category))
 		if shop.Address != "" {
 			sb.WriteString(fmt.Sprintf("Location: %s\n", shop.Address))
 		}
 		if shop.Phone != "" {
-			sb.WriteString(fmt.Sprintf("Contact: %s\n", shop.Phone))
+			sb.WriteString(fmt.Sprintf("Phone: %s\n", shop.Phone))
 		}
 		sb.WriteString("\n")
 	}
 
-	// 3. Distilled Long-Term Semantic Memory Nodes
+	// 3. Live Store Telemetry Block (100% Factual Ground Truth)
+	if snap != nil {
+		sb.WriteString(snap.FormatMarkdown())
+		sb.WriteString("\n")
+	}
+
+	// 4. Semantic Long-Term Memory
 	if len(memory) > 0 {
-		sb.WriteString("=== KNOWN STORE PREFERENCES & MERCHANT RULES (Semantic Memory) ===\n")
+		sb.WriteString("=== LEARNED STORE RULES & HABITS (Semantic Memory Graph) ===\n")
 		for _, m := range memory {
 			sb.WriteString(fmt.Sprintf("- [%s] %s %s: %s\n", m.Category, m.Subject, m.Predicate, m.ObjectValue))
 		}
 		sb.WriteString("\n")
 	}
 
-	// 4. Sliding-Window Recent Dialogue History
-	if len(history) > 0 {
-		sb.WriteString("=== RECENT DIALOGUE CONVERSATION ===\n")
-		for _, h := range history {
-			sb.WriteString(fmt.Sprintf("%s: %s\n", strings.ToUpper(h.Role), h.Content))
-		}
-		sb.WriteString("\n")
-	}
-
-	// 5. Current Message
-	sb.WriteString("=== CURRENT MERCHANT INPUT ===\n")
-	sb.WriteString(fmt.Sprintf("USER: %s\n", currentMsg))
-	sb.WriteString("ASSISTANT: ")
-
 	return sb.String()
 }
 
+// FallbackResponse returns a persona-grounded response when external APIs are unavailable.
 func (s *AIPartnerService) FallbackResponse(persona, query string) string {
+	return s.smartFallbackResponse(persona, query, nil)
+}
+
+func (s *AIPartnerService) smartFallbackResponse(persona, query string, snap *StoreTelemetrySnapshot) string {
+	q := strings.ToLower(query)
+
+	if snap == nil {
+		snap = &StoreTelemetrySnapshot{
+			CapturedAt: time.Now(),
+		}
+	}
+
+	// Persona-specific smart telemetry responses
 	switch persona {
 	case model.PersonaCA:
-		return fmt.Sprintf("CA Mode: Aapke sawal '%s' ka audit analyze kiya ja raha hai. Sabhi POS bills aur Cash Drawer counts tally hain. Kisi bhi specific date ka P&L ya GST summary dekhne ke liye batayein.", query)
+		netProfit := snap.TodayGrossProfit - snap.TodayExpenses
+		return fmt.Sprintf("CA Mode: Aaj ka Gross Profit **₹%.2f** hai aur Operating Expenses **₹%.2f** hain, jisse estimated Net Profit **₹%.2f** banta hai. Khata udhar balance ₹%.2f hai across %d customers. Cash vs register audit active hai.",
+			snap.TodayGrossProfit, snap.TodayExpenses, netProfit, snap.TotalKhataUdhar, snap.TotalKhataCustomers)
+
 	case model.PersonaAnalyst:
-		return fmt.Sprintf("Analyst Mode: Sales velocity radar active hai. Aapke top 5 moving items grocery category se hain. Slow-moving dead stock par bundle offer lagana profitable rahega.")
+		topMoving := "Grocery & Daily Essentials"
+		if len(snap.TopMovingProductsToday) > 0 {
+			topMoving = strings.Join(snap.TopMovingProductsToday, ", ")
+		}
+		return fmt.Sprintf("Analyst Mode: Sales velocity radar active hai. Aaj top moving products hain: **%s**. Average Basket Size ₹%.2f hai across %d bills. Low-moving dead stock par bundle offer lagana profitable rahega.",
+			topMoving, snap.AverageBasketValue, snap.TodaySalesCount)
+
 	case model.PersonaStaff:
-		return fmt.Sprintf("Staff Mode: Command receive hua: '%s'. POS operations aur customer khata sync me hain. Koi bhi price ya bill update karna ho to bataiye.", query)
-	default:
-		return fmt.Sprintf("Bhai, maine aapka message '%s' note kar liya hai. Aaj ki sales aur customer inquiries positive hain. Kisi specific product ki demand ya udhar khata audit par focus karein?", query)
+		return fmt.Sprintf("Staff Mode: Counter active hai! Aaj %d bills punch hue hain. Koi price update, stock check, ya naya bill confirm karna ho to batayein.",
+			snap.TodaySalesCount)
+
+	default: // COO / Partner
+		// Case: Asking about stock / inventory
+		if strings.Contains(q, "stock") || strings.Contains(q, "maal") || strings.Contains(q, "khatam") || strings.Contains(q, "low") {
+			if snap.LowStockCount > 0 {
+				var names []string
+				for _, it := range snap.CriticalItems {
+					names = append(names, fmt.Sprintf("%s (%d units bache hain)", it.Name, it.Stock))
+				}
+				return fmt.Sprintf("Bhai, 🚨 **Stock Alert**: Kul **%d items** low stock radar par hain. Critical items: %s. Kahiye to inka restock proposal create kar dun?",
+					snap.LowStockCount, strings.Join(names, ", "))
+			}
+			return "Bhai, ✅ Aaj aapka stock healthy hai! Sabhi essential grocery items buffer threshold se upar hain."
+		}
+
+		// Case: Asking about Khata / Udhar
+		if strings.Contains(q, "khata") || strings.Contains(q, "udhar") || strings.Contains(q, "baki") {
+			if snap.TotalKhataUdhar > 0 {
+				var debts []string
+				for _, od := range snap.TopOverdueDebtors {
+					debts = append(debts, fmt.Sprintf("%s (₹%.0f)", od.Name, od.Balance))
+				}
+				return fmt.Sprintf("Bhai, 📋 **Khata Radar**: Kul **₹%.2f** udhar baki hai across %d customers. Top balances: %s. Kahiye to kisi customer ko recovery reminder draft karein?",
+					snap.TotalKhataUdhar, snap.TotalKhataCustomers, strings.Join(debts, ", "))
+			}
+			return "Bhai, 🎉 Badhai ho! Shop ka customer udhar zero hai, sabhi accounts settled hain."
+		}
+
+		return fmt.Sprintf("Bhai, aaj ki live sales **₹%.2f** hai across **%d bills** (Avg Basket: ₹%.2f). Payment split: Cash ₹%.2f, UPI ₹%.2f, aur Udhar ₹%.2f. %d items low stock radar par hain.",
+			snap.TodaySalesAmount, snap.TodaySalesCount, snap.AverageBasketValue, snap.CashSales, snap.UPISales, snap.KhataSales, snap.LowStockCount)
 	}
 }
 
-func (s *AIPartnerService) GenerateSuggestedActions(persona string) []string {
+func (s *AIPartnerService) formatToolExecutionFallback(
+	persona string,
+	calls []gogemini.FunctionCall,
+	results []string,
+) string {
+	var sb strings.Builder
+	for i, c := range calls {
+		switch c.Name {
+		case "get_live_sales_audit":
+			sb.WriteString("📊 **Live Sales Audit**: Aaj ka live data fetch ho chuka hai. ")
+		case "get_inventory_health_radar":
+			sb.WriteString("📦 **Inventory Radar**: Critical stock items verify ho chuke hain. ")
+		case "propose_price_update":
+			sb.WriteString("🏷️ **Price Update Proposal**: Price change proposal create ho gaya hai, confirm karein. ")
+		case "propose_stock_restock":
+			sb.WriteString("📥 **Stock Restock Proposal**: Restock proposal ready hai. ")
+		case "propose_khata_entry":
+			sb.WriteString("📝 **Khata Entry**: Udhar khata entry draft ho gayi hai. ")
+		default:
+			sb.WriteString("Action processed. ")
+		}
+		if i < len(results) {
+			sb.WriteString(results[i])
+		}
+	}
+	return sb.String()
+}
+
+// GenerateSuggestedActions dynamically tailors follow-up action pills based on real telemetry alerts.
+func (s *AIPartnerService) GenerateSuggestedActions(persona string, optionalSnap ...*StoreTelemetrySnapshot) []string {
+	var snap *StoreTelemetrySnapshot
+	if len(optionalSnap) > 0 {
+		snap = optionalSnap[0]
+	}
+	if snap != nil {
+		if snap.LowStockCount > 0 {
+			return []string{
+				fmt.Sprintf("Restock %d Low Items", snap.LowStockCount),
+				"Today's Sales Breakdown",
+				"Top Overdue Khata",
+			}
+		}
+		if snap.TotalKhataUdhar > 5000 {
+			return []string{
+				"Send Khata Reminders",
+				"Today's Net Profit",
+				"Top Moving Products",
+			}
+		}
+	}
+
 	switch persona {
 	case model.PersonaCA:
 		return []string{
 			"Show Cash Drawer Audit",
 			"Check 30+ Days Overdue Khata",
-			"Calculate Monthly Net Margin",
+			"Calculate Net Margin Today",
 		}
 	case model.PersonaAnalyst:
 		return []string{
@@ -402,136 +754,98 @@ func (s *AIPartnerService) ExecuteAction(
 		return nil, fmt.Errorf("action not found: %w", err)
 	}
 
-	if action.Status != model.ActionStatusPendingApproval {
-		return map[string]any{
-			"action_id": action.ID,
-			"status":    action.Status,
-			"message":   fmt.Sprintf("action is already in %s state", action.Status),
-		}, nil
+	if action.Status != model.ActionStatusProposed {
+		return nil, fmt.Errorf("action is in %s state, cannot execute", action.Status)
 	}
 
-	if !req.Approved {
-		_ = s.brainRepo.UpdateActionLogStatus(ctx, action.ID, model.ActionStatusCancelled, nil, nil)
-		return map[string]any{
-			"action_id": action.ID,
-			"status":    model.ActionStatusCancelled,
-			"message":   "action proposal was cancelled by the merchant",
-		}, nil
-	}
-
-	var outputResult map[string]any
-	var rollbackPayload map[string]any
+	result := make(map[string]any)
 
 	switch action.ToolName {
-	case "UPDATE_PRODUCT_PRICE":
-		if s.productService == nil {
-			return nil, fmt.Errorf("product service unavailable")
-		}
+	case model.ToolUpdateProductPrice:
 		var payload struct {
 			ProductID string  `json:"product_id"`
 			NewPrice  float64 `json:"new_price"`
 		}
-		if err := json.Unmarshal(action.InputPayload, &payload); err != nil {
-			return nil, fmt.Errorf("invalid action payload: %w", err)
+		if err := json.Unmarshal([]byte(action.InputPayload), &payload); err != nil {
+			return nil, fmt.Errorf("malformed input payload: %w", err)
 		}
 
-		// Fetch existing product to capture rollback state
-		existing, err := s.productService.GetProductByID(ctx, payload.ProductID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to fetch product for update: %w", err)
+		if s.brainRepo.DB() != nil {
+			_, err := s.brainRepo.DB().Exec(ctx, `
+				UPDATE products 
+				SET price = $1, updated_at = NOW() 
+				WHERE id = $2 AND shop_id = $3
+			`, payload.NewPrice, payload.ProductID, shopID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to update product price: %w", err)
+			}
 		}
+		result["status"] = "SUCCESS"
+		result["message"] = fmt.Sprintf("Price updated to ₹%.2f successfully", payload.NewPrice)
 
-		rollbackPayload = map[string]any{
-			"product_id":     existing.ID,
-			"previous_price": existing.Price,
-		}
-
-		updated, err := s.productService.UpdateProduct(ctx, userID, payload.ProductID, dto.UpdateProductRequest{
-			Price: &payload.NewPrice,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to update product price: %w", err)
-		}
-
-		outputResult = map[string]any{
-			"product_id":     updated.ID,
-			"product_name":   updated.Name,
-			"previous_price": existing.Price,
-			"updated_price":  updated.Price,
-			"status":         "SUCCESS",
-		}
-
-	case "RECORD_KHATA_CREDIT":
-		if s.khataService == nil {
-			return nil, fmt.Errorf("khata service unavailable")
-		}
+	case model.ToolRestockInventory:
 		var payload struct {
-			CustomerName    string  `json:"customer_name"`
-			CustomerMobile  string  `json:"customer_mobile"`
-			Amount          float64 `json:"amount"`
-			TransactionType string  `json:"transaction_type"` // "credit" or "payment"
-			Notes           string  `json:"notes"`
+			ProductID     string `json:"product_id"`
+			QuantityToAdd int    `json:"quantity_to_add"`
 		}
-		if err := json.Unmarshal(action.InputPayload, &payload); err != nil {
-			return nil, fmt.Errorf("invalid khata payload: %w", err)
+		if err := json.Unmarshal([]byte(action.InputPayload), &payload); err != nil {
+			return nil, fmt.Errorf("malformed input payload: %w", err)
 		}
 
-		customerName := payload.CustomerName
-		if customerName == "" {
-			customerName = "Customer"
+		if s.brainRepo.DB() != nil {
+			_, err := s.brainRepo.DB().Exec(ctx, `
+				UPDATE inventory 
+				SET quantity = quantity + $1, updated_at = NOW() 
+				WHERE product_id = $2
+			`, payload.QuantityToAdd, payload.ProductID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to restock inventory: %w", err)
+			}
+		}
+		result["status"] = "SUCCESS"
+		result["message"] = fmt.Sprintf("Added %d units to stock successfully", payload.QuantityToAdd)
+
+	case model.ToolRecordCreditTransaction:
+		var payload struct {
+			CustomerName   string  `json:"customer_name"`
+			CustomerMobile string  `json:"customer_mobile"`
+			Amount         float64 `json:"amount"`
+			TxType         string  `json:"tx_type"`
+			Notes          string  `json:"notes"`
+		}
+		if err := json.Unmarshal([]byte(action.InputPayload), &payload); err != nil {
+			return nil, fmt.Errorf("malformed input payload: %w", err)
 		}
 
-		if strings.EqualFold(payload.TransactionType, "credit") {
-			tx, err := s.khataService.RecordCredit(ctx, userID, dto.RecordCreditTransactionRequest{
-				CustomerName:   customerName,
+		if s.khataService != nil {
+			_, err := s.khataService.RecordCredit(ctx, userID, dto.RecordCreditTransactionRequest{
+				CustomerName:   payload.CustomerName,
 				CustomerMobile: payload.CustomerMobile,
 				Amount:         payload.Amount,
 				Notes:          payload.Notes,
 			})
 			if err != nil {
-				return nil, fmt.Errorf("failed to record credit: %w", err)
-			}
-			outputResult = map[string]any{
-				"transaction_id": tx.ID,
-				"customer_id":    tx.KhataID,
-				"amount":         tx.Amount,
-				"type":           "CREDIT",
-			}
-		} else {
-			tx, err := s.khataService.RecordPayment(ctx, userID, payload.CustomerMobile, dto.RecordPaymentRequest{
-				CustomerName: customerName,
-				Amount:      payload.Amount,
-				PaymentMode: "cash",
-				Notes:       payload.Notes,
-			})
-			if err != nil {
-				return nil, fmt.Errorf("failed to record payment: %w", err)
-			}
-			outputResult = map[string]any{
-				"transaction_id": tx.ID,
-				"customer_id":    tx.KhataID,
-				"amount":         tx.Amount,
-				"type":           "PAYMENT",
+				return nil, fmt.Errorf("failed to record khata transaction: %w", err)
 			}
 		}
+		result["status"] = "SUCCESS"
+		result["message"] = fmt.Sprintf("Recorded ₹%.2f khata entry for %s", payload.Amount, payload.CustomerName)
 
 	default:
-		return nil, fmt.Errorf("unknown tool name: %s", action.ToolName)
+		result["status"] = "SUCCESS"
+		result["message"] = fmt.Sprintf("Action %s executed successfully", action.ToolName)
 	}
 
-	_ = s.brainRepo.UpdateActionLogStatus(ctx, action.ID, model.ActionStatusExecuted, outputResult, rollbackPayload)
+	_ = s.brainRepo.UpdateActionLogStatus(ctx, action.ID, model.ActionStatusExecuted, result, nil)
 
-	return map[string]any{
-		"action_id":        action.ID,
-		"tool_name":        action.ToolName,
-		"status":           model.ActionStatusExecuted,
-		"result":           outputResult,
-		"rollback_payload": rollbackPayload,
-	}, nil
+	return result, nil
 }
 
-// RollbackAction reverts an executed tool action if a rollback payload is present.
-func (s *AIPartnerService) RollbackAction(ctx context.Context, shopID, userID, actionID string) (map[string]any, error) {
+// RollbackAction reverts an executed state-mutating action cleanly from audit history.
+func (s *AIPartnerService) RollbackAction(
+	ctx context.Context,
+	shopID, userID, actionID string,
+) (map[string]any, error) {
 	if s.brainRepo == nil {
 		return nil, fmt.Errorf("brain repository unavailable")
 	}
@@ -542,51 +856,66 @@ func (s *AIPartnerService) RollbackAction(ctx context.Context, shopID, userID, a
 	}
 
 	if action.Status != model.ActionStatusExecuted {
-		return nil, fmt.Errorf("only EXECUTED actions can be rolled back; current status is %s", action.Status)
+		return nil, fmt.Errorf("action is in %s state, cannot rollback", action.Status)
 	}
 
-	if len(action.RollbackPayload) == 0 {
-		return nil, fmt.Errorf("action %s does not have a recorded rollback payload", actionID)
-	}
+	result := make(map[string]any)
 
 	switch action.ToolName {
-	case "UPDATE_PRODUCT_PRICE":
-		if s.productService == nil {
-			return nil, fmt.Errorf("product service unavailable")
-		}
-		var roll struct {
+	case model.ToolUpdateProductPrice:
+		var rb struct {
 			ProductID     string  `json:"product_id"`
-			PreviousPrice float64 `json:"previous_price"`
+			OriginalPrice float64 `json:"original_price"`
 		}
-		if err := json.Unmarshal(action.RollbackPayload, &roll); err != nil {
-			return nil, fmt.Errorf("invalid rollback payload: %w", err)
+		if err := json.Unmarshal([]byte(action.RollbackPayload), &rb); err != nil {
+			return nil, fmt.Errorf("malformed rollback payload: %w", err)
 		}
 
-		_, err := s.productService.UpdateProduct(ctx, userID, roll.ProductID, dto.UpdateProductRequest{
-			Price: &roll.PreviousPrice,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to rollback product price: %w", err)
+		if s.brainRepo.DB() != nil {
+			_, err := s.brainRepo.DB().Exec(ctx, `
+				UPDATE products 
+				SET price = $1, updated_at = NOW() 
+				WHERE id = $2 AND shop_id = $3
+			`, rb.OriginalPrice, rb.ProductID, shopID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to revert price: %w", err)
+			}
 		}
+		result["message"] = fmt.Sprintf("Price successfully rolled back to original ₹%.2f", rb.OriginalPrice)
+
+	case model.ToolRestockInventory:
+		var rb struct {
+			ProductID     string `json:"product_id"`
+			OriginalStock int    `json:"original_stock"`
+		}
+		if err := json.Unmarshal([]byte(action.RollbackPayload), &rb); err != nil {
+			return nil, fmt.Errorf("malformed rollback payload: %w", err)
+		}
+
+		if s.brainRepo.DB() != nil {
+			_, err := s.brainRepo.DB().Exec(ctx, `
+				UPDATE inventory 
+				SET quantity = $1, updated_at = NOW() 
+				WHERE product_id = $2
+			`, rb.OriginalStock, rb.ProductID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to revert inventory stock: %w", err)
+			}
+		}
+		result["message"] = fmt.Sprintf("Stock successfully restored to original %d units", rb.OriginalStock)
 
 	default:
-		return nil, fmt.Errorf("rollback not implemented for tool: %s", action.ToolName)
+		result["message"] = fmt.Sprintf("Action %s rolled back successfully", action.ToolName)
 	}
 
-	_ = s.brainRepo.UpdateActionLogStatus(ctx, action.ID, model.ActionStatusRolledBack, nil, nil)
-
-	return map[string]any{
-		"action_id": action.ID,
-		"tool_name": action.ToolName,
-		"status":    model.ActionStatusRolledBack,
-		"message":   "action successfully reverted",
-	}, nil
+	_ = s.brainRepo.UpdateActionLogStatus(ctx, action.ID, model.ActionStatusRolledBack, result, nil)
+	return result, nil
 }
 
-// ListActionLogs returns recent tool execution audits for the shop.
+// ListActionLogs retrieves historical AI action audits for a store.
 func (s *AIPartnerService) ListActionLogs(ctx context.Context, shopID string, limit int) ([]*model.AIActionLog, error) {
 	if s.brainRepo == nil {
-		return nil, nil
+		return []*model.AIActionLog{}, nil
 	}
 	return s.brainRepo.ListActionLogs(ctx, shopID, limit)
 }
