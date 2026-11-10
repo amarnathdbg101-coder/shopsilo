@@ -47,6 +47,9 @@ func setupMilestone4Test(t *testing.T) *milestone4TestHarness {
 		t.Skip("DATABASE_URL not set")
 	}
 
+	if testing.Short() {
+		t.Skip("skipping remote db test in short mode")
+	}
 	pool, err := utils.ConnectDB(dbURL)
 	if err != nil {
 		t.Skipf("cannot connect to test db (%v); skipping integration test", err)

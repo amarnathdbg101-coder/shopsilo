@@ -35,6 +35,9 @@ func setupMilestone5Test(t *testing.T) (*pgxpool.Pool, *services.EODPDFService, 
 		t.Skip("DATABASE_URL not set")
 	}
 
+	if testing.Short() {
+		t.Skip("skipping remote db test in short mode")
+	}
 	pool, err := utils.ConnectDB(dbURL)
 	if err != nil {
 		t.Skipf("cannot connect to test db (%v); skipping integration test", err)
@@ -87,3 +90,4 @@ func TestAutomatedEndOfDayPLPDF(t *testing.T) {
 			len(pdfBytes), string(pdfBytes[:5]))
 	})
 }
+

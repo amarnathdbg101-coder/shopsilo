@@ -63,7 +63,15 @@ require (
 )
 
 require (
+	github.com/amarnathdbg101-coder/go/go-adaptivelimit v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-bm25 v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-bulkhead v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-deadlock v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-fuzzy v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-geofence v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-supervisor v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-tinylfu v1.0.0 // indirect
+	github.com/amarnathdbg101-coder/go/go-w3ctrace v1.0.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect

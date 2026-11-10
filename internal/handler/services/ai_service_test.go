@@ -11,7 +11,6 @@ import (
 
 func init() {
 	_ = os.Setenv("PORT", "8080")
-	_ = os.Setenv("DATABASE_URL", "postgres://test:test@localhost:5432/test")
 }
 
 func TestAICache(t *testing.T) {
@@ -146,3 +145,4 @@ func TestParseParchiFastPath(t *testing.T) {
 		t.Errorf("expected 0 unmatched lines, got %d", resp.UnmatchedCount)
 	}
 }
+

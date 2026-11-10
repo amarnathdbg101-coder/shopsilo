@@ -37,6 +37,9 @@ func TestProductServiceFindNearbyProducts(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	if testing.Short() {
+		t.Skip("skipping remote db test in short mode")
+	}
 	pool, err := utils.ConnectDB(dbURL)
 	if err != nil {
 		t.Skipf("Skipping live database test: %v", err)
@@ -98,3 +101,4 @@ func TestProductServiceFindNearbyProducts(t *testing.T) {
 		}
 	}
 }
+

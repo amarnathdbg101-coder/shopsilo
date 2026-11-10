@@ -54,9 +54,11 @@ func RouteSetup(c *app.Container) chi.Router {
 	// Global middlewares
 	r.Use(chimw.RequestID)
 	r.Use(chimw.RealIP)
+	r.Use(middleware.TraceMiddleware)
 	r.Use(middleware.BotGuard)
 	r.Use(middleware.BodySizeGuard(2 << 20))
 	r.Use(chimw.Compress(5))
+	r.Use(middleware.AdaptiveLimiterMiddleware)
 	r.Use(middleware.GlobalRateLimiter.Middleware())
 	r.Use(middleware.BanGuard(c.Repos.Moderation))
 	r.Use(chimw.Recoverer)
@@ -110,20 +112,24 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/catalog/lookup", catalogc.Lookup)                          // Both - query param fallback ?barcode=
 		r.Get("/catalog/search", catalogc.Search)                          // Both - Master Barcode Catalog Search
 		r.Get("/home-feed", sc.GetHomeFeed)                                // Customer
-		r.Post("/ai/customer-chat", aic.CustomerChat)                      // Customer
-		r.Post("/ai/scan-product", aic.ScanProduct)                        // Both
-		r.Post("/ai/smart-studio-scan", aic.SmartStudioScan)                // Both - Intelligent Vision + Studio Engine
-		r.Post("/ai/parse-parchi", aic.ParseParchi)                        // Both
-		r.Post("/ai/semantic-search", aic.SemanticSearch)                  // Customer
-		r.Post("/ai/voice-bill", aic.VoiceBill)                            // Shop
-		r.Post("/ai/marketing-campaign", aic.GenerateMarketingCampaign)   // Shop
-		r.Post("/ai/bargain-assist", aic.BargainAssist)                    // Both
+		// Isolated AI Concurrency Bulkhead (max 8 parallel AI queries to prevent CPU starvation)
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.BulkheadGuard(middleware.AIBulkhead, "AI Studio & Vision Engine"))
+			r.Post("/ai/customer-chat", aic.CustomerChat)                      // Customer
+			r.Post("/ai/scan-product", aic.ScanProduct)                        // Both
+			r.Post("/ai/smart-studio-scan", aic.SmartStudioScan)                // Both - Intelligent Vision + Studio Engine
+			r.Post("/ai/parse-parchi", aic.ParseParchi)                        // Both
+			r.Post("/ai/semantic-search", aic.SemanticSearch)                  // Customer
+			r.Post("/ai/voice-bill", aic.VoiceBill)                            // Shop
+			r.Post("/ai/marketing-campaign", aic.GenerateMarketingCampaign)   // Shop
+			r.Post("/ai/bargain-assist", aic.BargainAssist)                    // Both
+		})
 		r.Get("/categories", catc.List)                                    // Both
 		r.Get("/shops", sc.List)                                           // Customer
 		r.Get("/shops/{id}", sc.GetByID)                                   // Customer
 		r.Get("/shops/slug/{slug}", sc.GetBySlug)                          // Customer
 		r.Get("/shops/{slug}/qr", sc.GetShopQR)                            // Customer
-		r.Get("/shops/{slug}/standee.pdf", sc.GetShopStandeePDF)           // Customer Printable Standee
+		r.With(middleware.BulkheadGuard(middleware.PDFBulkhead, "Printable Standee PDF Engine")).Get("/shops/{slug}/standee.pdf", sc.GetShopStandeePDF)           // Customer Printable Standee
 		r.Get("/shops/{slug}/products", pc.ListByShop)                     // Customer
 		r.Get("/shops/{slug}/live", wsc.ServePublicStorefrontWebSocket)    // Real-Time Storefront Live Channel
 		r.Get("/shops/{slug}/reviews", revc.List)                          // Customer
@@ -311,8 +317,8 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Delete("/khata/{id}/transactions/{txId}", khatac.DeleteTransaction)
 
 		// Automated End-of-Day P&L PDF via Pure Go gopdf Engine
-		r.Get("/pos/day-close/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
-		r.Get("/shops/me/pos/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
+		r.With(middleware.BulkheadGuard(middleware.PDFBulkhead, "EndOfDay P&L PDF Engine")).Get("/pos/day-close/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
+		r.With(middleware.BulkheadGuard(middleware.PDFBulkhead, "EndOfDay P&L PDF Engine")).Get("/shops/me/pos/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
 
 		// Merchant AI Copilot & Vision Engines
 		r.Post("/ai/copilot", aic.MerchantCopilot)
@@ -382,7 +388,7 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/khata/micro-plans", microPlanc.ListPlans)
 
 		// 7. Automated End-of-Day P&L PDF (Pure Go)
-		r.Get("/pos/day-close/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
+		r.With(middleware.BulkheadGuard(middleware.PDFBulkhead, "EndOfDay P&L PDF Engine")).Get("/pos/day-close/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
 
 		// 8. 🧠 AI Layer Engines
 		r.Post("/ai/supplier-invoice", aic.ParseSupplierInvoice)
@@ -608,5 +614,4 @@ func RouteSetup(c *app.Container) chi.Router {
 func RouteSetupWithDB(db *pgxpool.Pool, logger *zap.Logger) chi.Router {
 	return RouteSetup(app.NewContainer(db, logger))
 }
-
 

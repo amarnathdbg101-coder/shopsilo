@@ -38,8 +38,9 @@ func buildCORSConfig() gocors.Config {
 		AllowedHeaders: []string{
 			"Content-Type", "Authorization", "X-Requested-With",
 			"Accept", "X-Device-Fingerprint", "X-Idempotency-Key", "Idempotency-Key",
+			"traceparent", "tracestate",
 		},
-		ExposedHeaders:   []string{"Link", "X-Total-Count", "X-Cache"},
+		ExposedHeaders:   []string{"Link", "X-Total-Count", "X-Cache", "traceparent", "tracestate"},
 		AllowCredentials: true,
 		MaxAge:           86400,
 	}
@@ -67,3 +68,4 @@ func CORS(next http.Handler) http.Handler {
 		defaultCORS.Handler(next).ServeHTTP(w, r)
 	})
 }
+

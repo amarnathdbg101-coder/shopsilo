@@ -2,13 +2,13 @@
 package middleware
 
 import (
+	"github.com/amarnathdbg101-coder/go/go-deadlock"
 	"net/http"
 	"net/url"
 	"regexp"
 	"shopMe/internal/reuse"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -18,7 +18,7 @@ type jailRecord struct {
 }
 
 var (
-	jailMu        sync.RWMutex
+	jailMu        deadlock.RWMutex
 	ipJailMap     = make(map[string]jailRecord)
 	stopJailPurge chan struct{}
 
@@ -338,3 +338,5 @@ func BotGuard(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+

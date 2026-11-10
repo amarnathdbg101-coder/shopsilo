@@ -2,6 +2,7 @@
 package middleware
 
 import (
+	"strings"
 	"bytes"
 	"net/http"
 	"os"
@@ -70,6 +71,14 @@ func Logger(next http.Handler) http.Handler {
 			"bytes", wrapped.bytesWritten,
 		}
 
+		// Correlate with W3C distributed trace context
+		if traceparent := wrapped.Header().Get("traceparent"); traceparent != "" {
+			parts := strings.Split(traceparent, "-")
+			if len(parts) >= 2 {
+				keyvals = append(keyvals, "trace_id", parts[1])
+			}
+		}
+
 		switch {
 		case wrapped.statusCode >= 500:
 			HTTPColorLogger.Error("HTTP Server Error", keyvals...)
@@ -122,3 +131,4 @@ func SetHTTPLoggerOutput(out *bytes.Buffer) {
 		colorlog.WithLevel(colorlog.LevelDebug),
 	)
 }
+

@@ -41,15 +41,34 @@ func ConnectDB(database string) (*pgxpool.Pool, error) {
 	config.MaxConnIdleTime = 15 * time.Minute
 	config.HealthCheckPeriod = 1 * time.Minute
 
-	pool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil {
-		return nil, fmt.Errorf("unable to create database connection pool: %w", err)
+	var lastErr error
+	const maxAttempts = 3
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		p, err := pgxpool.NewWithConfig(ctx, config)
+		if err == nil {
+			if pingErr := p.Ping(ctx); pingErr == nil {
+				log.Println("database connection pool initialized successfully!")
+				return p, nil
+			} else {
+				lastErr = pingErr
+				p.Close()
+			}
+		} else {
+			lastErr = err
+		}
+
+		if attempt < maxAttempts {
+			log.Printf("database connection attempt %d/%d failed (%v), retrying in 1s...", attempt, maxAttempts, lastErr)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(1 * time.Second):
+			}
+		}
 	}
 
-	if err := pool.Ping(ctx); err != nil {
-		return nil, fmt.Errorf("unable to ping database at host=%s: %w", config.ConnConfig.Host, err)
-	}
-
-	log.Println("database connection pool initialized successfully!")
-	return pool, nil
+	return nil, fmt.Errorf("unable to connect to database at host=%s after %d attempts: %w", config.ConnConfig.Host, maxAttempts, lastErr)
 }
+
+

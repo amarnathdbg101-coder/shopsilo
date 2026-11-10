@@ -34,6 +34,17 @@ func StartBackupWorker(ctx context.Context, db *pgxpool.Pool, logger *zap.Logger
 				}()
 				cleanCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 				defer cancel()
+
+				// Multi-replica leader election via native PostgreSQL advisory lock (ID: 847291)
+				var acquired bool
+				if err := db.QueryRow(cleanCtx, "SELECT pg_try_advisory_lock()", 847291).Scan(&acquired); err != nil || !acquired {
+					logger.Info("another cluster replica is running database backup; skipping to avoid duplicate dump")
+					return
+				}
+				defer func() {
+					_, _ = db.Exec(context.Background(), "SELECT pg_advisory_unlock()", 847291)
+				}()
+
 				meta, err := utils.GenerateFullDatabaseBackupDump(cleanCtx, db)
 				if err != nil {
 					logger.Error("nightly automated database backup failed", zap.Error(err))
@@ -46,3 +57,4 @@ func StartBackupWorker(ctx context.Context, db *pgxpool.Pool, logger *zap.Logger
 		}
 	}
 }
+

@@ -35,6 +35,9 @@ func setupTestDB(t *testing.T) (*pgxpool.Pool, *repository.LocationRepo, *reposi
 		t.Skip("DATABASE_URL not set; skipping database integration test")
 	}
 
+	if testing.Short() {
+		t.Skip("skipping remote db test in short mode")
+	}
 	pool, err := utils.ConnectDB(dbURL)
 	if err != nil {
 		t.Skipf("cannot connect to test db (%v); skipping integration test", err)
@@ -258,3 +261,4 @@ func TestStockTransfer_Workflow(t *testing.T) {
 		t.Error("reconciled stock item not found in showroom location inventory")
 	}
 }
+

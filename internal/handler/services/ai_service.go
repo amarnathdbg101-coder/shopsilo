@@ -15,7 +15,6 @@ import (
 	"os"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"shopMe/internal/handler/dto"
@@ -43,49 +42,14 @@ type AIService interface {
 	SmartStudioScan(ctx context.Context, req dto.SmartStudioScanRequest) (*dto.SmartStudioScanResponse, error)
 }
 
-type aiCacheEntry struct {
-	response  string
-	expiresAt time.Time
-}
-
-var (
-	aiCacheMu sync.RWMutex
-	aiCache   = make(map[string]aiCacheEntry)
-)
-
+// getAICache retrieves cached AI responses using high-hit-rate Window TinyLFU cache (powered by go-tinylfu).
 func getAICache(key string) (string, bool) {
-	aiCacheMu.RLock()
-	defer aiCacheMu.RUnlock()
-	entry, found := aiCache[key]
-	if !found || time.Now().After(entry.expiresAt) {
-		return "", false
-	}
-	return entry.response, true
+	return reuse.GlobalAICache.Get(key)
 }
 
+// setAICache stores AI responses in Window TinyLFU cache with automatic frequency admission and TTL.
 func setAICache(key, resp string, ttl time.Duration) {
-	aiCacheMu.Lock()
-	defer aiCacheMu.Unlock()
-	now := time.Now()
-	if len(aiCache) > 500 {
-		for k, v := range aiCache {
-			if now.After(v.expiresAt) {
-				delete(aiCache, k)
-			}
-		}
-		if len(aiCache) > 250 {
-			for k := range aiCache {
-				delete(aiCache, k)
-				if len(aiCache) <= 250 {
-					break
-				}
-			}
-		}
-	}
-	aiCache[key] = aiCacheEntry{
-		response:  resp,
-		expiresAt: time.Now().Add(ttl),
-	}
+	reuse.GlobalAICache.Set(key, resp, ttl)
 }
 
 type aiService struct {
@@ -1414,3 +1378,4 @@ func (s *aiService) SmartStudioScan(ctx context.Context, req dto.SmartStudioScan
 		ProcessingMs:   elapsed,
 	}, nil
 }
+
