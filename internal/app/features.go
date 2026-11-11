@@ -66,7 +66,7 @@ func NewFeatureRegistry() *FeatureRegistry {
 		Key:         "khata_ledger",
 		Name:        "Digital Udhar Ledger & Micro-Installments",
 		Category:    "Accounting & Credit",
-		Description: "Dual-entry customer passbook, micro-plans (Chillar settle), dispute resolution, and payment reminders",
+		Description: "Dual-entry customer passbook, micro-plans (Chillar settle), friendly WhatsApp clarification notes, and automated payment reminders",
 		Status:      FeatureStatusActive,
 		Version:     "v2.0.0",
 	})
@@ -91,12 +91,22 @@ func NewFeatureRegistry() *FeatureRegistry {
 		Version:     "v2.0.0",
 	})
 
-	// 7. In-Store Scan & Go
+	// 7. Express Pre-Cart & Counter Queue Buster
 	r.Register(FeatureDescriptor{
 		Key:         "scan_and_go",
-		Name:        "In-Store Scan & Go Self-Checkout",
-		Category:    "Customer Experience",
-		Description: "Customer camera barcode self-scanning with 1-tap counter QR conversion",
+		Name:        "Express Pre-Cart & Counter Queue Buster",
+		Category:    "Customer & Counter Flow",
+		Description: "Customer or store helper barcode pre-scan with 1-tap counter checkout, preventing long billing queues during peak rush hours",
+		Status:      FeatureStatusActive,
+		Version:     "v2.0.0",
+	})
+
+	// 8. Mandi Daily Rates & Counter Pricing
+	r.Register(FeatureDescriptor{
+		Key:         "mandi_pricing",
+		Name:        "Mandi Rates & Loose Grains Pricing",
+		Category:    "Catalog & Pricing",
+		Description: "Loose staples and volatile agri commodities show 'Mandi Daily Rates' or 'Price at Counter', eliminating online stale price disputes",
 		Status:      FeatureStatusActive,
 		Version:     "v2.0.0",
 	})

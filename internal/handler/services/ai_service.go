@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"regexp"
@@ -750,41 +751,23 @@ Return JSON:
 	return &resp, nil
 }
 
-// ── 6. AI Counter Bargain Assist ──
+// ── 6. Counter Pricing & Margin Guidance ──
 func (s *aiService) BargainAssist(ctx context.Context, req dto.AIBargainAssistRequest) (*dto.AIBargainAssistResponse, error) {
-	prompt := fmt.Sprintf(`Calculate safe minimum deal price for shopkeeper.
-PRODUCT: "%s"
-MRP: ₹%.2f
-COST: ₹%.2f
-ASKING: ₹%.2f
+	// Deterministic retail margin calculation: protects shopkeeper without LLM token burn or latency
+	minSafePrice := math.Max(req.CostPrice*1.08, req.MRP*0.90)
+	idealDealPrice := math.Max(req.CostPrice*1.15, req.MRP*0.95)
 
-Return JSON:
-{"min_safe_price":45.0,"ideal_deal_price":48.0,"shopkeeper_advice":"Cost ₹40 hai. ₹48 par 20%% margin.","customer_script":"Bhaiya ji ₹48 final laga denge!"}`, req.ProductName, req.MRP, req.CostPrice, req.AskingPrice)
-
-	payload := geminiPayload{
-		Contents: []geminiContent{
-			{Role: "user", Parts: []geminiPart{{Text: prompt}}},
-		},
-		GenerationConfig: geminiGenerationConfig{
-			ResponseMimeType: "application/json",
-			Temperature:      0.05,
-			MaxOutputTokens:  250, // Token Bounded
-		},
+	marginPct := 0.0
+	if idealDealPrice > 0 {
+		marginPct = math.Round(((idealDealPrice-req.CostPrice)/idealDealPrice)*1000) / 10
 	}
 
-	apiKey := getGeminiAPIKey()
-	rawText, err := s.callGeminiWithFallback(ctx, apiKey, payload)
-	if err != nil {
-		return nil, fmt.Errorf("bargain assist failed: %w", err)
-	}
-
-	cleanedJSON := extractCleanJSON(rawText)
-	var resp dto.AIBargainAssistResponse
-	if err := json.Unmarshal([]byte(cleanedJSON), &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse bargain assist JSON: %w", err)
-	}
-
-	return &resp, nil
+	return &dto.AIBargainAssistResponse{
+		MinSafePrice:     math.Round(minSafePrice*100) / 100,
+		IdealDealPrice:   math.Round(idealDealPrice*100) / 100,
+		ShopkeeperAdvice: fmt.Sprintf("Standard retail pricing: Cost Rs.%.2f, MRP Rs.%.2f. Safe margin at Rs.%.2f (%.1f%% margin).", req.CostPrice, req.MRP, idealDealPrice, marginPct),
+		CustomerScript:   "Bhaiya, dukaan par standard MRP aur counter rates lagu hain.",
+	}, nil
 }
 
 // ── 7. Supplier Invoice / Wholesale Bill OCR Ingestion (FEAT-POS-02) ──

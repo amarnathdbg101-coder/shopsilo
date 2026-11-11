@@ -104,7 +104,7 @@ func (c *CustomerKhataController) DisputeTransaction(w http.ResponseWriter, r *h
 		return
 	}
 
-	reuse.Success(w, "Transaction discrepancy reported to shopkeeper successfully. Entry marked as DISPUTED.", nil)
+	reuse.Success(w, "Clarification note sent to shopkeeper successfully. Entry marked for verification.", nil)
 }
 
 // SubmitUPIPayment records customer direct UPI settlement proof (Protected - Customer).
