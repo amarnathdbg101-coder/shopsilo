@@ -36,6 +36,7 @@ func RouteSetup(c *app.Container) chi.Router {
 	catalogc := c.Controllers.Catalog
 	telc := c.Controllers.Telemetry
 	aic := c.Controllers.AI
+	assistantc := c.Controllers.Assistant
 	posc := c.Controllers.POS
 	wsc := c.Controllers.WebSocket
 	staffc := c.Controllers.Staff
@@ -198,6 +199,15 @@ func RouteSetup(c *app.Container) chi.Router {
 			r.Post("/reservations/{id}/cancel", resc.CancelUserReservation)
 			r.Get("/ws", wsc.ServeCustomerWebSocket) // Personal live orders & notifications
 		})
+	})
+
+	r.Route("/api/v1/merchant/ai-assistant", func(r chi.Router) {
+		r.Use(middleware.JWTAuth(utils.MustLoad().Jwt))
+		r.Use(middleware.RequireRole("merchant", "shop", "shop_owner", "admin"))
+
+		r.With(middleware.BulkheadGuard(middleware.AIBulkhead, "Merchant AI Assistant")).Post("/chat", assistantc.Chat)
+		r.Get("/conversations", assistantc.ListConversations)
+		r.Get("/conversations/{conversationID}/messages", assistantc.ListMessages)
 	})
 
 	// 🏪 Merchant / Shop Owner Route Group (/api/v1/merchant)

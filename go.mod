@@ -3,20 +3,25 @@ module shopMe
 go 1.26.5
 
 require (
+	github.com/amarnathdbg101-coder/go/go-adaptivelimit v1.0.0
 	github.com/amarnathdbg101-coder/go/go-auditlog v1.0.0
 	github.com/amarnathdbg101-coder/go/go-bizhours v1.0.0
+	github.com/amarnathdbg101-coder/go/go-bm25 v1.0.0
+	github.com/amarnathdbg101-coder/go/go-bulkhead v1.0.0
 	github.com/amarnathdbg101-coder/go/go-circuitbreaker v1.0.0
 	github.com/amarnathdbg101-coder/go/go-cloudflare v1.0.0
 	github.com/amarnathdbg101-coder/go/go-colorlog v1.0.0
 	github.com/amarnathdbg101-coder/go/go-cors v1.0.0
 	github.com/amarnathdbg101-coder/go/go-csvkit v1.0.0
 	github.com/amarnathdbg101-coder/go/go-dbbackup v1.0.1
+	github.com/amarnathdbg101-coder/go/go-deadlock v1.0.0
 	github.com/amarnathdbg101-coder/go/go-env v1.0.0
 	github.com/amarnathdbg101-coder/go/go-envvalidator v1.0.0
 	github.com/amarnathdbg101-coder/go/go-escpos v1.0.0
 	github.com/amarnathdbg101-coder/go/go-etag v1.0.0
 	github.com/amarnathdbg101-coder/go/go-gemini v1.1.0
 	github.com/amarnathdbg101-coder/go/go-geodistance v1.0.0
+	github.com/amarnathdbg101-coder/go/go-geofence v1.0.0
 	github.com/amarnathdbg101-coder/go/go-healthcheck v1.0.0
 	github.com/amarnathdbg101-coder/go/go-hinglish v1.0.0
 	github.com/amarnathdbg101-coder/go/go-humanize v1.0.0
@@ -44,8 +49,11 @@ require (
 	github.com/amarnathdbg101-coder/go/go-slug v1.0.0
 	github.com/amarnathdbg101-coder/go/go-sqlscan v1.0.1
 	github.com/amarnathdbg101-coder/go/go-studiocomp v1.0.0
+	github.com/amarnathdbg101-coder/go/go-supervisor v1.0.0
 	github.com/amarnathdbg101-coder/go/go-tamperseal v1.0.0
+	github.com/amarnathdbg101-coder/go/go-tinylfu v1.0.0
 	github.com/amarnathdbg101-coder/go/go-urlsigner v1.0.0
+	github.com/amarnathdbg101-coder/go/go-w3ctrace v1.0.0
 	github.com/amarnathdbg101-coder/go/go-workerpool v1.0.0
 	github.com/amarnathdbg101-coder/go/go-wshub v1.0.0
 	github.com/aws/aws-sdk-go v1.49.6
@@ -63,15 +71,7 @@ require (
 )
 
 require (
-	github.com/amarnathdbg101-coder/go/go-adaptivelimit v1.0.0 // indirect
-	github.com/amarnathdbg101-coder/go/go-bm25 v1.0.0 // indirect
-	github.com/amarnathdbg101-coder/go/go-bulkhead v1.0.0 // indirect
-	github.com/amarnathdbg101-coder/go/go-deadlock v1.0.0 // indirect
 	github.com/amarnathdbg101-coder/go/go-fuzzy v1.0.0 // indirect
-	github.com/amarnathdbg101-coder/go/go-geofence v1.0.0 // indirect
-	github.com/amarnathdbg101-coder/go/go-supervisor v1.0.0 // indirect
-	github.com/amarnathdbg101-coder/go/go-tinylfu v1.0.0 // indirect
-	github.com/amarnathdbg101-coder/go/go-w3ctrace v1.0.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect

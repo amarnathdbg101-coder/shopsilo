@@ -36,6 +36,7 @@ type Repositories struct {
 	ReturnLookup *repository.ReturnLookupRepo
 	Batch        *repository.BatchRepo
 	MicroPlan    *repository.MicroPlanRepo
+	AIAssistant  *repository.AIAssistantRepo
 }
 
 // Services holds all centralized business logic service instances.
@@ -68,6 +69,7 @@ type Services struct {
 	Batch        *services.BatchService
 	MicroPlan    *services.MicroPlanService
 	EODPDF       *services.EODPDFService
+	Assistant    *services.MerchantAssistantService
 }
 
 // Controllers holds all centralized HTTP controller instances.
@@ -102,6 +104,7 @@ type Controllers struct {
 	Batch         *controller.BatchController
 	MicroPlan     *controller.MicroPlanController
 	EODReport     *controller.EODReportController
+	Assistant    *controller.MerchantAssistantController
 }
 
 // Container is the single source of truth application registry holding all centralized components.
@@ -142,6 +145,7 @@ func NewContainer(db *pgxpool.Pool, logger *zap.Logger) *Container {
 		ReturnLookup: repository.NewReturnLookupRepo(db, logger),
 		Batch:        repository.NewBatchRepo(db, logger),
 		MicroPlan:    repository.NewMicroPlanRepo(db, logger),
+		AIAssistant:  repository.NewAIAssistantRepo(db, logger),
 	}
 
 	// 2. Initialize Services (Domain Business Logic Layer)
@@ -188,6 +192,12 @@ func NewContainer(db *pgxpool.Pool, logger *zap.Logger) *Container {
 	svcs.Reservation.SetUserRepo(repos.User)
 	svcs.Product.SetCatalogService(svcs.Catalog)
 	svcs.Shop.SetAggregatedRepos(repos.Category, repos.Product, repos.POS, repos.Loyalty)
+	svcs.Assistant = services.NewMerchantAssistantService(
+		repos.AIAssistant,
+		svcs.Shop,
+		services.NewMerchantAssistantToolExecutor(svcs.Shop, svcs.Inventory, svcs.Product),
+		services.NewGeminiMerchantAssistantModel(nil),
+	)
 
 	// 4. Initialize Controllers (HTTP Presentation Layer)
 	ctrls := &Controllers{
@@ -221,6 +231,7 @@ func NewContainer(db *pgxpool.Pool, logger *zap.Logger) *Container {
 		Batch:         controller.NewBatchController(svcs.Batch),
 		MicroPlan:     controller.NewMicroPlanController(svcs.MicroPlan),
 		EODReport:     controller.NewEODReportController(svcs.EODPDF),
+		Assistant:     controller.NewMerchantAssistantController(svcs.Assistant),
 	}
 
 	return &Container{

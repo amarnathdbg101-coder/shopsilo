@@ -28,6 +28,9 @@ func TestContainer_InitializationAndWiring(t *testing.T) {
 	if container.Repos.POS == nil || container.Repos.Khata == nil {
 		t.Fatal("POS and Khata repositories must be initialized")
 	}
+	if container.Repos.AIAssistant == nil {
+		t.Fatal("AI assistant repository must be initialized")
+	}
 
 	// 2. Verify Centralized Services
 	if container.Services == nil {
@@ -35,6 +38,9 @@ func TestContainer_InitializationAndWiring(t *testing.T) {
 	}
 	if container.Services.AI == nil {
 		t.Fatal("AIService must be initialized")
+	}
+	if container.Services.Assistant == nil {
+		t.Fatal("MerchantAssistant service must be initialized")
 	}
 	if container.Services.POS == nil || container.Services.EODPDF == nil {
 		t.Fatal("POS and EODPDF services must be initialized")
@@ -49,6 +55,9 @@ func TestContainer_InitializationAndWiring(t *testing.T) {
 	}
 	if container.Controllers.AI == nil || container.Controllers.POS == nil {
 		t.Fatal("AI and POS controllers must be initialized")
+	}
+	if container.Controllers.Assistant == nil {
+		t.Fatal("MerchantAssistant controller must be initialized")
 	}
 	if container.Controllers.EODReport == nil {
 		t.Fatal("EODReport controller must be initialized")
