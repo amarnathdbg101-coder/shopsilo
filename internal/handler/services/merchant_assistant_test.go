@@ -130,6 +130,49 @@ func TestMerchantAssistantChatExecutesReadToolAndPersistsTurn(t *testing.T) {
 	}
 }
 
+func TestMerchantAssistantChatReusesDuplicateToolResults(t *testing.T) {
+	store := &assistantTestStore{}
+	tools := &assistantTestTools{}
+	modelClient := &assistantTestModel{responses: []MerchantAssistantModelResponse{
+		{FunctionCalls: []MerchantAssistantFunctionCall{{
+			Name: "get_shop_overview",
+			Args: json.RawMessage(`{}`),
+		}}},
+		{FunctionCalls: []MerchantAssistantFunctionCall{{
+			Name: "get_shop_overview",
+			Args: json.RawMessage(`{ }`),
+		}}},
+		{Text: "Today's sales are ₹1,250."},
+	}}
+	service := NewMerchantAssistantService(store, &assistantTestShop{}, tools, modelClient)
+
+	_, err := service.Chat(context.Background(), "owner-1", dto.MerchantAssistantChatRequest{
+		Prompt: "How much did I sell today?",
+	})
+	if err != nil {
+		t.Fatalf("Chat returned error: %v", err)
+	}
+	if len(tools.names) != 1 || tools.names[0] != "get_shop_overview" {
+		t.Fatalf("expected the identical read tool to execute once, got %+v", tools.names)
+	}
+	if len(modelClient.turns) != 3 {
+		t.Fatalf("expected model to receive both tool rounds, got %d calls", len(modelClient.turns))
+	}
+}
+
+func TestTrimMerchantAssistantHistoryKeepsRecentMessagesWithinBudget(t *testing.T) {
+	messages := []dto.MerchantAssistantMessage{
+		{Role: "user", Content: "old"},
+		{Role: "assistant", Content: "new"},
+		{Role: "user", Content: "a"},
+	}
+
+	trimmed := trimMerchantAssistantHistory(messages, 4)
+	if len(trimmed) != 2 || trimmed[0].Content != "new" || trimmed[1].Content != "a" {
+		t.Fatalf("expected the newest complete messages within budget, got %+v", trimmed)
+	}
+}
+
 func TestMerchantAssistantChatDoesNotAccessForeignConversation(t *testing.T) {
 	store := &assistantTestStore{}
 	shop := &assistantTestShop{}
@@ -208,6 +251,9 @@ func TestBuildGeminiAssistantPayloadEncodesFunctionResults(t *testing.T) {
 	}
 	if payload.ToolConfig.FunctionCallingConfig.Mode != "AUTO" {
 		t.Fatalf("unexpected function calling mode: %q", payload.ToolConfig.FunctionCallingConfig.Mode)
+	}
+	if payload.GenerationConfig.MaxOutputTokens != 512 {
+		t.Fatalf("expected concise response token limit, got %d", payload.GenerationConfig.MaxOutputTokens)
 	}
 	if len(payload.Contents) != 3 || payload.Contents[2].Role != "user" {
 		t.Fatalf("tool response was not represented as a user function-response turn: %+v", payload.Contents)

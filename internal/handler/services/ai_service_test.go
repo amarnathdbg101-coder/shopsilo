@@ -110,6 +110,37 @@ func TestMerchantGracefulFallback(t *testing.T) {
 	}
 }
 
+func TestMerchantGracefulFallbackUsesRequestedLanguage(t *testing.T) {
+	tests := []struct {
+		name        string
+		prompt      string
+		wantText    string
+		wantAction  string
+	}{
+		{
+			name:       "English",
+			prompt:     "Reply only in clear English.\n\nHow much customer credit is overdue?",
+			wantText:   "I can't verify the customer-credit figures right now. Open Khata to review balances and payment reminders.",
+			wantAction: "KHATA",
+		},
+		{
+			name:       "Hindi",
+			prompt:     "केवल स्पष्ट और शुद्ध हिन्दी में उत्तर दें।\n\nग्राहक का उधार कितना बाकी है?",
+			wantText:   "मैं अभी खाताबही के आँकड़ों की पुष्टि नहीं कर पा रहा हूँ। ग्राहक उधार और भुगतान अनुस्मारक देखने के लिए खाताबही खोलें।",
+			wantAction: "KHATA",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			text, action := parseMerchantAction(generateMerchantGracefulFallback(tt.prompt), tt.prompt)
+			if text != tt.wantText || action != tt.wantAction {
+				t.Fatalf("got (%q, %q), want (%q, %q)", text, action, tt.wantText, tt.wantAction)
+			}
+		})
+	}
+}
+
 func TestVoiceBillFastPath(t *testing.T) {
 	svc := NewAIService(nil)
 	req := dto.VoiceBillRequest{

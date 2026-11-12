@@ -1503,19 +1503,62 @@ func (r *ProductRepo) GetMonthlyProfitAnalytics(ctx context.Context, shopID stri
 // GetProductPerformanceMatrix categorizes products into Best, Worst, Old/Dead Stock, and New Arrivals.
 func (r *ProductRepo) GetProductPerformanceMatrix(ctx context.Context, shopID string) (*dto.ProductMatrixResponse, error) {
 	query := `
+		WITH pos_sales AS (
+			SELECT
+				i.product_id,
+				SUM(i.quantity)::int AS sold_qty,
+				SUM(
+					CASE
+						WHEN COALESCE(i.unit_cost, 0) > 0 THEN
+							COALESCE(i.total_price, i.unit_price * i.quantity)
+							- CASE
+								WHEN COALESCE(b.subtotal, 0) > 0
+									THEN COALESCE(b.discount_amount, 0) * COALESCE(i.total_price, i.unit_price * i.quantity) / b.subtotal
+								ELSE 0
+							END
+							- i.unit_cost * i.quantity
+						ELSE 0
+					END
+				) AS total_profit
+			FROM pos_bill_items i
+			JOIN pos_bills b ON b.id = i.bill_id
+			WHERE b.shop_id = $1 AND COALESCE(b.status, '') <> 'cancelled'
+			GROUP BY i.product_id
+		),
+		reservation_sales AS (
+			SELECT
+				r.product_id,
+				SUM(r.quantity)::int AS sold_qty,
+				SUM(
+					CASE
+						WHEN COALESCE(p.cost_price, 0) > 0
+							THEN r.quantity * (p.price - p.cost_price)
+						ELSE 0
+					END
+				) AS total_profit
+			FROM reservations r
+			JOIN products p ON p.id = r.product_id
+			WHERE r.status = 'completed' AND r.shop_id = $1
+			GROUP BY r.product_id
+		),
+		sold AS (
+			SELECT product_id, SUM(sold_qty)::int AS sold_qty, SUM(total_profit) AS total_profit
+			FROM (
+				SELECT product_id, sold_qty, total_profit FROM pos_sales
+				UNION ALL
+				SELECT product_id, sold_qty, total_profit FROM reservation_sales
+			) combined_sales
+			GROUP BY product_id
+		)
 		SELECT 
 			p.id, p.name, p.sku, p.price, COALESCE(p.cost_price, 0),
 			COALESCE(i.quantity, 0),
 			COALESCE(sold.sold_qty, 0) AS total_sold_qty,
+			COALESCE(sold.total_profit, 0) AS total_profit,
 			COALESCE(EXTRACT(DAY FROM (NOW() - p.created_at))::int, 0) AS days_in_stock
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
-		LEFT JOIN (
-			SELECT product_id, SUM(quantity) AS sold_qty
-			FROM reservations
-			WHERE status = 'completed' AND shop_id = $1
-			GROUP BY product_id
-		) sold ON sold.product_id = p.id
+		LEFT JOIN sold ON sold.product_id = p.id
 		WHERE p.shop_id = $1 AND p.is_active = true
 	`
 	rows, err := r.db.Query(ctx, query, shopID)
@@ -1536,6 +1579,7 @@ func (r *ProductRepo) GetProductPerformanceMatrix(ctx context.Context, shopID st
 			&item.CostPrice,
 			&item.CurrentStock,
 			&item.TotalSoldQty,
+			&item.TotalProfit,
 			&item.DaysInStock,
 		)
 		if err != nil {
@@ -1547,7 +1591,6 @@ func (r *ProductRepo) GetProductPerformanceMatrix(ctx context.Context, shopID st
 			item.UnitProfit = item.Price - item.CostPrice
 			item.ProfitMarginPct = math.Round((item.UnitProfit/item.Price)*1000) / 10
 		}
-		item.TotalProfit = float64(item.TotalSoldQty) * item.UnitProfit
 
 		allItems = append(allItems, item)
 	}
