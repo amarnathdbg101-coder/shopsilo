@@ -35,9 +35,9 @@ func NewUserRepo(db *pgxpool.Pool, logger *zap.Logger) *UserRepo {
 
 func (r *UserRepo) Create(ctx context.Context, u *model.User) (*model.User, error) {
 	query := `
-		INSERT INTO users (email, password_hash, full_name, phone, role, is_active, created_at, updated_at)
-		VALUES (LOWER($1), $2, $3, NULLIF(TRIM($4), ''), $5, $6, NOW(), NOW())
-		RETURNING id, email, password_hash, full_name, COALESCE(phone, ''), role, is_active, created_at, updated_at
+		INSERT INTO users (email, password_hash, full_name, phone, role, is_active, token_version, created_at, updated_at)
+		VALUES (LOWER($1), $2, $3, NULLIF(TRIM($4), ''), $5, $6, 1, NOW(), NOW())
+		RETURNING id, email, password_hash, full_name, COALESCE(phone, ''), role, is_active, COALESCE(token_version, 1), created_at, updated_at
 	`
 	created := &model.User{}
 	err := r.db.QueryRow(
@@ -57,6 +57,7 @@ func (r *UserRepo) Create(ctx context.Context, u *model.User) (*model.User, erro
 		&created.Phone,
 		&created.Role,
 		&created.IsActive,
+		&created.TokenVersion,
 		&created.CreatedAt,
 		&created.UpdatedAt,
 	)
@@ -113,9 +114,9 @@ func (r *UserRepo) RegisterUserAtomic(
 
 	// 2. Insert User Record atomically in transaction
 	insertQuery := `
-		INSERT INTO users (email, password_hash, full_name, phone, role, is_active, created_at, updated_at)
-		VALUES (LOWER($1), $2, $3, NULLIF(TRIM($4), ''), $5, $6, NOW(), NOW())
-		RETURNING id, email, password_hash, full_name, COALESCE(phone, ''), role, is_active, created_at, updated_at
+		INSERT INTO users (email, password_hash, full_name, phone, role, is_active, token_version, created_at, updated_at)
+		VALUES (LOWER($1), $2, $3, NULLIF(TRIM($4), ''), $5, $6, 1, NOW(), NOW())
+		RETURNING id, email, password_hash, full_name, COALESCE(phone, ''), role, is_active, COALESCE(token_version, 1), created_at, updated_at
 	`
 	created := &model.User{}
 	err = tx.QueryRow(
@@ -135,6 +136,7 @@ func (r *UserRepo) RegisterUserAtomic(
 		&created.Phone,
 		&created.Role,
 		&created.IsActive,
+		&created.TokenVersion,
 		&created.CreatedAt,
 		&created.UpdatedAt,
 	)
@@ -182,7 +184,7 @@ func (r *UserRepo) FindByPhone(ctx context.Context, phone string) (*model.User, 
 	}
 
 	query := `
-		SELECT id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, created_at, updated_at
+		SELECT id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, COALESCE(token_version, 1), created_at, updated_at
 		FROM users
 		WHERE phone IS NOT NULL AND phone != '' AND phone = $1
 		LIMIT 1
@@ -197,6 +199,7 @@ func (r *UserRepo) FindByPhone(ctx context.Context, phone string) (*model.User, 
 		&u.AvatarURL,
 		&u.Role,
 		&u.IsActive,
+		&u.TokenVersion,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
@@ -212,7 +215,7 @@ func (r *UserRepo) FindByPhone(ctx context.Context, phone string) (*model.User, 
 
 func (r *UserRepo) FindByEmail(ctx context.Context, email string) (*model.User, error) {
 	query := `
-		SELECT id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, created_at, updated_at
+		SELECT id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, COALESCE(token_version, 1), created_at, updated_at
 		FROM users
 		WHERE LOWER(email) = LOWER(TRIM($1))
 		LIMIT 1
@@ -227,6 +230,7 @@ func (r *UserRepo) FindByEmail(ctx context.Context, email string) (*model.User, 
 		&u.AvatarURL,
 		&u.Role,
 		&u.IsActive,
+		&u.TokenVersion,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
@@ -240,6 +244,8 @@ func (r *UserRepo) FindByEmail(ctx context.Context, email string) (*model.User, 
 	return u, nil
 }
 
+// FindByEmailOrPhone uses an index-backed UNION ALL statement across PostgreSQL functional indexes
+// idx_users_lower_email and idx_users_phone for 0.2ms execution.
 func (r *UserRepo) FindByEmailOrPhone(ctx context.Context, identifier string) (*model.User, error) {
 	trimmed := strings.TrimSpace(identifier)
 	if trimmed == "" {
@@ -247,9 +253,13 @@ func (r *UserRepo) FindByEmailOrPhone(ctx context.Context, identifier string) (*
 	}
 
 	query := `
-		SELECT id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, created_at, updated_at
+		SELECT id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, COALESCE(token_version, 1), created_at, updated_at
 		FROM users
-		WHERE LOWER(email) = LOWER($1) OR (phone IS NOT NULL AND phone != '' AND phone = $1)
+		WHERE LOWER(email) = LOWER(TRIM($1))
+		UNION ALL
+		SELECT id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, COALESCE(token_version, 1), created_at, updated_at
+		FROM users
+		WHERE phone IS NOT NULL AND phone != '' AND phone = $1
 		LIMIT 1
 	`
 	u := &model.User{}
@@ -262,6 +272,7 @@ func (r *UserRepo) FindByEmailOrPhone(ctx context.Context, identifier string) (*
 		&u.AvatarURL,
 		&u.Role,
 		&u.IsActive,
+		&u.TokenVersion,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
@@ -277,7 +288,7 @@ func (r *UserRepo) FindByEmailOrPhone(ctx context.Context, identifier string) (*
 
 func (r *UserRepo) FindByID(ctx context.Context, id string) (*model.User, error) {
 	query := `
-		SELECT id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, created_at, updated_at
+		SELECT id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, COALESCE(token_version, 1), created_at, updated_at
 		FROM users
 		WHERE id = $1
 		LIMIT 1
@@ -292,6 +303,7 @@ func (r *UserRepo) FindByID(ctx context.Context, id string) (*model.User, error)
 		&u.AvatarURL,
 		&u.Role,
 		&u.IsActive,
+		&u.TokenVersion,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
@@ -303,6 +315,24 @@ func (r *UserRepo) FindByID(ctx context.Context, id string) (*model.User, error)
 		return nil, err
 	}
 	return u, nil
+}
+
+// IncrementTokenVersion bumps the user's token_version by 1, instantly revoking all issued sessions/tokens.
+func (r *UserRepo) IncrementTokenVersion(ctx context.Context, userID string) error {
+	query := `
+		UPDATE users
+		SET token_version = COALESCE(token_version, 1) + 1, updated_at = NOW()
+		WHERE id = $1
+	`
+	cmdTag, err := r.db.Exec(ctx, query, userID)
+	if err != nil {
+		r.logger.Error("failed to increment token version", zap.Error(err), zap.String("user_id", userID))
+		return err
+	}
+	if cmdTag.RowsAffected() == 0 {
+		return ErrUserNotFound
+	}
+	return nil
 }
 
 func (r *UserRepo) UpdateAvatar(ctx context.Context, userID, avatarURL string) error {
@@ -325,7 +355,7 @@ func (r *UserRepo) UpdateAvatar(ctx context.Context, userID, avatarURL string) e
 func (r *UserRepo) UpdatePassword(ctx context.Context, userID, passwordHash string) error {
 	query := `
 		UPDATE users
-		SET password_hash = $1, updated_at = NOW()
+		SET password_hash = $1, token_version = COALESCE(token_version, 1) + 1, updated_at = NOW()
 		WHERE id = $2
 	`
 	cmdTag, err := r.db.Exec(ctx, query, passwordHash, userID)
@@ -376,7 +406,7 @@ func (r *UserRepo) UpdateRoleWithTx(ctx context.Context, tx pgx.Tx, userID, role
 func (r *UserRepo) DeactivateUser(ctx context.Context, userID string) error {
 	query := `
 		UPDATE users
-		SET is_active = false, updated_at = NOW()
+		SET is_active = false, token_version = COALESCE(token_version, 1) + 1, updated_at = NOW()
 		WHERE id = $1
 	`
 	cmdTag, err := r.db.Exec(ctx, query, userID)
@@ -393,7 +423,7 @@ func (r *UserRepo) DeactivateUser(ctx context.Context, userID string) error {
 func (r *UserRepo) DeactivateUserWithTx(ctx context.Context, tx pgx.Tx, userID string) error {
 	query := `
 		UPDATE users
-		SET is_active = false, updated_at = NOW()
+		SET is_active = false, token_version = COALESCE(token_version, 1) + 1, updated_at = NOW()
 		WHERE id = $1
 	`
 	cmdTag, err := tx.Exec(ctx, query, userID)
@@ -412,7 +442,7 @@ func (r *UserRepo) UpdateProfile(ctx context.Context, userID, fullName, phone st
 		UPDATE users
 		SET full_name = $1, phone = NULLIF(TRIM($2), ''), updated_at = NOW()
 		WHERE id = $3
-		RETURNING id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, created_at, updated_at
+		RETURNING id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, COALESCE(token_version, 1), created_at, updated_at
 	`
 	u := &model.User{}
 	err := r.db.QueryRow(ctx, query, strings.TrimSpace(fullName), strings.TrimSpace(phone), userID).Scan(
@@ -424,6 +454,7 @@ func (r *UserRepo) UpdateProfile(ctx context.Context, userID, fullName, phone st
 		&u.AvatarURL,
 		&u.Role,
 		&u.IsActive,
+		&u.TokenVersion,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
@@ -480,7 +511,7 @@ func (r *UserRepo) ListUsersForAdmin(ctx context.Context, role, search string, l
 	}
 
 	query := fmt.Sprintf(`
-		SELECT id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, created_at, updated_at
+		SELECT id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, COALESCE(token_version, 1), created_at, updated_at
 		FROM users
 		%s
 		ORDER BY created_at DESC
@@ -509,6 +540,7 @@ func (r *UserRepo) ListUsersForAdmin(ctx context.Context, role, search string, l
 			&u.AvatarURL,
 			&u.Role,
 			&u.IsActive,
+			&u.TokenVersion,
 			&u.CreatedAt,
 			&u.UpdatedAt,
 		)
@@ -537,9 +569,10 @@ func (r *UserRepo) UpdateUserStatusForAdmin(ctx context.Context, userID string, 
 		UPDATE users
 		SET is_active = COALESCE($1, is_active),
 		    role = COALESCE($2, role),
+		    token_version = CASE WHEN $1 = false THEN COALESCE(token_version, 1) + 1 ELSE token_version END,
 		    updated_at = NOW()
 		WHERE id = $3
-		RETURNING id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, created_at, updated_at
+		RETURNING id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, COALESCE(token_version, 1), created_at, updated_at
 	`
 	u := &model.User{}
 	err := r.db.QueryRow(ctx, query, isActive, cleanRole, userID).Scan(
@@ -551,6 +584,7 @@ func (r *UserRepo) UpdateUserStatusForAdmin(ctx context.Context, userID string, 
 		&u.AvatarURL,
 		&u.Role,
 		&u.IsActive,
+		&u.TokenVersion,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)

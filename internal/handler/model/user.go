@@ -12,6 +12,7 @@ type User struct {
 	AvatarURL    string    `json:"avatar_url,omitempty"`
 	Role         string    `json:"role"` // customer, shop, admin
 	IsActive     bool      `json:"is_active"`
+	TokenVersion int       `json:"token_version"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }

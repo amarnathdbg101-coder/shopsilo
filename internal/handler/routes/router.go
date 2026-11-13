@@ -351,6 +351,8 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/khata/summary", khatac.GetSummary)
 		r.Get("/khata/customers", khatac.ListCustomers)
 		r.Get("/khata/customers/{mobile}", khatac.GetCustomerHistory)
+		r.Delete("/khata/customers/{khataId}", khatac.DeleteCustomer)
+		r.Delete("/khata/{id}", khatac.DeleteCustomer)
 		r.With(middleware.IdempotencyGuard).Post("/khata/credit", khatac.RecordCredit)
 		r.With(middleware.IdempotencyGuard).Post("/khata/payment/{mobile}", khatac.RecordPayment)
 		r.Get("/khata/reminder/{mobile}", khatac.GetPaymentReminder)

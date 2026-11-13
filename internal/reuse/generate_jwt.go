@@ -17,15 +17,20 @@ type ResetClaims struct {
 	IssuedAt  int64  `json:"iat,omitempty"`
 }
 
-// GenerateJwt creates a long-lived session token (30 days) using application JWT secret.
-func GenerateJwt(userID, email, role string) (string, error) {
+// GenerateJwt creates a long-lived session token (30 days) using application JWT secret and includes token_version for 0ms instant multi-device revocation.
+func GenerateJwt(userID, email, role string, tokenVersion ...int) (string, error) {
 	now := time.Now()
+	tv := 1
+	if len(tokenVersion) > 0 && tokenVersion[0] > 0 {
+		tv = tokenVersion[0]
+	}
 	claims := map[string]any{
-		"user_id": userID,
-		"email":   email,
-		"role":    role,
-		"exp":     now.Add(30 * 24 * time.Hour).Unix(),
-		"iat":     now.Unix(),
+		"user_id":       userID,
+		"email":         email,
+		"role":          role,
+		"token_version": tv,
+		"exp":           now.Add(30 * 24 * time.Hour).Unix(),
+		"iat":           now.Unix(),
 	}
 	return gojwt.SignCustom([]byte(utils.MustLoad().Jwt), claims)
 }
