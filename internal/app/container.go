@@ -37,6 +37,7 @@ type Repositories struct {
 	Batch        *repository.BatchRepo
 	MicroPlan    *repository.MicroPlanRepo
 	AIAssistant  *repository.AIAssistantRepo
+	AppVersion   *repository.AppVersionRepo
 }
 
 // Services holds all centralized business logic service instances.
@@ -70,6 +71,7 @@ type Services struct {
 	MicroPlan    *services.MicroPlanService
 	EODPDF       *services.EODPDFService
 	Assistant    *services.MerchantAssistantService
+	AppVersion   *services.AppVersionService
 }
 
 // Controllers holds all centralized HTTP controller instances.
@@ -104,7 +106,8 @@ type Controllers struct {
 	Batch         *controller.BatchController
 	MicroPlan     *controller.MicroPlanController
 	EODReport     *controller.EODReportController
-	Assistant    *controller.MerchantAssistantController
+	Assistant     *controller.MerchantAssistantController
+	AppVersion    *controller.AppVersionController
 }
 
 // Container is the single source of truth application registry holding all centralized components.
@@ -146,6 +149,7 @@ func NewContainer(db *pgxpool.Pool, logger *zap.Logger) *Container {
 		Batch:        repository.NewBatchRepo(db, logger),
 		MicroPlan:    repository.NewMicroPlanRepo(db, logger),
 		AIAssistant:  repository.NewAIAssistantRepo(db, logger),
+		AppVersion:   repository.NewAppVersionRepo(db, logger),
 	}
 
 	// 2. Initialize Services (Domain Business Logic Layer)
@@ -181,6 +185,7 @@ func NewContainer(db *pgxpool.Pool, logger *zap.Logger) *Container {
 		Batch:        services.NewBatchService(repos.Batch, repos.Shop, repos.Product, logger),
 		MicroPlan:    services.NewMicroPlanService(repos.MicroPlan, repos.Shop, repos.User, repos.Khata, logger),
 		EODPDF:       services.NewEODPDFService(repos.Shop, repos.POS, repos.CashDrawer, logger),
+		AppVersion:   services.NewAppVersionService(repos.AppVersion, logger),
 	}
 
 	// 3. Centralized Inter-Service Wiring
@@ -232,6 +237,7 @@ func NewContainer(db *pgxpool.Pool, logger *zap.Logger) *Container {
 		MicroPlan:     controller.NewMicroPlanController(svcs.MicroPlan),
 		EODReport:     controller.NewEODReportController(svcs.EODPDF),
 		Assistant:     controller.NewMerchantAssistantController(svcs.Assistant),
+		AppVersion:    controller.NewAppVersionController(svcs.AppVersion, "./downloads", logger),
 	}
 
 	return &Container{

@@ -421,6 +421,41 @@ func (c *ShopController) GetShopStandeePDF(w http.ResponseWriter, r *http.Reques
 	_, _ = w.Write(pdfBytes)
 }
 
+// GetAndroidAppVersion returns current Android Merchant App version & download URL
+func (c *ShopController) GetAndroidAppVersion(w http.ResponseWriter, r *http.Request) {
+	reuse.Success(w, "Android merchant app version retrieved", map[string]interface{}{
+		"platform":     "android",
+		"version":      "2.1.0",
+		"version_code": 2100,
+		"url":          "https://play.google.com/store/apps/details?id=in.shopsilo.merchant",
+		"apk_url":      "https://api.shopsilo.in/downloads/ShopSilo_Merchant_v2.1.0.apk",
+		"changelog":    "Voice-to-bill POS engine, 10-sec counter pickup PIN pass, and Shorebird instant OTA code push support.",
+		"mandatory":    false,
+	})
+}
+
+// GetWindowsAppVersion returns current Windows Desktop Counter POS version & setup URL for auto_updater
+func (c *ShopController) GetWindowsAppVersion(w http.ResponseWriter, r *http.Request) {
+	reuse.Success(w, "Windows desktop POS version retrieved", map[string]interface{}{
+		"platform":  "windows",
+		"version":   "2.1.0",
+		"url":       "https://api.shopsilo.in/downloads/ShopSilo_POS_Setup_v2.1.0.exe",
+		"changelog": "High-speed Bluetooth thermal printer engine, split-payment billing, and EOD P&L PDF generator.",
+		"pub_date":  "2026-11-14T10:00:00Z",
+		"mandatory": false,
+	})
+}
+
+// GetAppVersionByPlatform handles dynamic version inquiries per platform
+func (c *ShopController) GetAppVersionByPlatform(w http.ResponseWriter, r *http.Request) {
+	platform := strings.ToLower(strings.TrimSpace(chi.URLParam(r, "platform")))
+	if platform == "windows" {
+		c.GetWindowsAppVersion(w, r)
+		return
+	}
+	c.GetAndroidAppVersion(w, r)
+}
+
 // GetMyShopStandeePDF generates and downloads a printable A5 counter standee PDF for the authenticated shop owner (Protected)
 func (c *ShopController) GetMyShopStandeePDF(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())

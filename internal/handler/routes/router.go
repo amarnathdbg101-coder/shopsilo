@@ -49,6 +49,7 @@ func RouteSetup(c *app.Container) chi.Router {
 	batchc := c.Controllers.Batch
 	microPlanc := c.Controllers.MicroPlan
 	eodc := c.Controllers.EODReport
+	appvc := c.Controllers.AppVersion
 
 	r := chi.NewRouter()
 
@@ -85,6 +86,11 @@ func RouteSetup(c *app.Container) chi.Router {
 	// Centralized Feature Registry & Discovery endpoint
 	r.Get("/features", c.Features.ServeHTTP)
 	r.Get("/api/features", c.Features.ServeHTTP)
+
+	// Centralized Over-The-Air (OTA) App In-App Version Checks & Resumable APK Streaming
+	r.Get("/app/version-check", appvc.CheckVersion)
+	r.Get("/api/v1/app/version-check", appvc.CheckVersion)
+	r.Get("/downloads/{filename}", appvc.ServeDownloadAPK)
 
 	// Public Grievance & Content Safety Report endpoint (IT Rules 2021 compliance)
 	r.Post("/reports", modc.SubmitReport) // Both
@@ -147,6 +153,9 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Post("/products/{id}/notify-me", invc.SubscribeStockAlert)       // Customer
 		r.With(middleware.IdempotencyGuard).Post("/products/{id}/make-offer", pc.MakeOffer)                  // Customer
 		r.Get("/receipts/{bill_number}", posc.ViewPublicReceiptPDF)        // Customer
+		r.Get("/app/version/android", sc.GetAndroidAppVersion)             // App Auto-Updater
+		r.Get("/app/version/windows", sc.GetWindowsAppVersion)             // App Auto-Updater
+		r.Get("/app/version/{platform}", sc.GetAppVersionByPlatform)      // App Auto-Updater
 		r.Post("/reports/telemetry-error", telc.LogFrontendError)          // Both
 		r.Get("/images/*", upc.ServeImage)                                 // Both
 	})
