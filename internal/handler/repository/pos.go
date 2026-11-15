@@ -503,12 +503,119 @@ func (r *POSRepo) GetDailyCloseReport(ctx context.Context, shopID string, target
 		report.SoldItems = soldItems
 	}
 
-	// 2. Automatically delete expired sales older than 10 days (10-Day Rolling Policy)
+	// 2. Smart fallback: If today has 0 bills and 0 items sold, check if there are records in the 10-day retention window
+	if report.TotalBillsCount == 0 && len(report.SoldItems) == 0 {
+		if rollingReport, rErr := r.GetRolling10DayCloseReport(ctx, shopID); rErr == nil && rollingReport.TotalBillsCount > 0 {
+			rollingReport.Date = fmt.Sprintf("%s (10-Day Retention Archive)", dateStr)
+			return rollingReport, nil
+		}
+	}
+
+	// 3. Automatically delete expired sales older than 10 days (10-Day Rolling Policy)
 	go func() {
 		pruneCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_, _ = r.db.Exec(pruneCtx, "DELETE FROM pos_bills WHERE created_at < NOW() - INTERVAL '10 days'")
 	}()
+
+	return report, nil
+}
+
+// GetRolling10DayCloseReport aggregates the entire 10-day retention window for comprehensive merchant archiving.
+func (r *POSRepo) GetRolling10DayCloseReport(ctx context.Context, shopID string) (*dto.DailyCloseReport, error) {
+	query := `
+		WITH pos_summary AS (
+			SELECT
+				COALESCE(SUM(CASE WHEN cash_amount > 0 THEN cash_amount WHEN payment_method = 'cash' THEN total_amount ELSE 0 END), 0) AS cash_sales,
+				COALESCE(SUM(CASE WHEN online_amount > 0 THEN online_amount WHEN payment_method IN ('upi', 'online', 'card') THEN total_amount ELSE 0 END), 0) AS upi_sales,
+				COALESCE(SUM(CASE WHEN payment_method = 'card' THEN total_amount ELSE 0 END), 0) AS card_sales,
+				COALESCE(SUM(CASE WHEN khata_amount > 0 THEN khata_amount WHEN payment_method IN ('credit', 'khata') THEN total_amount ELSE 0 END), 0) AS credit_given,
+				COALESCE(SUM(total_amount), 0) AS total_gross_sales,
+				COUNT(*) AS total_bills_count
+			FROM pos_bills
+			WHERE shop_id = $1 AND created_at >= NOW() - INTERVAL '10 days'
+		),
+		khata_summary AS (
+			SELECT
+				COALESCE(SUM(CASE WHEN payment_mode = 'cash' THEN amount ELSE 0 END), 0) AS khata_cash,
+				COALESCE(SUM(CASE WHEN payment_mode = 'upi' THEN amount ELSE 0 END), 0) AS khata_upi
+			FROM khata_transactions
+			WHERE shop_id = $1 AND type = 'RECEIVE_PAYMENT' AND created_at >= NOW() - INTERVAL '10 days'
+		),
+		expense_summary AS (
+			SELECT
+				COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END), 0) AS cash_exp,
+				COALESCE(SUM(amount), 0) AS total_exp
+			FROM shop_expenses
+			WHERE shop_id = $1 AND expense_date >= (CURRENT_DATE - INTERVAL '10 days')
+		)
+		SELECT
+			COALESCE(p.cash_sales, 0),
+			COALESCE(p.upi_sales, 0),
+			COALESCE(p.card_sales, 0),
+			COALESCE(p.credit_given, 0),
+			COALESCE(p.total_gross_sales, 0),
+			COALESCE(p.total_bills_count, 0),
+			COALESCE(k.khata_cash, 0),
+			COALESCE(k.khata_upi, 0),
+			COALESCE(e.cash_exp, 0),
+			COALESCE(e.total_exp, 0)
+		FROM (SELECT 1) dummy
+		LEFT JOIN pos_summary p ON true
+		LEFT JOIN khata_summary k ON true
+		LEFT JOIN expense_summary e ON true;
+	`
+	report := &dto.DailyCloseReport{
+		Date: "Last 10 Days Rolling Record",
+	}
+
+	err := r.db.QueryRow(ctx, query, shopID).Scan(
+		&report.CashSales,
+		&report.UPISales,
+		&report.CardSales,
+		&report.CreditGiven,
+		&report.TotalGrossSales,
+		&report.TotalBillsCount,
+		&report.KhataCashCollected,
+		&report.KhataUPICollected,
+		&report.CashExpensesPaid,
+		&report.TotalExpensesPaid,
+	)
+	if err != nil {
+		r.logger.Error("failed to compute 10-day rolling report", zap.Error(err), zap.String("shop_id", shopID))
+		return nil, err
+	}
+
+	report.TotalKhataCollected = report.KhataCashCollected + report.KhataUPICollected
+	report.ExpectedCashInDrawer = report.CashSales + report.KhataCashCollected - report.CashExpensesPaid
+
+	// Fetch all itemized sold products in the last 10 days (newest first)
+	itemsQuery := `
+		SELECT 
+			COALESCE(bi.product_name, 'Product'),
+			COALESCE(bi.product_sku, ''),
+			COALESCE(bi.quantity, 1),
+			COALESCE(bi.unit_price, 0),
+			COALESCE(bi.total_price, 0),
+			COALESCE(b.payment_method, 'cash'),
+			TO_CHAR(b.created_at, 'DD Mon HH24:MI')
+		FROM pos_bill_items bi
+		JOIN pos_bills b ON bi.bill_id = b.id
+		WHERE b.shop_id = $1 AND b.created_at >= NOW() - INTERVAL '10 days'
+		ORDER BY b.created_at DESC
+	`
+	iRows, err := r.db.Query(ctx, itemsQuery, shopID)
+	if err == nil {
+		defer iRows.Close()
+		var soldItems []dto.DailySoldProductItem
+		for iRows.Next() {
+			var it dto.DailySoldProductItem
+			if scanErr := iRows.Scan(&it.ProductName, &it.ProductSKU, &it.Quantity, &it.UnitPrice, &it.TotalPrice, &it.PaymentMode, &it.SoldAt); scanErr == nil {
+				soldItems = append(soldItems, it)
+			}
+		}
+		report.SoldItems = soldItems
+	}
 
 	return report, nil
 }

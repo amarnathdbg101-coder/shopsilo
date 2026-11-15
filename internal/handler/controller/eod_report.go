@@ -32,14 +32,20 @@ func (c *EODReportController) DownloadEndOfDayPLPDF(w http.ResponseWriter, r *ht
 	}
 
 	dateStr := r.URL.Query().Get("date")
+	daysStr := r.URL.Query().Get("days")
+	days := 1
+	if daysStr == "10" || dateStr == "10days" {
+		days = 10
+	}
+
 	targetDate := time.Now()
-	if dateStr != "" {
+	if dateStr != "" && dateStr != "10days" {
 		if parsed, err := time.Parse("2006-01-02", dateStr); err == nil {
 			targetDate = parsed
 		}
 	}
 
-	pdfBytes, err := c.pdfService.GenerateEndOfDayPLPDF(r.Context(), claims.UserID, targetDate)
+	pdfBytes, err := c.pdfService.GenerateEndOfDayPLPDF(r.Context(), claims.UserID, targetDate, days)
 	if err != nil {
 		reuse.Error(w, http.StatusInternalServerError, fmt.Sprintf("failed to generate PDF report: %v", err))
 		return

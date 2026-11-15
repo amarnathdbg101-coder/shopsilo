@@ -53,20 +53,28 @@ func NewChromedpPDFService(
 }
 
 // GenerateEndOfDayPLPDF generates an executive End-of-Day P&L statement PDF for the merchant.
-func (s *EODPDFService) GenerateEndOfDayPLPDF(ctx context.Context, shopOwnerUserID string, targetDate time.Time) ([]byte, error) {
+func (s *EODPDFService) GenerateEndOfDayPLPDF(ctx context.Context, shopOwnerUserID string, targetDate time.Time, days int) ([]byte, error) {
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch shop for user %s: %w", shopOwnerUserID, err)
 	}
 
 	dateStr := targetDate.Format("2006-01-02")
+	var summary *dto.DailyCloseReport
 
-	// Fetch daily close metrics from POS repository
-	summary, err := s.posRepo.GetDailyCloseReport(ctx, shop.ID, targetDate)
-	if err != nil {
-		s.logger.Warn("Failed to get full daily close report, using empty fallback summary", zap.Error(err))
-		summary = &dto.DailyCloseReport{
-			Date: dateStr,
+	if days == 10 {
+		summary, err = s.posRepo.GetRolling10DayCloseReport(ctx, shop.ID)
+		if err != nil {
+			s.logger.Warn("Failed to get 10-day rolling report, using fallback", zap.Error(err))
+			summary = &dto.DailyCloseReport{Date: "Last 10 Days Rolling Record"}
+		}
+	} else {
+		summary, err = s.posRepo.GetDailyCloseReport(ctx, shop.ID, targetDate)
+		if err != nil {
+			s.logger.Warn("Failed to get full daily close report, using empty fallback summary", zap.Error(err))
+			summary = &dto.DailyCloseReport{
+				Date: dateStr,
+			}
 		}
 	}
 
@@ -99,7 +107,7 @@ func (s *EODPDFService) GenerateEndOfDayPLPDF(ctx context.Context, shopOwnerUser
 	return pdfBytes, nil
 }
 
-// RenderEODReportPDF creates an executive A4 Profit & Loss audit report using pure gopdf.
+// RenderEODReportPDF creates a clean, executive A4 Profit & Loss audit report using pure gopdf.
 func RenderEODReportPDF(
 	shopName, shopAddress, shopPhone string,
 	targetDate time.Time,
@@ -109,7 +117,10 @@ func RenderEODReportPDF(
 		summary = &dto.DailyCloseReport{}
 	}
 
-	formattedDate := targetDate.Format("02 Jan 2006")
+	formattedDate := targetDate.Format("02-Jan-2006")
+	if summary.Date != "" && strings.Contains(summary.Date, "10-Day") {
+		formattedDate = "Last 10 Days Rolling Window"
+	}
 	if strings.TrimSpace(shopName) == "" {
 		shopName = "ShopSilo Partner Store"
 	}
@@ -145,45 +156,40 @@ func RenderEODReportPDF(
 	contentRight := contentLeft + contentWidth
 
 	// Palette matching ShopSilo Executive Design System
-	cNavyBanner := []uint8{15, 23, 42}    // #0f172a (Dark Navy)
-	cHeaderSub := []uint8{148, 163, 184}  // #94a3b8 (Slate Muted)
-	cDarkText := []uint8{15, 23, 42}     // #0f172a
-	cMutedText := []uint8{71, 85, 105}   // #475569
-	cCardBg := []uint8{248, 250, 252}    // #f8fafc
-	cCardBorder := []uint8{226, 232, 240}// #e2e8f0
-	cEmeraldBg := []uint8{236, 253, 245} // #ecfdf5
-	cEmeraldBorder := []uint8{167, 243, 208} // #a7f3d0
-	cEmeraldText := []uint8{4, 120, 87}  // #047857
-	cTblHeader := []uint8{30, 41, 59}    // #1e293b
-	cRedText := []uint8{220, 38, 38}     // #dc2626
-	cAltRow := []uint8{248, 250, 252}    // #f8fafc
+	cNavyBanner := []uint8{15, 23, 42}       // #0F172A
+	cHeaderSub := []uint8{148, 163, 184}     // #94A3B8
+	cDarkText := []uint8{15, 23, 42}        // #0F172A
+	cMutedText := []uint8{71, 85, 105}      // #475569
+	cCardBg := []uint8{248, 250, 252}       // #F8FAFC
+	cCardBorder := []uint8{226, 232, 240}   // #E2E8F0
+	cEmeraldBg := []uint8{236, 253, 245}    // #ECFDF5
+	cEmeraldBorder := []uint8{167, 243, 208}// #A7F3D0
+	cEmeraldText := []uint8{4, 120, 87}     // #047857
+	cTblHeader := []uint8{30, 41, 59}       // #1E293B
+	cRedText := []uint8{220, 38, 38}        // #DC2626
+	cAltRow := []uint8{248, 250, 252}       // #F8FAFC
+
+	// Universal cell writer ensuring explicit non-zero bounding box on every single render
+	writeCell := func(x, y, w, h float64, text string, fontName string, fontSize float64, color []uint8, align int) {
+		pdf.SetTextColor(color[0], color[1], color[2])
+		_ = pdf.SetFont(fontName, "", fontSize)
+		pdf.SetXY(x, y)
+		_ = pdf.CellWithOption(&gopdf.Rect{W: w, H: h}, text, gopdf.CellOption{Align: align})
+	}
 
 	// 1. TOP EXECUTIVE DARK NAVY BANNER
-	bannerH := 58.0
+	bannerH := 60.0
 	pdf.SetFillColor(cNavyBanner[0], cNavyBanner[1], cNavyBanner[2])
 	pdf.RectFromUpperLeftWithStyle(0, 0, pageW, bannerH, "F")
 
-	// Store Name
-	pdf.SetTextColor(255, 255, 255)
-	_ = pdf.SetFont("noto-bold", "", 17)
-	pdf.SetXY(0, 10)
-	_ = pdf.CellWithOption(&gopdf.Rect{W: pageW, H: 22}, strings.ToUpper(shopName), gopdf.CellOption{
-		Align: gopdf.Center | gopdf.Middle,
-	})
+	// Store Name (bold, centered, prominent)
+	writeCell(0, 10, pageW, 22, strings.ToUpper(shopName), "noto-bold", 16, []uint8{255, 255, 255}, gopdf.Center | gopdf.Middle)
 
 	// Subtitle in Banner
-	pdf.SetTextColor(cHeaderSub[0], cHeaderSub[1], cHeaderSub[2])
-	_ = pdf.SetFont("noto-bold", "", 8.5)
-	pdf.SetXY(0, 34)
-	_ = pdf.CellWithOption(&gopdf.Rect{W: pageW, H: 14}, "DAILY FINANCIAL & PROFIT ACCOUNTABILITY AUDIT • END-OF-DAY P&L", gopdf.CellOption{
-		Align: gopdf.Center | gopdf.Middle,
-	})
+	writeCell(0, 34, pageW, 14, "EXECUTIVE FINANCIAL STATEMENT & INVENTORY AUDIT JOURNAL", "noto-bold", 8.5, cHeaderSub, gopdf.Center | gopdf.Middle)
 
 	// 2. METADATA STRIP
-	curY := bannerH + 12.0
-	pdf.SetTextColor(cMutedText[0], cMutedText[1], cMutedText[2])
-	_ = pdf.SetFont("noto-reg", "", 8.5)
-
+	curY := bannerH + 10.0
 	storeMeta := []string{}
 	if strings.TrimSpace(shopAddress) != "" {
 		storeMeta = append(storeMeta, strings.TrimSpace(shopAddress))
@@ -192,24 +198,16 @@ func RenderEODReportPDF(
 		storeMeta = append(storeMeta, "Phone: "+strings.TrimSpace(shopPhone))
 	}
 	if len(storeMeta) > 0 {
-		pdf.SetXY(0, curY)
-		_ = pdf.CellWithOption(&gopdf.Rect{W: pageW, H: 13}, strings.Join(storeMeta, " • "), gopdf.CellOption{
-			Align: gopdf.Center | gopdf.Middle,
-		})
+		writeCell(0, curY, pageW, 13, strings.Join(storeMeta, " • "), "noto-reg", 8.5, cMutedText, gopdf.Center | gopdf.Middle)
 		curY += 14.0
 	}
 
 	// Audit Date Badge Line
-	auditLine := fmt.Sprintf("Report Date: %s    |    Generated: %s", formattedDate, time.Now().Format("02-Jan-2006 15:04:05"))
-	pdf.SetTextColor(cDarkText[0], cDarkText[1], cDarkText[2])
-	_ = pdf.SetFont("noto-bold", "", 9)
-	pdf.SetXY(0, curY)
-	_ = pdf.CellWithOption(&gopdf.Rect{W: pageW, H: 14}, auditLine, gopdf.CellOption{
-		Align: gopdf.Center | gopdf.Middle,
-	})
-	curY += 22.0
+	auditLine := fmt.Sprintf("Report Window: %s    |    Generated: %s", formattedDate, time.Now().Format("02-Jan-2006 15:04:05"))
+	writeCell(0, curY, pageW, 14, auditLine, "noto-bold", 9, cDarkText, gopdf.Center | gopdf.Middle)
+	curY += 20.0
 
-	// 3. THREE FINANCIAL SUMMARY CARDS
+	// 3. THREE FINANCIAL SUMMARY METRIC CARDS
 	cardGap := 12.0
 	cardW := (contentWidth - (cardGap * 2)) / 3.0
 	cardH := 58.0
@@ -221,20 +219,9 @@ func RenderEODReportPDF(
 	pdf.SetLineWidth(0.7)
 	pdf.RectFromUpperLeftWithStyle(x1, curY, cardW, cardH, "FD")
 
-	pdf.SetTextColor(cMutedText[0], cMutedText[1], cMutedText[2])
-	_ = pdf.SetFont("noto-bold", "", 8.5)
-	pdf.SetXY(x1+10, curY+8)
-	_ = pdf.Cell(nil, "GROSS SALES TOTAL")
-
-	pdf.SetTextColor(cDarkText[0], cDarkText[1], cDarkText[2])
-	_ = pdf.SetFont("noto-bold", "", 14)
-	pdf.SetXY(x1+10, curY+22)
-	_ = pdf.Cell(nil, fmt.Sprintf("₹ %.2f", totalSales))
-
-	pdf.SetTextColor(cMutedText[0], cMutedText[1], cMutedText[2])
-	_ = pdf.SetFont("noto-reg", "", 8)
-	pdf.SetXY(x1+10, curY+41)
-	_ = pdf.Cell(nil, fmt.Sprintf("%d Bills Processed", summary.TotalBillsCount))
+	writeCell(x1+10, curY+8, cardW-20, 12, "GROSS SALES TOTAL", "noto-bold", 8.5, cMutedText, gopdf.Left | gopdf.Middle)
+	writeCell(x1+10, curY+22, cardW-20, 18, fmt.Sprintf("₹ %.2f", totalSales), "noto-bold", 13.5, cDarkText, gopdf.Left | gopdf.Middle)
+	writeCell(x1+10, curY+41, cardW-20, 11, fmt.Sprintf("%d Bills Processed", summary.TotalBillsCount), "noto-reg", 8, cMutedText, gopdf.Left | gopdf.Middle)
 
 	// Card 2: Expected Drawer Cash
 	x2 := x1 + cardW + cardGap
@@ -242,51 +229,28 @@ func RenderEODReportPDF(
 	pdf.SetStrokeColor(cCardBorder[0], cCardBorder[1], cCardBorder[2])
 	pdf.RectFromUpperLeftWithStyle(x2, curY, cardW, cardH, "FD")
 
-	pdf.SetTextColor(cMutedText[0], cMutedText[1], cMutedText[2])
-	_ = pdf.SetFont("noto-bold", "", 8.5)
-	pdf.SetXY(x2+10, curY+8)
-	_ = pdf.Cell(nil, "EXPECTED DRAWER CASH")
+	writeCell(x2+10, curY+8, cardW-20, 12, "EXPECTED DRAWER CASH", "noto-bold", 8.5, cMutedText, gopdf.Left | gopdf.Middle)
+	writeCell(x2+10, curY+22, cardW-20, 18, fmt.Sprintf("₹ %.2f", summary.ExpectedCashInDrawer), "noto-bold", 13.5, []uint8{49, 46, 129}, gopdf.Left | gopdf.Middle)
+	writeCell(x2+10, curY+41, cardW-20, 11, "Physical Counter Cash", "noto-reg", 8, cMutedText, gopdf.Left | gopdf.Middle)
 
-	pdf.SetTextColor(49, 46, 129) // Deep Indigo #312e81
-	_ = pdf.SetFont("noto-bold", "", 14)
-	pdf.SetXY(x2+10, curY+22)
-	_ = pdf.Cell(nil, fmt.Sprintf("₹ %.2f", summary.ExpectedCashInDrawer))
-
-	pdf.SetTextColor(cMutedText[0], cMutedText[1], cMutedText[2])
-	_ = pdf.SetFont("noto-reg", "", 8)
-	pdf.SetXY(x2+10, curY+41)
-	_ = pdf.Cell(nil, "Physical Counter Cash")
-
-	// Card 3: Net Pocket Balance (Highlighted)
+	// Card 3: Net Pocket Balance (Highlighted Emerald Green)
 	x3 := x2 + cardW + cardGap
 	pdf.SetFillColor(cEmeraldBg[0], cEmeraldBg[1], cEmeraldBg[2])
 	pdf.SetStrokeColor(cEmeraldBorder[0], cEmeraldBorder[1], cEmeraldBorder[2])
 	pdf.RectFromUpperLeftWithStyle(x3, curY, cardW, cardH, "FD")
 
-	pdf.SetTextColor(cEmeraldText[0], cEmeraldText[1], cEmeraldText[2])
-	_ = pdf.SetFont("noto-bold", "", 8.5)
-	pdf.SetXY(x3+10, curY+8)
-	_ = pdf.Cell(nil, "NET POCKET PROFIT")
+	writeCell(x3+10, curY+8, cardW-20, 12, "NET POCKET PROFIT", "noto-bold", 8.5, cEmeraldText, gopdf.Left | gopdf.Middle)
+	writeCell(x3+10, curY+22, cardW-20, 18, fmt.Sprintf("₹ %.2f", netProfit), "noto-bold", 13.5, cEmeraldText, gopdf.Left | gopdf.Middle)
+	writeCell(x3+10, curY+41, cardW-20, 11, "After Store Expenses", "noto-reg", 8, cEmeraldText, gopdf.Left | gopdf.Middle)
 
-	_ = pdf.SetFont("noto-bold", "", 14)
-	pdf.SetXY(x3+10, curY+22)
-	_ = pdf.Cell(nil, fmt.Sprintf("₹ %.2f", netProfit))
-
-	_ = pdf.SetFont("noto-reg", "", 8)
-	pdf.SetXY(x3+10, curY+41)
-	_ = pdf.Cell(nil, "After Store Expenses")
-
-	curY += cardH + 24.0
+	curY += cardH + 18.0
 
 	// 4. COUNTER MULTI-TENDER BREAKDOWN TABLE
-	pdf.SetTextColor(cDarkText[0], cDarkText[1], cDarkText[2])
-	_ = pdf.SetFont("noto-bold", "", 11)
-	pdf.SetXY(contentLeft, curY)
-	_ = pdf.Cell(nil, "Counter Multi-Tender Breakdown")
+	writeCell(contentLeft, curY, contentWidth, 14, "Counter Multi-Tender Breakdown", "noto-bold", 10.5, cDarkText, gopdf.Left | gopdf.Middle)
 	curY += 16.0
 
 	// Table Header
-	tblH := 24.0
+	tblH := 22.0
 	colModeW := 253.28
 	colAmtW := 150.0
 	colShareW := 120.0
@@ -294,21 +258,12 @@ func RenderEODReportPDF(
 	pdf.SetFillColor(cTblHeader[0], cTblHeader[1], cTblHeader[2])
 	pdf.RectFromUpperLeftWithStyle(contentLeft, curY, contentWidth, tblH, "F")
 
-	pdf.SetTextColor(255, 255, 255)
-	_ = pdf.SetFont("noto-bold", "", 8.5)
-
-	pdf.SetXY(contentLeft+10, curY+6)
-	_ = pdf.Cell(nil, "TENDER / PAYMENT MODE")
-
-	pdf.SetXY(contentLeft+colModeW, curY+6)
-	_ = pdf.CellWithOption(&gopdf.Rect{W: colAmtW - 10, H: 12}, "AMOUNT COLLECTED", gopdf.CellOption{Align: gopdf.Right})
-
-	pdf.SetXY(contentLeft+colModeW+colAmtW, curY+6)
-	_ = pdf.CellWithOption(&gopdf.Rect{W: colShareW - 10, H: 12}, "SHARE %", gopdf.CellOption{Align: gopdf.Right})
+	writeCell(contentLeft+10, curY, colModeW-10, tblH, "TENDER / PAYMENT MODE", "noto-bold", 8.5, []uint8{255, 255, 255}, gopdf.Left | gopdf.Middle)
+	writeCell(contentLeft+colModeW, curY, colAmtW-10, tblH, "AMOUNT COLLECTED", "noto-bold", 8.5, []uint8{255, 255, 255}, gopdf.Right | gopdf.Middle)
+	writeCell(contentLeft+colModeW+colAmtW, curY, colShareW-10, tblH, "SHARE %", "noto-bold", 8.5, []uint8{255, 255, 255}, gopdf.Right | gopdf.Middle)
 
 	curY += tblH
 
-	// Table Rows Definition
 	type tenderRow struct {
 		name      string
 		amountStr string
@@ -324,7 +279,7 @@ func RenderEODReportPDF(
 			isExpense: false,
 		},
 		{
-			name:      "Instant UPI / Online Pay",
+			name:      "Instant UPI / Digital Pay",
 			amountStr: fmt.Sprintf("₹ %.2f", summary.UPISales),
 			shareStr:  fmt.Sprintf("%.1f%%", upiShare),
 			isExpense: false,
@@ -343,7 +298,7 @@ func RenderEODReportPDF(
 		},
 	}
 
-	rowH := 22.0
+	rowH := 20.0
 	pdf.SetLineWidth(0.4)
 	pdf.SetStrokeColor(cCardBorder[0], cCardBorder[1], cCardBorder[2])
 
@@ -353,112 +308,69 @@ func RenderEODReportPDF(
 			pdf.RectFromUpperLeftWithStyle(contentLeft, curY, contentWidth, rowH, "F")
 		}
 
-		// Bottom border for each row
 		pdf.Line(contentLeft, curY+rowH, contentRight, curY+rowH)
 
-		// Tender Name
-		pdf.SetTextColor(cDarkText[0], cDarkText[1], cDarkText[2])
-		_ = pdf.SetFont("noto-reg", "", 9)
-		pdf.SetXY(contentLeft+10, curY+5)
-		_ = pdf.Cell(nil, r.name)
+		writeCell(contentLeft+10, curY, colModeW-10, rowH, r.name, "noto-reg", 8.5, cDarkText, gopdf.Left | gopdf.Middle)
 
-		// Amount
+		amtColor := cDarkText
 		if r.isExpense {
-			pdf.SetTextColor(cRedText[0], cRedText[1], cRedText[2])
-		} else {
-			pdf.SetTextColor(cDarkText[0], cDarkText[1], cDarkText[2])
+			amtColor = cRedText
 		}
-		_ = pdf.SetFont("noto-bold", "", 9)
-		pdf.SetXY(contentLeft+colModeW, curY+5)
-		_ = pdf.CellWithOption(&gopdf.Rect{W: colAmtW - 10, H: 12}, r.amountStr, gopdf.CellOption{Align: gopdf.Right})
-
-		// Share %
-		pdf.SetTextColor(cMutedText[0], cMutedText[1], cMutedText[2])
-		_ = pdf.SetFont("noto-reg", "", 8.5)
-		pdf.SetXY(contentLeft+colModeW+colAmtW, curY+5)
-		_ = pdf.CellWithOption(&gopdf.Rect{W: colShareW - 10, H: 12}, r.shareStr, gopdf.CellOption{Align: gopdf.Right})
+		writeCell(contentLeft+colModeW, curY, colAmtW-10, rowH, r.amountStr, "noto-bold", 8.5, amtColor, gopdf.Right | gopdf.Middle)
+		writeCell(contentLeft+colModeW+colAmtW, curY, colShareW-10, rowH, r.shareStr, "noto-reg", 8, cMutedText, gopdf.Right | gopdf.Middle)
 
 		curY += rowH
 	}
 
-	curY += 24.0
+	curY += 18.0
 
-	// 5. CASH DRAWER & OPERATIONAL RECONCILIATION BOX
-	boxH := 70.0
+	// 5. CASH REGISTER RECONCILIATION BOX
+	boxH := 64.0
 	pdf.SetFillColor(cCardBg[0], cCardBg[1], cCardBg[2])
 	pdf.SetStrokeColor(cCardBorder[0], cCardBorder[1], cCardBorder[2])
 	pdf.SetLineWidth(0.6)
 	pdf.RectFromUpperLeftWithStyle(contentLeft, curY, contentWidth, boxH, "FD")
 
-	pdf.SetTextColor(cDarkText[0], cDarkText[1], cDarkText[2])
-	_ = pdf.SetFont("noto-bold", "", 9.5)
-	pdf.SetXY(contentLeft+14, curY+10)
-	_ = pdf.Cell(nil, "Cash Register & POS Accountability Verification")
+	writeCell(contentLeft+12, curY+6, contentWidth-24, 13, "Cash Register & POS Accountability Verification", "noto-bold", 9, cDarkText, gopdf.Left | gopdf.Middle)
 
-	pdf.SetTextColor(cMutedText[0], cMutedText[1], cMutedText[2])
-	_ = pdf.SetFont("noto-reg", "", 8.5)
+	line1 := fmt.Sprintf("• Total Invoiced Bills: %d bills processed during reporting period.", summary.TotalBillsCount)
+	writeCell(contentLeft+12, curY+22, contentWidth-24, 11, line1, "noto-reg", 8, cMutedText, gopdf.Left | gopdf.Middle)
 
-	line1 := fmt.Sprintf("• Total Invoiced Bills: %d bills processed during today's register open session.", summary.TotalBillsCount)
-	pdf.SetXY(contentLeft+14, curY+26)
-	_ = pdf.Cell(nil, line1)
-
-	line2 := fmt.Sprintf("• Expected Closing Cash in Physical Drawer: ₹ %.2f (Calculated from Cash Sales - Cash Out Expenses).", summary.ExpectedCashInDrawer)
-	pdf.SetXY(contentLeft+14, curY+39)
-	_ = pdf.Cell(nil, line2)
+	line2 := fmt.Sprintf("• Expected Closing Cash in Physical Drawer: ₹ %.2f (Calculated from Cash Sales + Khata In - Cash Expenses).", summary.ExpectedCashInDrawer)
+	writeCell(contentLeft+12, curY+35, contentWidth-24, 11, line2, "noto-reg", 8, cMutedText, gopdf.Left | gopdf.Middle)
 
 	line3 := "• Audit Verification: Reconciled automatically against ShopSilo cryptographic POS register journal."
-	pdf.SetXY(contentLeft+14, curY+52)
-	_ = pdf.Cell(nil, line3)
+	writeCell(contentLeft+12, curY+48, contentWidth-24, 11, line3, "noto-reg", 8, cMutedText, gopdf.Left | gopdf.Middle)
 
-	curY += boxH + 28.0
+	curY += boxH + 20.0
 
-	// 6. ITEMIZED SOLD PRODUCTS AUDIT JOURNAL
-	curY += 6.0
-	if curY+30 > 740 {
+	// 6. ITEMIZED SOLD PRODUCTS AUDIT JOURNAL TABLE
+	if curY+50 > 750 {
 		pdf.AddPage()
 		curY = 36.0
 	}
 
-	pdf.SetTextColor(cDarkText[0], cDarkText[1], cDarkText[2])
-	_ = pdf.SetFont("noto-bold", "", 11)
-	pdf.SetXY(contentLeft, curY)
-	soldItemsTitle := fmt.Sprintf("Itemized Sold Products Audit Journal (%d Items Sold)", len(summary.SoldItems))
-	_ = pdf.Cell(nil, soldItemsTitle)
+	writeCell(contentLeft, curY, contentWidth, 14, fmt.Sprintf("Itemized Sold Products Audit Journal (%d Items Sold)", len(summary.SoldItems)), "noto-bold", 10.5, cDarkText, gopdf.Left | gopdf.Middle)
 	curY += 16.0
 
-	// Itemized Table Column Widths
+	// Column Widths
 	colIdxW := 26.0
 	colNameW := 217.28
 	colQtyW := 45.0
-	colRateW := 70.0
+	colRateW := 75.0
 	colTotalW := 80.0
-	colTimeW := 85.0
+	colTimeW := 80.0
 
-	// Draw Itemized Table Header
 	drawItemTableHeader := func() {
 		pdf.SetFillColor(cTblHeader[0], cTblHeader[1], cTblHeader[2])
 		pdf.RectFromUpperLeftWithStyle(contentLeft, curY, contentWidth, tblH, "F")
 
-		pdf.SetTextColor(255, 255, 255)
-		_ = pdf.SetFont("noto-bold", "", 8)
-
-		pdf.SetXY(contentLeft+4, curY+6)
-		_ = pdf.Cell(nil, "#")
-
-		pdf.SetXY(contentLeft+colIdxW+6, curY+6)
-		_ = pdf.Cell(nil, "PRODUCT / ITEM NAME")
-
-		pdf.SetXY(contentLeft+colIdxW+colNameW, curY+6)
-		_ = pdf.CellWithOption(&gopdf.Rect{W: colQtyW - 6, H: 12}, "QTY", gopdf.CellOption{Align: gopdf.Right})
-
-		pdf.SetXY(contentLeft+colIdxW+colNameW+colQtyW, curY+6)
-		_ = pdf.CellWithOption(&gopdf.Rect{W: colRateW - 6, H: 12}, "RATE", gopdf.CellOption{Align: gopdf.Right})
-
-		pdf.SetXY(contentLeft+colIdxW+colNameW+colQtyW+colRateW, curY+6)
-		_ = pdf.CellWithOption(&gopdf.Rect{W: colTotalW - 6, H: 12}, "TOTAL (₹)", gopdf.CellOption{Align: gopdf.Right})
-
-		pdf.SetXY(contentLeft+colIdxW+colNameW+colQtyW+colRateW+colTotalW, curY+6)
-		_ = pdf.CellWithOption(&gopdf.Rect{W: colTimeW - 6, H: 12}, "PAY / TIME", gopdf.CellOption{Align: gopdf.Right})
+		writeCell(contentLeft, curY, colIdxW, tblH, "#", "noto-bold", 8, []uint8{255, 255, 255}, gopdf.Center | gopdf.Middle)
+		writeCell(contentLeft+colIdxW+4, curY, colNameW-4, tblH, "PRODUCT / ITEM NAME", "noto-bold", 8, []uint8{255, 255, 255}, gopdf.Left | gopdf.Middle)
+		writeCell(contentLeft+colIdxW+colNameW, curY, colQtyW-4, tblH, "QTY", "noto-bold", 8, []uint8{255, 255, 255}, gopdf.Right | gopdf.Middle)
+		writeCell(contentLeft+colIdxW+colNameW+colQtyW, curY, colRateW-4, tblH, "RATE (₹)", "noto-bold", 8, []uint8{255, 255, 255}, gopdf.Right | gopdf.Middle)
+		writeCell(contentLeft+colIdxW+colNameW+colQtyW+colRateW, curY, colTotalW-4, tblH, "TOTAL (₹)", "noto-bold", 8, []uint8{255, 255, 255}, gopdf.Right | gopdf.Middle)
+		writeCell(contentLeft+colIdxW+colNameW+colQtyW+colRateW+colTotalW, curY, colTimeW-4, tblH, "PAY / TIME", "noto-bold", 8, []uint8{255, 255, 255}, gopdf.Right | gopdf.Middle)
 
 		curY += tblH
 	}
@@ -469,110 +381,84 @@ func RenderEODReportPDF(
 	totalItemsRevenue := 0.0
 
 	if len(summary.SoldItems) == 0 {
-		pdf.SetTextColor(cMutedText[0], cMutedText[1], cMutedText[2])
-		_ = pdf.SetFont("noto-reg", "", 8.5)
-		pdf.SetXY(contentLeft+10, curY+6)
-		_ = pdf.Cell(nil, "No individual counter bill items recorded for this reporting period.")
-		curY += 20.0
+		pdf.SetFillColor(cCardBg[0], cCardBg[1], cCardBg[2])
+		pdf.RectFromUpperLeftWithStyle(contentLeft, curY, contentWidth, 24.0, "F")
+		pdf.Line(contentLeft, curY+24.0, contentRight, curY+24.0)
+
+		writeCell(contentLeft+10, curY, contentWidth-20, 24.0, "No individual counter bill items recorded for this reporting period.", "noto-reg", 8.5, cMutedText, gopdf.Left | gopdf.Middle)
+		curY += 30.0
 	} else {
+		itemRowH := 18.0
 		for i, item := range summary.SoldItems {
 			totalUnits += item.Quantity
 			totalItemsRevenue += item.TotalPrice
 
-			if curY+rowH > 770 {
+			// Page overflow guard
+			if curY+itemRowH > 770 {
 				pdf.AddPage()
 				curY = 36.0
-				pdf.SetTextColor(cDarkText[0], cDarkText[1], cDarkText[2])
-				_ = pdf.SetFont("noto-bold", "", 9.5)
-				pdf.SetXY(contentLeft, curY)
-				_ = pdf.Cell(nil, fmt.Sprintf("%s • Sold Products Journal (Contd.)", strings.ToUpper(shopName)))
+
+				writeCell(contentLeft, curY, contentWidth, 14, fmt.Sprintf("%s • Sold Products Journal (Contd.)", strings.ToUpper(shopName)), "noto-bold", 9.5, cDarkText, gopdf.Left | gopdf.Middle)
 				curY += 16.0
 				drawItemTableHeader()
 			}
 
 			if i%2 == 1 {
 				pdf.SetFillColor(cAltRow[0], cAltRow[1], cAltRow[2])
-				pdf.RectFromUpperLeftWithStyle(contentLeft, curY, contentWidth, rowH, "F")
+				pdf.RectFromUpperLeftWithStyle(contentLeft, curY, contentWidth, itemRowH, "F")
 			}
 
-			pdf.Line(contentLeft, curY+rowH, contentRight, curY+rowH)
+			pdf.Line(contentLeft, curY+itemRowH, contentRight, curY+itemRowH)
 
 			// #
-			pdf.SetTextColor(cMutedText[0], cMutedText[1], cMutedText[2])
-			_ = pdf.SetFont("noto-reg", "", 8)
-			pdf.SetXY(contentLeft+4, curY+5)
-			_ = pdf.Cell(nil, fmt.Sprintf("%d", i+1))
+			writeCell(contentLeft, curY, colIdxW, itemRowH, fmt.Sprintf("%d", i+1), "noto-reg", 8, cMutedText, gopdf.Center | gopdf.Middle)
 
-			// Product Name (truncated if too long)
-			pName := item.ProductName
-			if len(pName) > 34 {
-				pName = pName[:32] + ".."
-			}
-			pdf.SetTextColor(cDarkText[0], cDarkText[1], cDarkText[2])
-			_ = pdf.SetFont("noto-bold", "", 8.5)
-			pdf.SetXY(contentLeft+colIdxW+6, curY+5)
-			_ = pdf.Cell(nil, pName)
+			// Product Name (safe UTF-8 rune truncation)
+			pName := utils.TruncateRunes(item.ProductName, 28)
+			writeCell(contentLeft+colIdxW+4, curY, colNameW-4, itemRowH, pName, "noto-bold", 8.5, cDarkText, gopdf.Left | gopdf.Middle)
 
 			// QTY
-			pdf.SetTextColor(cDarkText[0], cDarkText[1], cDarkText[2])
-			_ = pdf.SetFont("noto-reg", "", 8.5)
-			pdf.SetXY(contentLeft+colIdxW+colNameW, curY+5)
-			_ = pdf.CellWithOption(&gopdf.Rect{W: colQtyW - 6, H: 12}, fmt.Sprintf("%d", item.Quantity), gopdf.CellOption{Align: gopdf.Right})
+			writeCell(contentLeft+colIdxW+colNameW, curY, colQtyW-4, itemRowH, fmt.Sprintf("%d", item.Quantity), "noto-reg", 8.5, cDarkText, gopdf.Right | gopdf.Middle)
 
 			// Unit Price
-			pdf.SetTextColor(cMutedText[0], cMutedText[1], cMutedText[2])
-			pdf.SetXY(contentLeft+colIdxW+colNameW+colQtyW, curY+5)
-			_ = pdf.CellWithOption(&gopdf.Rect{W: colRateW - 6, H: 12}, fmt.Sprintf("₹ %.2f", item.UnitPrice), gopdf.CellOption{Align: gopdf.Right})
+			writeCell(contentLeft+colIdxW+colNameW+colQtyW, curY, colRateW-4, itemRowH, fmt.Sprintf("₹ %.2f", item.UnitPrice), "noto-reg", 8, cMutedText, gopdf.Right | gopdf.Middle)
 
 			// Total Price
-			pdf.SetTextColor(cDarkText[0], cDarkText[1], cDarkText[2])
-			_ = pdf.SetFont("noto-bold", "", 8.5)
-			pdf.SetXY(contentLeft+colIdxW+colNameW+colQtyW+colRateW, curY+5)
-			_ = pdf.CellWithOption(&gopdf.Rect{W: colTotalW - 6, H: 12}, fmt.Sprintf("₹ %.2f", item.TotalPrice), gopdf.CellOption{Align: gopdf.Right})
+			writeCell(contentLeft+colIdxW+colNameW+colQtyW+colRateW, curY, colTotalW-4, itemRowH, fmt.Sprintf("₹ %.2f", item.TotalPrice), "noto-bold", 8.5, cDarkText, gopdf.Right | gopdf.Middle)
 
 			// Payment Mode & Time
-			payTime := fmt.Sprintf("%s %s", strings.ToUpper(item.PaymentMode), item.SoldAt)
-			pdf.SetTextColor(cMutedText[0], cMutedText[1], cMutedText[2])
-			_ = pdf.SetFont("noto-reg", "", 7.5)
-			pdf.SetXY(contentLeft+colIdxW+colNameW+colQtyW+colRateW+colTotalW, curY+5)
-			_ = pdf.CellWithOption(&gopdf.Rect{W: colTimeW - 6, H: 12}, payTime, gopdf.CellOption{Align: gopdf.Right})
+			payMode := strings.ToUpper(item.PaymentMode)
+			if payMode == "" {
+				payMode = "CASH"
+			}
+			payTime := fmt.Sprintf("%s %s", payMode, item.SoldAt)
+			writeCell(contentLeft+colIdxW+colNameW+colQtyW+colRateW+colTotalW, curY, colTimeW-4, itemRowH, payTime, "noto-reg", 7.5, cMutedText, gopdf.Right | gopdf.Middle)
 
-			curY += rowH
+			curY += itemRowH
 		}
 
 		// Total Row
+		totalRowH := 20.0
 		pdf.SetFillColor(cCardBg[0], cCardBg[1], cCardBg[2])
-		pdf.RectFromUpperLeftWithStyle(contentLeft, curY, contentWidth, rowH, "F")
-		pdf.Line(contentLeft, curY+rowH, contentRight, curY+rowH)
+		pdf.RectFromUpperLeftWithStyle(contentLeft, curY, contentWidth, totalRowH, "F")
+		pdf.Line(contentLeft, curY+totalRowH, contentRight, curY+totalRowH)
 
-		pdf.SetTextColor(cDarkText[0], cDarkText[1], cDarkText[2])
-		_ = pdf.SetFont("noto-bold", "", 8.5)
-		pdf.SetXY(contentLeft+colIdxW+6, curY+5)
-		_ = pdf.Cell(nil, fmt.Sprintf("TOTAL (%d PRODUCTS SOLD)", len(summary.SoldItems)))
+		writeCell(contentLeft+colIdxW+4, curY, colNameW-4, totalRowH, fmt.Sprintf("TOTAL (%d PRODUCTS SOLD)", len(summary.SoldItems)), "noto-bold", 8.5, cDarkText, gopdf.Left | gopdf.Middle)
+		writeCell(contentLeft+colIdxW+colNameW, curY, colQtyW-4, totalRowH, fmt.Sprintf("%d", totalUnits), "noto-bold", 8.5, cDarkText, gopdf.Right | gopdf.Middle)
+		writeCell(contentLeft+colIdxW+colNameW+colQtyW+colRateW, curY, colTotalW-4, totalRowH, fmt.Sprintf("₹ %.2f", totalItemsRevenue), "noto-bold", 9, cEmeraldText, gopdf.Right | gopdf.Middle)
 
-		pdf.SetXY(contentLeft+colIdxW+colNameW, curY+5)
-		_ = pdf.CellWithOption(&gopdf.Rect{W: colQtyW - 6, H: 12}, fmt.Sprintf("%d", totalUnits), gopdf.CellOption{Align: gopdf.Right})
-
-		pdf.SetTextColor(cEmeraldText[0], cEmeraldText[1], cEmeraldText[2])
-		pdf.SetXY(contentLeft+colIdxW+colNameW+colQtyW+colRateW, curY+5)
-		_ = pdf.CellWithOption(&gopdf.Rect{W: colTotalW - 6, H: 12}, fmt.Sprintf("₹ %.2f", totalItemsRevenue), gopdf.CellOption{Align: gopdf.Right})
-
-		curY += rowH + 16.0
+		curY += totalRowH + 16.0
 	}
 
-	if curY+50 > 760 {
+	if curY+45 > 760 {
 		pdf.AddPage()
 		curY = 36.0
 	}
 
 	// 7. CERTIFICATION STAMP & AUDIT SIGN-OFF
-	pdf.SetTextColor(cMutedText[0], cMutedText[1], cMutedText[2])
-	_ = pdf.SetFont("noto-reg", "", 8)
-	pdf.SetXY(contentLeft, curY)
-	_ = pdf.Cell(nil, "This document serves as an immutable executive daily financial record generated by ShopSilo Operating System.")
+	writeCell(contentLeft, curY, contentWidth, 11, "This document serves as an immutable executive daily financial record generated by ShopSilo Operating System.", "noto-reg", 7.5, cMutedText, gopdf.Left | gopdf.Middle)
 	curY += 12.0
-	pdf.SetXY(contentLeft, curY)
-	_ = pdf.Cell(nil, "Authorized and verified for accounting, tax auditing, and permanent merchant archiving.")
+	writeCell(contentLeft, curY, contentWidth, 11, "Authorized and verified for merchant accounting, tax auditing, and permanent records.", "noto-reg", 7.5, cMutedText, gopdf.Left | gopdf.Middle)
 
 	// 8. FOOTER
 	footerY := 805.0
@@ -580,16 +466,12 @@ func RenderEODReportPDF(
 	pdf.SetLineWidth(0.5)
 	pdf.Line(margin, footerY, contentRight, footerY)
 
-	pdf.SetTextColor(cHeaderSub[0], cHeaderSub[1], cHeaderSub[2])
-	_ = pdf.SetFont("noto-reg", "", 7.5)
-
-	pdf.SetXY(margin, footerY+6)
-	_ = pdf.Cell(nil, "ShopSilo Retail OS • Pure Go Native PDF Engine (Zero Headless Dependencies)")
-
 	pdf.SetXY(contentLeft+colModeW, footerY+6)
 	_ = pdf.CellWithOption(&gopdf.Rect{W: colAmtW + colShareW, H: 10}, "Confidential • Merchant Financial Audit", gopdf.CellOption{
 		Align: gopdf.Right,
 	})
+
+	writeCell(margin, footerY+6, contentWidth, 10, "ShopSilo Retail OS • Pure Go Native PDF Engine • Immutable Digital Accounting Record", "noto-reg", 7.5, cMutedText, gopdf.Left | gopdf.Middle)
 
 	return pdf.GetBytesPdfReturnErr()
 }

@@ -131,3 +131,44 @@ func TestEODPDF_ZeroMetrics(t *testing.T) {
 	}
 	t.Logf("✅ Successfully handled nil/zero summary gracefully: %d bytes", len(pdfBytes))
 }
+
+func TestEODPDF_ItemizedSoldProductsMultiPage(t *testing.T) {
+	var items []dto.DailySoldProductItem
+	for i := 1; i <= 45; i++ {
+		items = append(items, dto.DailySoldProductItem{
+			ProductName: "Fortune Sunlite Sunflower Oil 1L Pouch Special Pack",
+			ProductSKU:  "8901234567890",
+			Quantity:    2,
+			UnitPrice:   145.00,
+			TotalPrice:  290.00,
+			PaymentMode: "UPI",
+			SoldAt:      "2026-11-09 14:30",
+		})
+	}
+
+	summary := &dto.DailyCloseReport{
+		Date:                 "2026-11-09",
+		TotalGrossSales:      13050.00,
+		TotalBillsCount:      45,
+		UPISales:             13050.00,
+		ExpectedCashInDrawer: 0.00,
+		SoldItems:            items,
+	}
+
+	pdfBytes, err := RenderEODReportPDF("ShopSilo Mega Mart", "Station Rd, Patna", "9876543210", time.Now(), summary)
+	if err != nil {
+		t.Fatalf("Failed to render multi-page sold items PDF: %v", err)
+	}
+	if !bytes.HasPrefix(pdfBytes, []byte("%PDF-")) {
+		t.Fatalf("Invalid PDF header")
+	}
+	if len(pdfBytes) < 15000 {
+		t.Fatalf("Expected multi-page PDF to be substantial, got %d bytes", len(pdfBytes))
+	}
+	// Verify that /Type /Page exists multiple times (indicating multi-page PDF)
+	pageCount := bytes.Count(pdfBytes, []byte("/Type /Page"))
+	if pageCount < 2 {
+		t.Fatalf("Expected at least 2 pages for 45 items, got %d pages", pageCount)
+	}
+	t.Logf("✅ Multi-page itemized PDF rendered successfully: %d bytes (%d items, %d pages)", len(pdfBytes), len(items), pageCount)
+}

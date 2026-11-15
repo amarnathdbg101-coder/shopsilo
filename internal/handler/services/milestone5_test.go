@@ -73,7 +73,7 @@ func TestAutomatedEndOfDayPLPDF(t *testing.T) {
 	defer cancel()
 
 	t.Run("Generate End-of-Day P&L PDF via Pure Go gopdf Engine", func(t *testing.T) {
-		pdfBytes, err := pdfService.GenerateEndOfDayPLPDF(ctx, ownerUserID, time.Now())
+		pdfBytes, err := pdfService.GenerateEndOfDayPLPDF(ctx, ownerUserID, time.Now(), 1)
 		if err != nil {
 			t.Fatalf("GenerateEndOfDayPLPDF failed: %v", err)
 		}
@@ -86,8 +86,17 @@ func TestAutomatedEndOfDayPLPDF(t *testing.T) {
 			t.Errorf("Expected PDF header magic '%%PDF-', got '%s'", string(pdfBytes[:10]))
 		}
 
-		t.Logf("End-of-Day P&L PDF successfully generated! Size=%d bytes, MagicHeader=%s",
-			len(pdfBytes), string(pdfBytes[:5]))
+		// Also test 10-day retention generation
+		pdf10Bytes, err := pdfService.GenerateEndOfDayPLPDF(ctx, ownerUserID, time.Now(), 10)
+		if err != nil {
+			t.Fatalf("GenerateEndOfDayPLPDF 10-day failed: %v", err)
+		}
+		if len(pdf10Bytes) < 500 || !bytes.HasPrefix(pdf10Bytes, []byte("%PDF-")) {
+			t.Errorf("Invalid 10-day PDF generated")
+		}
+
+		t.Logf("End-of-Day P&L PDF successfully generated! Size=%d bytes, 10DaySize=%d bytes, MagicHeader=%s",
+			len(pdfBytes), len(pdf10Bytes), string(pdfBytes[:5]))
 	})
 }
 
