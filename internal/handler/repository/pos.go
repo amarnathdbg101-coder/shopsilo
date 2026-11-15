@@ -475,6 +475,41 @@ func (r *POSRepo) GetDailyCloseReport(ctx context.Context, shopID string, target
 	report.TotalKhataCollected = report.KhataCashCollected + report.KhataUPICollected
 	report.ExpectedCashInDrawer = report.CashSales + report.KhataCashCollected - report.CashExpensesPaid
 
+	// 1. Fetch itemized sold products sorted by time (newest first)
+	itemsQuery := `
+		SELECT 
+			COALESCE(bi.product_name, 'Product'),
+			COALESCE(bi.product_sku, ''),
+			COALESCE(bi.quantity, 1),
+			COALESCE(bi.unit_price, 0),
+			COALESCE(bi.total_price, 0),
+			COALESCE(b.payment_method, 'cash'),
+			TO_CHAR(b.created_at, 'HH24:MI')
+		FROM pos_bill_items bi
+		JOIN pos_bills b ON bi.bill_id = b.id
+		WHERE b.shop_id = $1 AND b.created_at >= $2 AND b.created_at < $3
+		ORDER BY b.created_at DESC
+	`
+	iRows, err := r.db.Query(ctx, itemsQuery, shopID, startOfDay, endOfDay)
+	if err == nil {
+		defer iRows.Close()
+		var soldItems []dto.DailySoldProductItem
+		for iRows.Next() {
+			var it dto.DailySoldProductItem
+			if scanErr := iRows.Scan(&it.ProductName, &it.ProductSKU, &it.Quantity, &it.UnitPrice, &it.TotalPrice, &it.PaymentMode, &it.SoldAt); scanErr == nil {
+				soldItems = append(soldItems, it)
+			}
+		}
+		report.SoldItems = soldItems
+	}
+
+	// 2. Automatically delete expired sales older than 10 days (10-Day Rolling Policy)
+	go func() {
+		pruneCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = r.db.Exec(pruneCtx, "DELETE FROM pos_bills WHERE created_at < NOW() - INTERVAL '10 days'")
+	}()
+
 	return report, nil
 }
 
@@ -1017,7 +1052,20 @@ func (r *POSRepo) ListBills(ctx context.Context, shopID string, page, limit int,
 			args = append(args, start, end)
 			argIdx += 2
 		}
+	} else {
+		// 10-Day rolling retention: return active sales within the last 10 days
+		cutoff10Days := time.Now().Add(-10 * 24 * time.Hour)
+		whereClause.WriteString(fmt.Sprintf(" AND b.created_at >= $%d", argIdx))
+		args = append(args, cutoff10Days)
+		argIdx++
 	}
+
+	// Auto-prune sales older than 10 days in background
+	go func() {
+		pruneCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = r.db.Exec(pruneCtx, "DELETE FROM pos_bills WHERE created_at < NOW() - INTERVAL '10 days'")
+	}()
 
 	// 1. Get today's total metrics
 	var todayBills int

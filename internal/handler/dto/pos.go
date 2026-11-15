@@ -58,20 +58,32 @@ type POSBillShareResponse struct {
 	WhatsAppShareURL string  `json:"whatsapp_share_url"`
 }
 
+// DailySoldProductItem represents an individual itemized sold product for daily close & audit reporting.
+type DailySoldProductItem struct {
+	ProductName string  `json:"product_name"`
+	ProductSKU  string  `json:"product_sku"`
+	Quantity    int     `json:"quantity"`
+	UnitPrice   float64 `json:"unit_price"`
+	TotalPrice  float64 `json:"total_price"`
+	PaymentMode string  `json:"payment_mode"`
+	SoldAt      string  `json:"sold_at"`
+}
+
 type DailyCloseReport struct {
-	Date                 string  `json:"date"`
-	CashSales            float64 `json:"cash_sales"`
-	UPISales             float64 `json:"upi_sales"`
-	CardSales            float64 `json:"card_sales"`
-	CreditGiven          float64 `json:"credit_given"`
-	TotalGrossSales      float64 `json:"total_gross_sales"`
-	TotalBillsCount      int     `json:"total_bills_count"`
-	KhataCashCollected   float64 `json:"khata_cash_collected"`
-	KhataUPICollected    float64 `json:"khata_upi_collected"`
-	TotalKhataCollected  float64 `json:"total_khata_collected"`
-	CashExpensesPaid     float64 `json:"cash_expenses_paid"`
-	TotalExpensesPaid    float64 `json:"total_expenses_paid"`
-	ExpectedCashInDrawer float64 `json:"expected_cash_in_drawer"`
+	Date                 string                 `json:"date"`
+	CashSales            float64                `json:"cash_sales"`
+	UPISales             float64                `json:"upi_sales"`
+	CardSales            float64                `json:"card_sales"`
+	CreditGiven          float64                `json:"credit_given"`
+	TotalGrossSales      float64                `json:"total_gross_sales"`
+	TotalBillsCount      int                    `json:"total_bills_count"`
+	KhataCashCollected   float64                `json:"khata_cash_collected"`
+	KhataUPICollected    float64                `json:"khata_upi_collected"`
+	TotalKhataCollected  float64                `json:"total_khata_collected"`
+	CashExpensesPaid     float64                `json:"cash_expenses_paid"`
+	TotalExpensesPaid    float64                `json:"total_expenses_paid"`
+	ExpectedCashInDrawer float64                `json:"expected_cash_in_drawer"`
+	SoldItems            []DailySoldProductItem `json:"sold_items"`
 }
 
 // TaxSlabSummary breaks down sales and GST tax for a given tax slab rate (e.g. 5%, 12%, 18%).

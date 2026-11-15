@@ -412,16 +412,169 @@ func RenderEODReportPDF(
 
 	curY += boxH + 28.0
 
-	// 6. CERTIFICATION STAMP & AUDIT SIGN-OFF
+	// 6. ITEMIZED SOLD PRODUCTS AUDIT JOURNAL
+	curY += 6.0
+	if curY+30 > 740 {
+		pdf.AddPage()
+		curY = 36.0
+	}
+
+	pdf.SetTextColor(cDarkText[0], cDarkText[1], cDarkText[2])
+	_ = pdf.SetFont("noto-bold", "", 11)
+	pdf.SetXY(contentLeft, curY)
+	soldItemsTitle := fmt.Sprintf("Itemized Sold Products Audit Journal (%d Items Sold)", len(summary.SoldItems))
+	_ = pdf.Cell(nil, soldItemsTitle)
+	curY += 16.0
+
+	// Itemized Table Column Widths
+	colIdxW := 26.0
+	colNameW := 217.28
+	colQtyW := 45.0
+	colRateW := 70.0
+	colTotalW := 80.0
+	colTimeW := 85.0
+
+	// Draw Itemized Table Header
+	drawItemTableHeader := func() {
+		pdf.SetFillColor(cTblHeader[0], cTblHeader[1], cTblHeader[2])
+		pdf.RectFromUpperLeftWithStyle(contentLeft, curY, contentWidth, tblH, "F")
+
+		pdf.SetTextColor(255, 255, 255)
+		_ = pdf.SetFont("noto-bold", "", 8)
+
+		pdf.SetXY(contentLeft+4, curY+6)
+		_ = pdf.Cell(nil, "#")
+
+		pdf.SetXY(contentLeft+colIdxW+6, curY+6)
+		_ = pdf.Cell(nil, "PRODUCT / ITEM NAME")
+
+		pdf.SetXY(contentLeft+colIdxW+colNameW, curY+6)
+		_ = pdf.CellWithOption(&gopdf.Rect{W: colQtyW - 6, H: 12}, "QTY", gopdf.CellOption{Align: gopdf.Right})
+
+		pdf.SetXY(contentLeft+colIdxW+colNameW+colQtyW, curY+6)
+		_ = pdf.CellWithOption(&gopdf.Rect{W: colRateW - 6, H: 12}, "RATE", gopdf.CellOption{Align: gopdf.Right})
+
+		pdf.SetXY(contentLeft+colIdxW+colNameW+colQtyW+colRateW, curY+6)
+		_ = pdf.CellWithOption(&gopdf.Rect{W: colTotalW - 6, H: 12}, "TOTAL (₹)", gopdf.CellOption{Align: gopdf.Right})
+
+		pdf.SetXY(contentLeft+colIdxW+colNameW+colQtyW+colRateW+colTotalW, curY+6)
+		_ = pdf.CellWithOption(&gopdf.Rect{W: colTimeW - 6, H: 12}, "PAY / TIME", gopdf.CellOption{Align: gopdf.Right})
+
+		curY += tblH
+	}
+
+	drawItemTableHeader()
+
+	totalUnits := 0
+	totalItemsRevenue := 0.0
+
+	if len(summary.SoldItems) == 0 {
+		pdf.SetTextColor(cMutedText[0], cMutedText[1], cMutedText[2])
+		_ = pdf.SetFont("noto-reg", "", 8.5)
+		pdf.SetXY(contentLeft+10, curY+6)
+		_ = pdf.Cell(nil, "No individual counter bill items recorded for this reporting period.")
+		curY += 20.0
+	} else {
+		for i, item := range summary.SoldItems {
+			totalUnits += item.Quantity
+			totalItemsRevenue += item.TotalPrice
+
+			if curY+rowH > 770 {
+				pdf.AddPage()
+				curY = 36.0
+				pdf.SetTextColor(cDarkText[0], cDarkText[1], cDarkText[2])
+				_ = pdf.SetFont("noto-bold", "", 9.5)
+				pdf.SetXY(contentLeft, curY)
+				_ = pdf.Cell(nil, fmt.Sprintf("%s • Sold Products Journal (Contd.)", strings.ToUpper(shopName)))
+				curY += 16.0
+				drawItemTableHeader()
+			}
+
+			if i%2 == 1 {
+				pdf.SetFillColor(cAltRow[0], cAltRow[1], cAltRow[2])
+				pdf.RectFromUpperLeftWithStyle(contentLeft, curY, contentWidth, rowH, "F")
+			}
+
+			pdf.Line(contentLeft, curY+rowH, contentRight, curY+rowH)
+
+			// #
+			pdf.SetTextColor(cMutedText[0], cMutedText[1], cMutedText[2])
+			_ = pdf.SetFont("noto-reg", "", 8)
+			pdf.SetXY(contentLeft+4, curY+5)
+			_ = pdf.Cell(nil, fmt.Sprintf("%d", i+1))
+
+			// Product Name (truncated if too long)
+			pName := item.ProductName
+			if len(pName) > 34 {
+				pName = pName[:32] + ".."
+			}
+			pdf.SetTextColor(cDarkText[0], cDarkText[1], cDarkText[2])
+			_ = pdf.SetFont("noto-bold", "", 8.5)
+			pdf.SetXY(contentLeft+colIdxW+6, curY+5)
+			_ = pdf.Cell(nil, pName)
+
+			// QTY
+			pdf.SetTextColor(cDarkText[0], cDarkText[1], cDarkText[2])
+			_ = pdf.SetFont("noto-reg", "", 8.5)
+			pdf.SetXY(contentLeft+colIdxW+colNameW, curY+5)
+			_ = pdf.CellWithOption(&gopdf.Rect{W: colQtyW - 6, H: 12}, fmt.Sprintf("%d", item.Quantity), gopdf.CellOption{Align: gopdf.Right})
+
+			// Unit Price
+			pdf.SetTextColor(cMutedText[0], cMutedText[1], cMutedText[2])
+			pdf.SetXY(contentLeft+colIdxW+colNameW+colQtyW, curY+5)
+			_ = pdf.CellWithOption(&gopdf.Rect{W: colRateW - 6, H: 12}, fmt.Sprintf("₹ %.2f", item.UnitPrice), gopdf.CellOption{Align: gopdf.Right})
+
+			// Total Price
+			pdf.SetTextColor(cDarkText[0], cDarkText[1], cDarkText[2])
+			_ = pdf.SetFont("noto-bold", "", 8.5)
+			pdf.SetXY(contentLeft+colIdxW+colNameW+colQtyW+colRateW, curY+5)
+			_ = pdf.CellWithOption(&gopdf.Rect{W: colTotalW - 6, H: 12}, fmt.Sprintf("₹ %.2f", item.TotalPrice), gopdf.CellOption{Align: gopdf.Right})
+
+			// Payment Mode & Time
+			payTime := fmt.Sprintf("%s %s", strings.ToUpper(item.PaymentMode), item.SoldAt)
+			pdf.SetTextColor(cMutedText[0], cMutedText[1], cMutedText[2])
+			_ = pdf.SetFont("noto-reg", "", 7.5)
+			pdf.SetXY(contentLeft+colIdxW+colNameW+colQtyW+colRateW+colTotalW, curY+5)
+			_ = pdf.CellWithOption(&gopdf.Rect{W: colTimeW - 6, H: 12}, payTime, gopdf.CellOption{Align: gopdf.Right})
+
+			curY += rowH
+		}
+
+		// Total Row
+		pdf.SetFillColor(cCardBg[0], cCardBg[1], cCardBg[2])
+		pdf.RectFromUpperLeftWithStyle(contentLeft, curY, contentWidth, rowH, "F")
+		pdf.Line(contentLeft, curY+rowH, contentRight, curY+rowH)
+
+		pdf.SetTextColor(cDarkText[0], cDarkText[1], cDarkText[2])
+		_ = pdf.SetFont("noto-bold", "", 8.5)
+		pdf.SetXY(contentLeft+colIdxW+6, curY+5)
+		_ = pdf.Cell(nil, fmt.Sprintf("TOTAL (%d PRODUCTS SOLD)", len(summary.SoldItems)))
+
+		pdf.SetXY(contentLeft+colIdxW+colNameW, curY+5)
+		_ = pdf.CellWithOption(&gopdf.Rect{W: colQtyW - 6, H: 12}, fmt.Sprintf("%d", totalUnits), gopdf.CellOption{Align: gopdf.Right})
+
+		pdf.SetTextColor(cEmeraldText[0], cEmeraldText[1], cEmeraldText[2])
+		pdf.SetXY(contentLeft+colIdxW+colNameW+colQtyW+colRateW, curY+5)
+		_ = pdf.CellWithOption(&gopdf.Rect{W: colTotalW - 6, H: 12}, fmt.Sprintf("₹ %.2f", totalItemsRevenue), gopdf.CellOption{Align: gopdf.Right})
+
+		curY += rowH + 16.0
+	}
+
+	if curY+50 > 760 {
+		pdf.AddPage()
+		curY = 36.0
+	}
+
+	// 7. CERTIFICATION STAMP & AUDIT SIGN-OFF
 	pdf.SetTextColor(cMutedText[0], cMutedText[1], cMutedText[2])
 	_ = pdf.SetFont("noto-reg", "", 8)
 	pdf.SetXY(contentLeft, curY)
 	_ = pdf.Cell(nil, "This document serves as an immutable executive daily financial record generated by ShopSilo Operating System.")
 	curY += 12.0
 	pdf.SetXY(contentLeft, curY)
-	_ = pdf.Cell(nil, "Authorized and verified for accounting, tax auditing, and merchant records.")
+	_ = pdf.Cell(nil, "Authorized and verified for accounting, tax auditing, and permanent merchant archiving.")
 
-	// 7. FOOTER
+	// 8. FOOTER
 	footerY := 805.0
 	pdf.SetStrokeColor(cCardBorder[0], cCardBorder[1], cCardBorder[2])
 	pdf.SetLineWidth(0.5)
