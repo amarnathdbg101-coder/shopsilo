@@ -21,6 +21,47 @@ var fontNotoRegular []byte
 //go:embed fonts/NotoSansDevanagari-Bold.ttf
 var fontNotoBold []byte
 
+//go:embed assets/app_logo.png
+var LogoPNGBytes []byte
+
+//go:embed assets/app_logo_light.png
+var LogoLightPNGBytes []byte
+
+//go:embed assets/app_mark.png
+var LogoMarkPNGBytes []byte
+
+// DrawShopSiloLogo draws the transparent embedded ShopSilo brand logo (for dark surfaces/banners).
+func DrawShopSiloLogo(pdf *gopdf.GoPdf, x, y, size float64) error {
+	if len(LogoPNGBytes) == 0 {
+		return nil
+	}
+	holder, err := gopdf.ImageHolderByBytes(LogoPNGBytes)
+	if err != nil {
+		return err
+	}
+	h := size
+	w := size * 1.19
+	return pdf.ImageByHolder(holder, x, y, &gopdf.Rect{W: w, H: h})
+}
+
+// DrawShopSiloLogoLight draws the transparent logo tailored for light/white paper/backgrounds.
+func DrawShopSiloLogoLight(pdf *gopdf.GoPdf, x, y, size float64) error {
+	bytesToUse := LogoLightPNGBytes
+	if len(bytesToUse) == 0 {
+		bytesToUse = LogoPNGBytes
+	}
+	if len(bytesToUse) == 0 {
+		return nil
+	}
+	holder, err := gopdf.ImageHolderByBytes(bytesToUse)
+	if err != nil {
+		return err
+	}
+	h := size
+	w := size * 1.19
+	return pdf.ImageByHolder(holder, x, y, &gopdf.Rect{W: w, H: h})
+}
+
 // PageFormat represents supported physical paper and receipt dimensions.
 type PageFormat string
 
@@ -148,6 +189,9 @@ func GenerateNativeBillPDF(bill *model.POSBill, opts NativePDFOptions) ([]byte, 
 	bannerH := 46.0
 	pdf.SetFillColor(cTopBanner[0], cTopBanner[1], cTopBanner[2])
 	pdf.RectFromUpperLeftWithStyle(0, 0, pageW, bannerH, "F")
+
+	// ShopSilo Official Logo
+	_ = DrawShopSiloLogo(&pdf, 14, 8, 30)
 
 	// Store Name in Banner
 	pdf.SetTextColor(255, 255, 255)

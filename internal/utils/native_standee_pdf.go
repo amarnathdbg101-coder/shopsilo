@@ -69,15 +69,18 @@ func GenerateNativeStoreStandeePDF(shop *model.Shop) ([]byte, error) {
 	pdf.SetLineWidth(1.0)
 	pdf.RectFromUpperLeftWithStyle(contentLeft+5, 30, contentWidth-10, 535, "D")
 
-	// 2. Header Branding Tag
+	// 2. Header Branding Tag (Light transparent logo for white paper)
+	logoW := 32.0 * 1.19
+	_ = DrawShopSiloLogoLight(&pdf, contentLeft+(contentWidth-logoW)/2.0, 36, 32)
+
 	pdf.SetFillColor(cLightInd[0], cLightInd[1], cLightInd[2])
 	badgeW := 180.0
 	badgeX := contentLeft + (contentWidth-badgeW)/2.0
-	pdf.RectFromUpperLeftWithStyle(badgeX, 45, badgeW, 22, "F")
+	pdf.RectFromUpperLeftWithStyle(badgeX, 72, badgeW, 20, "F")
 
 	pdf.SetTextColor(cIndigo[0], cIndigo[1], cIndigo[2])
 	_ = pdf.SetFont("noto-bold", "", 9)
-	pdf.SetXY(badgeX, 45)
+	pdf.SetXY(badgeX, 72)
 	_ = pdf.CellWithOption(&gopdf.Rect{W: badgeW, H: 22}, "✨ OFFICIAL STORE QR STANDEE", gopdf.CellOption{
 		Align: gopdf.Center | gopdf.Middle,
 	})

@@ -97,6 +97,9 @@ func GenerateNativeKhataStatementPDF(customer *model.CustomerKhata, transactions
 	pdf.SetFillColor(cTopBanner[0], cTopBanner[1], cTopBanner[2])
 	pdf.RectFromUpperLeftWithStyle(0, 0, pageW, bannerH, "F")
 
+	// ShopSilo Official Logo
+	_ = DrawShopSiloLogo(&pdf, 20, 10, 32)
+
 	// Store Name in Banner
 	pdf.SetTextColor(255, 255, 255)
 	_ = pdf.SetFont("noto-bold", "", 16)

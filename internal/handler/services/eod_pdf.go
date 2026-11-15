@@ -174,6 +174,9 @@ func RenderEODReportPDF(
 	pdf.SetFillColor(cTopBanner[0], cTopBanner[1], cTopBanner[2])
 	pdf.RectFromUpperLeftWithStyle(0, 0, pageW, bannerH, "F")
 
+	// ShopSilo Official Logo
+	_ = utils.DrawShopSiloLogo(&pdf, 20, 10, 32)
+
 	// Store Name in Banner
 	writeCell(0, 10, pageW, 20, strings.ToUpper(storeName), "noto-bold", 16, []uint8{255, 255, 255}, gopdf.Center | gopdf.Middle)
 
