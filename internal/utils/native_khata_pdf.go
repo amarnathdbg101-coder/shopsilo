@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	gohumanize "github.com/amarnathdbg101-coder/go/go-humanize"
+	gohumanize "shopMe/internal/pkg/humanize"
 	"github.com/skip2/go-qrcode"
 	"github.com/signintech/gopdf"
 	"shopMe/internal/handler/model"

@@ -2,7 +2,7 @@
 package reuse
 
 import (
-	"github.com/amarnathdbg101-coder/go/go-bm25"
+	"shopMe/internal/pkg/bm25"
 )
 
 // ProductSearchItem represents a product indexed for in-memory BM25 ranking.

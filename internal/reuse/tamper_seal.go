@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	tamperseal "github.com/amarnathdbg101-coder/go/go-tamperseal"
+	tamperseal "shopMe/internal/pkg/tamperseal"
 	"shopMe/internal/utils"
 )
 

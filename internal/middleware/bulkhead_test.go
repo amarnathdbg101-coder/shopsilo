@@ -9,7 +9,7 @@ import (
 
 	"shopMe/internal/middleware"
 
-	"github.com/amarnathdbg101-coder/go/go-bulkhead"
+	"shopMe/internal/pkg/bulkhead"
 )
 
 func TestBulkheadGuard_RejectsExcessConcurrency(t *testing.T) {

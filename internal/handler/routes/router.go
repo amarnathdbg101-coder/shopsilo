@@ -12,7 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
-	gohealthcheck "github.com/amarnathdbg101-coder/go/go-healthcheck"
+	gohealthcheck "shopMe/internal/pkg/healthcheck"
 	"go.uber.org/zap"
 )
 

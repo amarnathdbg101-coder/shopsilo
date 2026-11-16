@@ -10,7 +10,7 @@ import (
 
 	"shopMe/internal/reuse"
 
-	"github.com/amarnathdbg101-coder/go/go-slidingwindow"
+	"shopMe/internal/pkg/slidingwindow"
 )
 
 // IPRateLimiter provides dual-tier sliding-window rate limiting with micro-burst surge defense.

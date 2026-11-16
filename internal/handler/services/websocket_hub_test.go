@@ -8,7 +8,7 @@ import (
 
 	"shopMe/internal/handler/services"
 
-	gowshub "github.com/amarnathdbg101-coder/go/go-wshub"
+	gowshub "shopMe/internal/pkg/wshub"
 )
 
 type mockWSConn struct {

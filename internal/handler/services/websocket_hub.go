@@ -3,7 +3,7 @@ package services
 import (
 	"sync"
 
-	gowshub "github.com/amarnathdbg101-coder/go/go-wshub"
+	gowshub "shopMe/internal/pkg/wshub"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 )

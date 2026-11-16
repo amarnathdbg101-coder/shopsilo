@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amarnathdbg101-coder/go/go-dbbackup"
+	"shopMe/internal/pkg/dbbackup"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"

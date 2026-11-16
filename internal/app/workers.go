@@ -9,7 +9,7 @@ import (
 
 	"shopMe/internal/worker"
 
-	supervisor "github.com/amarnathdbg101-coder/go/go-supervisor"
+	supervisor "shopMe/internal/pkg/supervisor"
 	"go.uber.org/zap"
 )
 

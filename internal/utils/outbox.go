@@ -3,7 +3,7 @@ package utils
 import (
 	"context"
 
-	gooutbox "github.com/amarnathdbg101-coder/go/go-outbox"
+	gooutbox "shopMe/internal/pkg/outbox"
 	"github.com/jackc/pgx/v5"
 )
 

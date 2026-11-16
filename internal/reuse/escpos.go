@@ -6,7 +6,7 @@ import (
 
 	"shopMe/internal/handler/model"
 
-	goescpos "github.com/amarnathdbg101-coder/go/go-escpos"
+	goescpos "shopMe/internal/pkg/escpos"
 )
 
 // Re-export ESC/POS builder types.

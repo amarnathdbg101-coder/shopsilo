@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	gojwt "github.com/amarnathdbg101-coder/go/go-jwt"
+	gojwt "shopMe/internal/pkg/jwt"
 )
 
 type contextKey string

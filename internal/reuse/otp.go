@@ -10,7 +10,7 @@ import (
 	"math/big"
 	"time"
 
-	gootp "github.com/amarnathdbg101-coder/go/go-otp"
+	gootp "shopMe/internal/pkg/otp"
 )
 
 // GenerateCryptoSecureOTP generates an unpredictable 6-digit numeric OTP (100000 - 999999)

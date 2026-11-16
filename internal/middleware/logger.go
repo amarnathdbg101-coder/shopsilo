@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	colorlog "github.com/amarnathdbg101-coder/go/go-colorlog"
+	colorlog "shopMe/internal/pkg/colorlog"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )

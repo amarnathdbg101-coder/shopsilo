@@ -2,7 +2,7 @@
 package reuse
 
 import (
-	goslug "github.com/amarnathdbg101-coder/go/go-slug"
+	goslug "shopMe/internal/pkg/slug"
 )
 
 // Slugify converts an arbitrary string into a URL-friendly slug.

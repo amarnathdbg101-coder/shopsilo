@@ -4,7 +4,7 @@ package reuse
 import (
 	"net/http"
 
-	goetag "github.com/amarnathdbg101-coder/go/go-etag"
+	goetag "shopMe/internal/pkg/etag"
 )
 
 // GenerateETag computes a strong cryptographic ETag for a given data version or payload string.

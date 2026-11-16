@@ -9,8 +9,8 @@ import (
 
 	"github.com/go-playground/validator/v10"
 
-	gomask "github.com/amarnathdbg101-coder/go/go-mask"
-	gosanitize "github.com/amarnathdbg101-coder/go/go-sanitize"
+	gomask "shopMe/internal/pkg/mask"
+	gosanitize "shopMe/internal/pkg/sanitize"
 )
 
 var Validate = validator.New()

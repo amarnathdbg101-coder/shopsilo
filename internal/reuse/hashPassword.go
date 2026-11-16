@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	gopw "github.com/amarnathdbg101-coder/go/go-password"
+	gopw "shopMe/internal/pkg/password"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/bcrypt"
 )

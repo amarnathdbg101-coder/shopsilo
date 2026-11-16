@@ -10,7 +10,7 @@ import (
 	"shopMe/internal/middleware"
 	"shopMe/internal/reuse"
 
-	gowshub "github.com/amarnathdbg101-coder/go/go-wshub"
+	gowshub "shopMe/internal/pkg/wshub"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"

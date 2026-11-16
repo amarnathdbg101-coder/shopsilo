@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	gocors "github.com/amarnathdbg101-coder/go/go-cors"
+	gocors "shopMe/internal/pkg/cors"
 )
 
 // buildCORSConfig parses ALLOWED_ORIGINS and creates an optimized pre-computed CORS handler.

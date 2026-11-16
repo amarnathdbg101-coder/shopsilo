@@ -12,7 +12,7 @@ import (
 	"shopMe/internal/handler/model"
 	"shopMe/internal/handler/repository"
 
-	saga "github.com/amarnathdbg101-coder/go/go-saga"
+	saga "shopMe/internal/pkg/saga"
 	"go.uber.org/zap"
 )
 

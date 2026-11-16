@@ -6,7 +6,7 @@ import (
 	"shopMe/internal/utils"
 	"time"
 
-	gojwt "github.com/amarnathdbg101-coder/go/go-jwt"
+	gojwt "shopMe/internal/pkg/jwt"
 )
 
 // ResetClaims holds password reset token claims.

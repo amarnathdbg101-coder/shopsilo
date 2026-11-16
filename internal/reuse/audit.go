@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	auditlog "github.com/amarnathdbg101-coder/go/go-auditlog"
+	auditlog "shopMe/internal/pkg/auditlog"
 )
 
 var (

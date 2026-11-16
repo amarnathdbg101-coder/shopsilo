@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	gohealthcheck "github.com/amarnathdbg101-coder/go/go-healthcheck"
+	gohealthcheck "shopMe/internal/pkg/healthcheck"
 )
 
 func TestHealthCheckEndpoints(t *testing.T) {

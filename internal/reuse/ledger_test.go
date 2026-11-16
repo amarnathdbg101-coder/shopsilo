@@ -6,7 +6,7 @@ import (
 
 	"shopMe/internal/reuse"
 
-	goledger "github.com/amarnathdbg101-coder/go/go-ledger"
+	goledger "shopMe/internal/pkg/ledger"
 )
 
 func TestReuse_LedgerKhataDoubleEntry(t *testing.T) {

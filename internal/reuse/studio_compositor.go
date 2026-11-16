@@ -3,7 +3,7 @@ package reuse
 import (
 	"image"
 
-	studiocomp "github.com/amarnathdbg101-coder/go/go-studiocomp"
+	studiocomp "shopMe/internal/pkg/studiocomp"
 )
 
 // StudioTheme represents visual studio backdrop and shadow presets.

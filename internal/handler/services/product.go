@@ -4,7 +4,7 @@ package services
 import (
 	"bytes"
 	"context"
-	gocsvkit "github.com/amarnathdbg101-coder/go/go-csvkit"
+	gocsvkit "shopMe/internal/pkg/csvkit"
 	"github.com/xuri/excelize/v2"
 	"errors"
 	"fmt"

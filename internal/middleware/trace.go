@@ -2,7 +2,7 @@
 package middleware
 
 import (
-	"github.com/amarnathdbg101-coder/go/go-w3ctrace"
+	"shopMe/internal/pkg/w3ctrace"
 )
 
 var (

@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	goimagefx "github.com/amarnathdbg101-coder/go/go-imagefx"
+	goimagefx "shopMe/internal/pkg/imagefx"
 )
 
 var bgRemovalHTTPClient = &http.Client{

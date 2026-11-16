@@ -13,7 +13,7 @@ import (
 	"shopMe/internal/servers"
 	"shopMe/internal/utils"
 
-	colorlog "github.com/amarnathdbg101-coder/go/go-colorlog"
+	colorlog "shopMe/internal/pkg/colorlog"
 	"go.uber.org/zap"
 )
 

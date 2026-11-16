@@ -1,7 +1,7 @@
 package reuse
 
 import (
-	goreservation "github.com/amarnathdbg101-coder/go/go-reservation"
+	goreservation "shopMe/internal/pkg/reservation"
 )
 
 // Re-export core reservation types for clean domain use.

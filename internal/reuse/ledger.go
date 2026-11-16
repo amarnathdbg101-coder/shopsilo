@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	goledger "github.com/amarnathdbg101-coder/go/go-ledger"
+	goledger "shopMe/internal/pkg/ledger"
 )
 
 // Re-export core ledger types for clean domain use.

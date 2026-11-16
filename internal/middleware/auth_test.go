@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	gojwt "github.com/amarnathdbg101-coder/go/go-jwt"
+	gojwt "shopMe/internal/pkg/jwt"
 )
 
 func TestJWTAuth_ValidToken(t *testing.T) {

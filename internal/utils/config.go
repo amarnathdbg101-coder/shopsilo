@@ -6,8 +6,8 @@ import (
 	"strings"
 	"sync"
 
-	goenv "github.com/amarnathdbg101-coder/go/go-env"
-	"github.com/amarnathdbg101-coder/go/go-envvalidator"
+	goenv "shopMe/internal/pkg/env"
+	"shopMe/internal/pkg/envvalidator"
 )
 
 type Config struct {

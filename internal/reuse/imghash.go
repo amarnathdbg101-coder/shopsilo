@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"io"
 
-	"github.com/amarnathdbg101-coder/go/go-imghash"
+	"shopMe/internal/pkg/imghash"
 )
 
 const (

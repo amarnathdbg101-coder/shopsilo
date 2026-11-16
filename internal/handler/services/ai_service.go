@@ -24,7 +24,7 @@ import (
 	"shopMe/internal/reuse/ai"
 	"shopMe/internal/utils"
 
-	gogemini "github.com/amarnathdbg101-coder/go/go-gemini"
+	gogemini "shopMe/internal/pkg/gemini"
 )
 
 type AIService interface {

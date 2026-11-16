@@ -1,7 +1,7 @@
 package utils
 
 import (
-	hinglish "github.com/amarnathdbg101-coder/go/go-hinglish"
+	hinglish "shopMe/internal/pkg/hinglish"
 )
 
 // SearchTermGroup represents a group of synonyms for a given search word.

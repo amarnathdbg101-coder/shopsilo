@@ -5,8 +5,8 @@ import (
 	"context"
 	"time"
 
-	gocb "github.com/amarnathdbg101-coder/go/go-circuitbreaker"
-	goretry "github.com/amarnathdbg101-coder/go/go-retry"
+	gocb "shopMe/internal/pkg/circuitbreaker"
+	goretry "shopMe/internal/pkg/retry"
 	"go.uber.org/zap"
 )
 

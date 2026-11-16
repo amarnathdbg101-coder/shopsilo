@@ -6,7 +6,7 @@ import (
 	"math"
 	"time"
 
-	gohumanize "github.com/amarnathdbg101-coder/go/go-humanize"
+	gohumanize "shopMe/internal/pkg/humanize"
 )
 
 // HumanizeIndianRupees formats a decimal rupee amount into standard Indian grouped format (e.g. "₹12,50,000.50").

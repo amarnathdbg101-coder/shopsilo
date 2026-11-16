@@ -3,7 +3,7 @@ package utils
 import (
 	"time"
 
-	"github.com/amarnathdbg101-coder/go/go-bizhours"
+	"shopMe/internal/pkg/bizhours"
 )
 
 // ShopLiveStatus defines operating states for customer-facing store discovery.

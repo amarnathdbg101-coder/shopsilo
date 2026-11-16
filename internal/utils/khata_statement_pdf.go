@@ -4,7 +4,7 @@ package utils
 import (
 	"shopMe/internal/handler/model"
 
-	gomask "github.com/amarnathdbg101-coder/go/go-mask"
+	gomask "shopMe/internal/pkg/mask"
 )
 
 func maskPhone(phone string) string {

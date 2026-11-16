@@ -3,7 +3,7 @@ package worker
 import (
 	"context"
 
-	goworkerpool "github.com/amarnathdbg101-coder/go/go-workerpool"
+	goworkerpool "shopMe/internal/pkg/workerpool"
 	"go.uber.org/zap"
 )
 

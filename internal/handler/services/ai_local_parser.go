@@ -4,7 +4,7 @@ import (
 	"math"
 	"strings"
 
-	"github.com/amarnathdbg101-coder/go/go-parchi"
+	"shopMe/internal/pkg/parchi"
 	"shopMe/internal/handler/dto"
 )
 

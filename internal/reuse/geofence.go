@@ -4,7 +4,7 @@ package reuse
 import (
 	"errors"
 
-	"github.com/amarnathdbg101-coder/go/go-geofence"
+	"shopMe/internal/pkg/geofence"
 )
 
 // DeliveryPoint represents a GPS location for geofencing.

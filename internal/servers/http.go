@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	goshutdown "github.com/amarnathdbg101-coder/go/go-shutdown"
+	goshutdown "shopMe/internal/pkg/shutdown"
 	"shopMe/internal/reuse"
 	"shopMe/internal/worker"
 	"go.uber.org/zap"

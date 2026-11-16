@@ -3,7 +3,7 @@ package reuse
 import (
 	"net/http"
 
-	"github.com/amarnathdbg101-coder/go/go-paginate"
+	"shopMe/internal/pkg/paginate"
 )
 
 // PaginationParams aliases the standardized pagination parameters.

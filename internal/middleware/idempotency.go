@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/amarnathdbg101-coder/go/go-idempotency"
+	"shopMe/internal/pkg/idempotency"
 )
 
 var defaultIdempotencyEngine, _ = idempotency.New(

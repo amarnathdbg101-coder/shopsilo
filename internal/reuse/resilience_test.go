@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	gocb "github.com/amarnathdbg101-coder/go/go-circuitbreaker"
+	gocb "shopMe/internal/pkg/circuitbreaker"
 	"shopMe/internal/reuse"
 )
 

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	golru "github.com/amarnathdbg101-coder/go/go-lru"
+	golru "shopMe/internal/pkg/lru"
 	"shopMe/internal/handler/model"
 	"shopMe/internal/handler/repository"
 )

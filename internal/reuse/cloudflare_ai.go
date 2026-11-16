@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	goclos "github.com/amarnathdbg101-coder/go/go-cloudflare"
+	goclos "shopMe/internal/pkg/cloudflare"
 	"shopMe/internal/utils"
 )
 

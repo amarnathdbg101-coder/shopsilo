@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	gourlsigner "github.com/amarnathdbg101-coder/go/go-urlsigner"
+	gourlsigner "shopMe/internal/pkg/urlsigner"
 	"shopMe/internal/utils"
 )
 

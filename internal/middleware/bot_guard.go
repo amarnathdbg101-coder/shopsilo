@@ -2,7 +2,7 @@
 package middleware
 
 import (
-	"github.com/amarnathdbg101-coder/go/go-deadlock"
+	"shopMe/internal/pkg/deadlock"
 	"net/http"
 	"net/url"
 	"regexp"

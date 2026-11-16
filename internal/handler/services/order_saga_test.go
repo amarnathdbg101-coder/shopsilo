@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	saga "github.com/amarnathdbg101-coder/go/go-saga"
+	saga "shopMe/internal/pkg/saga"
 )
 
 func TestOrderSaga_SuccessfulOrchestration(t *testing.T) {

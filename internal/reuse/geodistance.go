@@ -1,7 +1,7 @@
 package reuse
 
 import (
-	gogeodistance "github.com/amarnathdbg101-coder/go/go-geodistance"
+	gogeodistance "shopMe/internal/pkg/geodistance"
 )
 
 // GeoPoint represents geographic latitude and longitude.

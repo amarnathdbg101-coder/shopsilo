@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/amarnathdbg101-coder/go/go-bulkhead"
+	"shopMe/internal/pkg/bulkhead"
 )
 
 var (

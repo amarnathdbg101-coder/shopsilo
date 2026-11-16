@@ -1,7 +1,7 @@
 package utils
 
 import (
-	"github.com/amarnathdbg101-coder/go/go-retailtaxo"
+	"shopMe/internal/pkg/retailtaxo"
 )
 
 // CanonicalCategoryInfo defines standard metadata and synonyms for a canonical category.

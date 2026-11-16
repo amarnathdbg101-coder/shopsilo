@@ -4,7 +4,7 @@ package reuse
 import (
 	"time"
 
-	"github.com/amarnathdbg101-coder/go/go-tinylfu"
+	"shopMe/internal/pkg/tinylfu"
 )
 
 // ExpiringValue wraps cached values with an absolute expiration deadline.

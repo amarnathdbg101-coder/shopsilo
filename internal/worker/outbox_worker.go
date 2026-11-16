@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
-	gooutbox "github.com/amarnathdbg101-coder/go/go-outbox"
+	gooutbox "shopMe/internal/pkg/outbox"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"go.uber.org/zap"

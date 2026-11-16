@@ -2,7 +2,7 @@
 package middleware
 
 import (
-	"github.com/amarnathdbg101-coder/go/go-adaptivelimit"
+	"shopMe/internal/pkg/adaptivelimit"
 )
 
 var (

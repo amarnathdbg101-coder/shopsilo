@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	sqlscan "github.com/amarnathdbg101-coder/go/go-sqlscan"
+	sqlscan "shopMe/internal/pkg/sqlscan"
 )
 
 func TestSqlScan_CategoryHydration(t *testing.T) {

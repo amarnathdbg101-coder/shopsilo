@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math"
 
-	gomoney "github.com/amarnathdbg101-coder/go/go-money"
+	gomoney "shopMe/internal/pkg/money"
 )
 
 // INR creates a Money instance in Indian Rupees from a standard decimal float.

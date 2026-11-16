@@ -4,7 +4,7 @@ package utils
 import (
 	"errors"
 
-	"github.com/amarnathdbg101-coder/go/go-phone"
+	"shopMe/internal/pkg/phone"
 )
 
 var (
