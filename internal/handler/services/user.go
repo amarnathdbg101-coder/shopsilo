@@ -36,13 +36,13 @@ type UserService struct {
 	otpRepo      *repository.PhoneVerificationRepo
 	shopRepo     *repository.ShopRepo
 	categoryRepo *repository.CategoryRepo
-	smsService   SMSService
+	smsService   *SMSService
 }
 
 func NewUserService(repo *repository.UserRepo) *UserService {
 	return &UserService{
 		repo:       repo,
-		smsService: NewDefaultSMSService(),
+		smsService: NewSMSService(),
 	}
 }
 
@@ -74,7 +74,7 @@ func (s *UserService) SetCategoryRepo(categoryRepo *repository.CategoryRepo) {
 	s.categoryRepo = categoryRepo
 }
 
-func (s *UserService) SetSMSService(smsService SMSService) {
+func (s *UserService) SetSMSService(smsService *SMSService) {
 	if s == nil {
 		return
 	}

@@ -58,7 +58,7 @@ type Services struct {
 	Loyalty      *services.LoyaltyService
 	Catalog      *services.CatalogService
 	Telemetry    *services.TelemetryService
-	AI           services.AIService
+	AI           *services.AIService
 	POS          *services.POSService
 	Staff        *services.StaffService
 	Location     *services.LocationService
@@ -93,7 +93,7 @@ type Controllers struct {
 	Loyalty       *controller.LoyaltyController
 	Catalog       *controller.CatalogController
 	Telemetry     *controller.TelemetryController
-	AI            controller.AIController
+	AI            *controller.AIController
 	POS           *controller.POSController
 	WebSocket     *controller.WebSocketController
 	Staff         *controller.StaffController

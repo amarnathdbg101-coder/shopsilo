@@ -14,26 +14,19 @@ import (
 	"time"
 )
 
-// SMSService defines the contract for dispatching notifications and OTPs via SMS and WhatsApp.
-type SMSService interface {
-	SendRegistrationOTP(ctx context.Context, phone, otp string) error
-	SendRegistrationWhatsAppOTP(ctx context.Context, phone, otp string) error
-}
-
-// DefaultSMSService implements SMSService with support for Meta WhatsApp Cloud API,
-// SMS gateways (e.g. Fast2SMS/Twilio), and seamless development fallbacks.
-type DefaultSMSService struct {
+// SMSService provides OTP and notification dispatching via Meta WhatsApp Cloud API and SMS gateways.
+type SMSService struct {
 	httpClient *http.Client
 }
 
-func NewDefaultSMSService() *DefaultSMSService {
-	return &DefaultSMSService{
+func NewSMSService() *SMSService {
+	return &SMSService{
 		httpClient: &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
 // SendRegistrationWhatsAppOTP dispatches the OTP via official Meta WhatsApp Cloud API.
-func (s *DefaultSMSService) SendRegistrationWhatsAppOTP(ctx context.Context, phone, otp string) error {
+func (s *SMSService) SendRegistrationWhatsAppOTP(ctx context.Context, phone, otp string) error {
 	token := os.Getenv("WHATSAPP_ACCESS_TOKEN")
 	phoneID := os.Getenv("WHATSAPP_PHONE_NUMBER_ID")
 
@@ -127,7 +120,7 @@ func (s *DefaultSMSService) SendRegistrationWhatsAppOTP(ctx context.Context, pho
 }
 
 // SendRegistrationOTP dispatches the OTP via standard SMS gateway.
-func (s *DefaultSMSService) SendRegistrationOTP(ctx context.Context, phone, otp string) error {
+func (s *SMSService) SendRegistrationOTP(ctx context.Context, phone, otp string) error {
 	apiKey := os.Getenv("SMS_API_KEY")
 	if apiKey == "" {
 		// Development fallback
@@ -139,7 +132,7 @@ func (s *DefaultSMSService) SendRegistrationOTP(ctx context.Context, phone, otp 
 	return s.dispatchExternalSMS(ctx, phone, fmt.Sprintf("Your Shopsilo registration OTP is %s. Valid for 5 minutes. Do not share it with anyone.", otp))
 }
 
-func (s *DefaultSMSService) dispatchExternalSMS(ctx context.Context, phone, message string) error {
+func (s *SMSService) dispatchExternalSMS(ctx context.Context, phone, message string) error {
 	fast2smsURL := os.Getenv("FAST2SMS_URL")
 	if fast2smsURL == "" {
 		fast2smsURL = "https://www.fast2sms.com/dev/bulkV2"

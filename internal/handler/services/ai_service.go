@@ -26,22 +26,6 @@ import (
 	"shopMe/internal/utils"
 )
 
-type AIService interface {
-	CustomerChat(ctx context.Context, req dto.CustomerAIChatRequest) (*dto.CustomerAIChatResponse, error)
-	MerchantCopilot(ctx context.Context, userID string, req dto.MerchantAICopilotRequest) (*dto.MerchantAICopilotResponse, error)
-	ScanProduct(ctx context.Context, req dto.AIScanProductRequest) (*dto.AIScanProductResponse, error)
-	ParseParchi(ctx context.Context, req dto.ParseParchiRequest) (*dto.ParseParchiResponse, error)
-	SemanticSearch(ctx context.Context, req dto.SemanticSearchRequest) (*dto.SemanticSearchResponse, error)
-	VoiceBill(ctx context.Context, req dto.VoiceBillRequest) (*dto.VoiceBillResponse, error)
-	GenerateMarketingCampaign(ctx context.Context, req dto.AIMarketingCampaignRequest) (*dto.AIMarketingCampaignResponse, error)
-	BargainAssist(ctx context.Context, req dto.AIBargainAssistRequest) (*dto.AIBargainAssistResponse, error)
-	ParseSupplierInvoice(ctx context.Context, req dto.ParseSupplierInvoiceRequest) (*dto.ParseSupplierInvoiceResponse, error)
-	GetCrossSellRecommendations(ctx context.Context, req dto.AICrossSellRequest) (*dto.AICrossSellResponse, error)
-	GetDeadStockBundleSuggestions(ctx context.Context, shopID string) (*dto.AIDeadStockBundleResponse, error)
-	GenerateSmartRecoveryNudge(ctx context.Context, req dto.AIRecoveryNudgeRequest) (*dto.AIRecoveryNudgeResponse, error)
-	SmartStudioScan(ctx context.Context, req dto.SmartStudioScanRequest) (*dto.SmartStudioScanResponse, error)
-}
-
 type aiCacheEntry struct {
 	response  string
 	expiresAt time.Time
@@ -87,13 +71,13 @@ func setAICache(key, resp string, ttl time.Duration) {
 	}
 }
 
-type aiService struct {
+type AIService struct {
 	shopRepo *repository.ShopRepo
 	client   *http.Client
 	rotator  *ai.KeyRotator
 }
 
-func NewAIService(shopRepo *repository.ShopRepo) AIService {
+func NewAIService(shopRepo *repository.ShopRepo) *AIService {
 	transport := &http.Transport{
 		MaxIdleConns:        200,
 		MaxIdleConnsPerHost: 50,
@@ -114,7 +98,7 @@ func NewAIService(shopRepo *repository.ShopRepo) AIService {
 		fmt.Printf("[AIService] Initialized with %d active Gemini key(s). Models: %v\n", len(keys), getGeminiModels())
 	}
 
-	return &aiService{
+	return &AIService{
 		shopRepo: shopRepo,
 		client: &http.Client{
 			Transport: transport,
@@ -201,7 +185,7 @@ type geminiCandidateResponse struct {
 	} `json:"error,omitempty"`
 }
 
-func (s *aiService) CustomerChat(ctx context.Context, req dto.CustomerAIChatRequest) (*dto.CustomerAIChatResponse, error) {
+func (s *AIService) CustomerChat(ctx context.Context, req dto.CustomerAIChatRequest) (*dto.CustomerAIChatResponse, error) {
 	loc := req.CurrentLocation
 	if loc == "" {
 		loc = "Current Local Area"
@@ -302,7 +286,7 @@ ACTIONS INSTRUCTION:
 	}, nil
 }
 
-func (s *aiService) MerchantCopilot(ctx context.Context, userID string, req dto.MerchantAICopilotRequest) (*dto.MerchantAICopilotResponse, error) {
+func (s *AIService) MerchantCopilot(ctx context.Context, userID string, req dto.MerchantAICopilotRequest) (*dto.MerchantAICopilotResponse, error) {
 	var shopDetails string
 	if s.shopRepo != nil && userID != "" {
 		shop, err := s.shopRepo.FindByUserID(ctx, userID)
@@ -433,7 +417,7 @@ SUPPORTED ACTIONS:
 }
 
 // ── 1. Packet & Product Vision Scanner (10+ Attributes Extraction) ──
-func (s *aiService) ScanProduct(ctx context.Context, req dto.AIScanProductRequest) (*dto.AIScanProductResponse, error) {
+func (s *AIService) ScanProduct(ctx context.Context, req dto.AIScanProductRequest) (*dto.AIScanProductResponse, error) {
 	mimeType := req.MimeType
 	if mimeType == "" {
 		mimeType = "image/jpeg"
@@ -573,7 +557,7 @@ CRITICAL CATALOGING SPECIALIST RULES:
 }
 
 // ── 2. WhatsApp Grocery Parchi Matcher ──
-func (s *aiService) ParseParchi(ctx context.Context, req dto.ParseParchiRequest) (*dto.ParseParchiResponse, error) {
+func (s *AIService) ParseParchi(ctx context.Context, req dto.ParseParchiRequest) (*dto.ParseParchiResponse, error) {
 	rawText := strings.TrimSpace(req.RawText)
 	if rawText == "" {
 		return &dto.ParseParchiResponse{}, nil
@@ -649,7 +633,7 @@ Return pure valid JSON:
 }
 
 // ── 3. AI Semantic Search ──
-func (s *aiService) SemanticSearch(ctx context.Context, req dto.SemanticSearchRequest) (*dto.SemanticSearchResponse, error) {
+func (s *AIService) SemanticSearch(ctx context.Context, req dto.SemanticSearchRequest) (*dto.SemanticSearchResponse, error) {
 	cleanQuery := strings.ToLower(strings.TrimSpace(req.Query))
 	cacheKey := fmt.Sprintf("search:%s", hashString(cleanQuery))
 
@@ -699,7 +683,7 @@ Return JSON:
 }
 
 // ── 4. Voice-to-Bill Counter Assistant ──
-func (s *aiService) VoiceBill(ctx context.Context, req dto.VoiceBillRequest) (*dto.VoiceBillResponse, error) {
+func (s *AIService) VoiceBill(ctx context.Context, req dto.VoiceBillRequest) (*dto.VoiceBillResponse, error) {
 	spoken := strings.TrimSpace(req.SpokenText)
 	if spoken == "" {
 		return &dto.VoiceBillResponse{SpokenText: ""}, nil
@@ -768,7 +752,7 @@ Return JSON:
 }
 
 // ── 5. AI Marketing Campaign Generator ──
-func (s *aiService) GenerateMarketingCampaign(ctx context.Context, req dto.AIMarketingCampaignRequest) (*dto.AIMarketingCampaignResponse, error) {
+func (s *AIService) GenerateMarketingCampaign(ctx context.Context, req dto.AIMarketingCampaignRequest) (*dto.AIMarketingCampaignResponse, error) {
 	festival := req.FestivalName
 	if festival == "" {
 		festival = "Special Dukan Sale"
@@ -811,7 +795,7 @@ Return JSON:
 }
 
 // ── 6. Counter Pricing & Margin Guidance ──
-func (s *aiService) BargainAssist(ctx context.Context, req dto.AIBargainAssistRequest) (*dto.AIBargainAssistResponse, error) {
+func (s *AIService) BargainAssist(ctx context.Context, req dto.AIBargainAssistRequest) (*dto.AIBargainAssistResponse, error) {
 	// Deterministic retail margin calculation: protects shopkeeper without LLM token burn or latency
 	minSafePrice := math.Max(req.CostPrice*1.08, req.MRP*0.90)
 	idealDealPrice := math.Max(req.CostPrice*1.15, req.MRP*0.95)
@@ -830,7 +814,7 @@ func (s *aiService) BargainAssist(ctx context.Context, req dto.AIBargainAssistRe
 }
 
 // ── 7. Supplier Invoice / Wholesale Bill OCR Ingestion (FEAT-POS-02) ──
-func (s *aiService) ParseSupplierInvoice(ctx context.Context, req dto.ParseSupplierInvoiceRequest) (*dto.ParseSupplierInvoiceResponse, error) {
+func (s *AIService) ParseSupplierInvoice(ctx context.Context, req dto.ParseSupplierInvoiceRequest) (*dto.ParseSupplierInvoiceResponse, error) {
 	mimeType := req.MimeType
 	if mimeType == "" {
 		mimeType = "image/jpeg"
@@ -961,7 +945,7 @@ Return ONLY valid JSON:
 }
 
 // ── 8. POS Real-Time Cross-Sell & Look-Stylist Recommendations (FEAT-SLS-01 & FEAT-FSH-02) ──
-func (s *aiService) GetCrossSellRecommendations(ctx context.Context, req dto.AICrossSellRequest) (*dto.AICrossSellResponse, error) {
+func (s *AIService) GetCrossSellRecommendations(ctx context.Context, req dto.AICrossSellRequest) (*dto.AICrossSellResponse, error) {
 	nameLower := strings.ToLower(strings.TrimSpace(req.ScannedProductName))
 	resp := &dto.AICrossSellResponse{
 		ScannedProduct:  req.ScannedProductName,
@@ -1061,7 +1045,7 @@ Return pure JSON: {"suggested_product_name":"...","category":"...","estimated_pr
 }
 
 // ── 9. Dead-Stock Smart Bundling Copilot (FEAT-INV-02) ──
-func (s *aiService) GetDeadStockBundleSuggestions(ctx context.Context, shopID string) (*dto.AIDeadStockBundleResponse, error) {
+func (s *AIService) GetDeadStockBundleSuggestions(ctx context.Context, shopID string) (*dto.AIDeadStockBundleResponse, error) {
 	// Rule-Based Smart Bundles to liquidate slow inventory safely above cost price
 	bundles := []dto.AIDeadStockBundle{
 		{
@@ -1102,7 +1086,7 @@ func (s *aiService) GetDeadStockBundleSuggestions(ctx context.Context, shopID st
 }
 
 // ── 10. Psychology-Based Respectful WhatsApp Recovery Nudges (FEAT-KHT-04) ──
-func (s *aiService) GenerateSmartRecoveryNudge(ctx context.Context, req dto.AIRecoveryNudgeRequest) (*dto.AIRecoveryNudgeResponse, error) {
+func (s *AIService) GenerateSmartRecoveryNudge(ctx context.Context, req dto.AIRecoveryNudgeRequest) (*dto.AIRecoveryNudgeResponse, error) {
 	shopName := req.ShopName
 	if shopName == "" {
 		shopName = "Apki Apni Dukan"
@@ -1140,7 +1124,7 @@ func (s *aiService) GenerateSmartRecoveryNudge(ctx context.Context, req dto.AIRe
 	}, nil
 }
 
-func (s *aiService) callGeminiWithFallback(ctx context.Context, explicitKey string, payload geminiPayload) (string, error) {
+func (s *AIService) callGeminiWithFallback(ctx context.Context, explicitKey string, payload geminiPayload) (string, error) {
 	keyAttempts := s.rotator.KeyCount()
 	if keyAttempts <= 0 {
 		keyAttempts = 1
@@ -1187,7 +1171,7 @@ func (s *aiService) callGeminiWithFallback(ctx context.Context, explicitKey stri
 	return "", lastErr
 }
 
-func (s *aiService) callSingleGeminiModel(ctx context.Context, apiKey, model string, payload geminiPayload) (string, int, error) {
+func (s *AIService) callSingleGeminiModel(ctx context.Context, apiKey, model string, payload geminiPayload) (string, int, error) {
 	modelCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
@@ -1407,7 +1391,7 @@ func parseMerchantAction(raw string, _ string) (string, string) {
 
 // SmartStudioScan performs simple product scan: extracts details via Gemini Vision and uploads original image untouched.
 // Background removal and light enhancement have been completely removed per request.
-func (s *aiService) SmartStudioScan(ctx context.Context, req dto.SmartStudioScanRequest) (*dto.SmartStudioScanResponse, error) {
+func (s *AIService) SmartStudioScan(ctx context.Context, req dto.SmartStudioScanRequest) (*dto.SmartStudioScanResponse, error) {
 	startTime := time.Now()
 
 	// 1. Decode raw image bytes

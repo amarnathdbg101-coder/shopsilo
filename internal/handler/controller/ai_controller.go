@@ -13,31 +13,15 @@ import (
 	"shopMe/internal/reuse"
 )
 
-type AIController interface {
-	CustomerChat(w http.ResponseWriter, r *http.Request)
-	MerchantCopilot(w http.ResponseWriter, r *http.Request)
-	ScanProduct(w http.ResponseWriter, r *http.Request)
-	SmartStudioScan(w http.ResponseWriter, r *http.Request)
-	ParseParchi(w http.ResponseWriter, r *http.Request)
-	SemanticSearch(w http.ResponseWriter, r *http.Request)
-	VoiceBill(w http.ResponseWriter, r *http.Request)
-	GenerateMarketingCampaign(w http.ResponseWriter, r *http.Request)
-	BargainAssist(w http.ResponseWriter, r *http.Request)
-	ParseSupplierInvoice(w http.ResponseWriter, r *http.Request)
-	GetCrossSellRecommendations(w http.ResponseWriter, r *http.Request)
-	GetDeadStockBundles(w http.ResponseWriter, r *http.Request)
-	GenerateSmartRecoveryNudge(w http.ResponseWriter, r *http.Request)
+type AIController struct {
+	aiService *services.AIService
 }
 
-type aiController struct {
-	aiService services.AIService
+func NewAIController(aiService *services.AIService) *AIController {
+	return &AIController{aiService: aiService}
 }
 
-func NewAIController(aiService services.AIService) AIController {
-	return &aiController{aiService: aiService}
-}
-
-func (c *aiController) CustomerChat(w http.ResponseWriter, r *http.Request) {
+func (c *AIController) CustomerChat(w http.ResponseWriter, r *http.Request) {
 	var req dto.CustomerAIChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		reuse.Error(w, http.StatusBadRequest, "invalid request body")
@@ -58,7 +42,7 @@ func (c *aiController) CustomerChat(w http.ResponseWriter, r *http.Request) {
 	reuse.Success(w, "AI response generated", resp)
 }
 
-func (c *aiController) MerchantCopilot(w http.ResponseWriter, r *http.Request) {
+func (c *AIController) MerchantCopilot(w http.ResponseWriter, r *http.Request) {
 	claims, ok := r.Context().Value(middleware.ContextKeyUser).(*middleware.Claims)
 	var userID string
 	if ok && claims != nil {
@@ -85,7 +69,7 @@ func (c *aiController) MerchantCopilot(w http.ResponseWriter, r *http.Request) {
 	reuse.Success(w, "Merchant Copilot response generated", resp)
 }
 
-func (c *aiController) ScanProduct(w http.ResponseWriter, r *http.Request) {
+func (c *AIController) ScanProduct(w http.ResponseWriter, r *http.Request) {
 	var req dto.AIScanProductRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		reuse.Error(w, http.StatusBadRequest, "invalid request body")
@@ -106,7 +90,7 @@ func (c *aiController) ScanProduct(w http.ResponseWriter, r *http.Request) {
 	reuse.Success(w, "Product packet scanned successfully", resp)
 }
 
-func (c *aiController) SmartStudioScan(w http.ResponseWriter, r *http.Request) {
+func (c *AIController) SmartStudioScan(w http.ResponseWriter, r *http.Request) {
 	var req dto.SmartStudioScanRequest
 
 	// Check if multipart form was sent (direct camera photo upload)
@@ -144,7 +128,7 @@ func (c *aiController) SmartStudioScan(w http.ResponseWriter, r *http.Request) {
 	reuse.Success(w, "Product smart studio scan completed successfully", resp)
 }
 
-func (c *aiController) ParseParchi(w http.ResponseWriter, r *http.Request) {
+func (c *AIController) ParseParchi(w http.ResponseWriter, r *http.Request) {
 	var req dto.ParseParchiRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		reuse.Error(w, http.StatusBadRequest, "invalid request body")
@@ -165,7 +149,7 @@ func (c *aiController) ParseParchi(w http.ResponseWriter, r *http.Request) {
 	reuse.Success(w, "Parchi parsed successfully", resp)
 }
 
-func (c *aiController) SemanticSearch(w http.ResponseWriter, r *http.Request) {
+func (c *AIController) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 	var req dto.SemanticSearchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		reuse.Error(w, http.StatusBadRequest, "invalid request body")
@@ -186,7 +170,7 @@ func (c *aiController) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 	reuse.Success(w, "Semantic search intent resolved", resp)
 }
 
-func (c *aiController) VoiceBill(w http.ResponseWriter, r *http.Request) {
+func (c *AIController) VoiceBill(w http.ResponseWriter, r *http.Request) {
 	var req dto.VoiceBillRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		reuse.Error(w, http.StatusBadRequest, "invalid request body")
@@ -207,7 +191,7 @@ func (c *aiController) VoiceBill(w http.ResponseWriter, r *http.Request) {
 	reuse.Success(w, "Voice bill parsed successfully", resp)
 }
 
-func (c *aiController) GenerateMarketingCampaign(w http.ResponseWriter, r *http.Request) {
+func (c *AIController) GenerateMarketingCampaign(w http.ResponseWriter, r *http.Request) {
 	var req dto.AIMarketingCampaignRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		reuse.Error(w, http.StatusBadRequest, "invalid request body")
@@ -223,7 +207,7 @@ func (c *aiController) GenerateMarketingCampaign(w http.ResponseWriter, r *http.
 	reuse.Success(w, "Marketing campaign generated successfully", resp)
 }
 
-func (c *aiController) BargainAssist(w http.ResponseWriter, r *http.Request) {
+func (c *AIController) BargainAssist(w http.ResponseWriter, r *http.Request) {
 	var req dto.AIBargainAssistRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		reuse.Error(w, http.StatusBadRequest, "invalid request body")
@@ -244,7 +228,7 @@ func (c *aiController) BargainAssist(w http.ResponseWriter, r *http.Request) {
 	reuse.Success(w, "Bargain assist advice generated successfully", resp)
 }
 
-func (c *aiController) ParseSupplierInvoice(w http.ResponseWriter, r *http.Request) {
+func (c *AIController) ParseSupplierInvoice(w http.ResponseWriter, r *http.Request) {
 	var req dto.ParseSupplierInvoiceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		reuse.Error(w, http.StatusBadRequest, "invalid request body")
@@ -265,7 +249,7 @@ func (c *aiController) ParseSupplierInvoice(w http.ResponseWriter, r *http.Reque
 	reuse.Success(w, "Supplier invoice parsed successfully via OCR", resp)
 }
 
-func (c *aiController) GetCrossSellRecommendations(w http.ResponseWriter, r *http.Request) {
+func (c *AIController) GetCrossSellRecommendations(w http.ResponseWriter, r *http.Request) {
 	var req dto.AICrossSellRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		reuse.Error(w, http.StatusBadRequest, "invalid request body")
@@ -286,7 +270,7 @@ func (c *aiController) GetCrossSellRecommendations(w http.ResponseWriter, r *htt
 	reuse.Success(w, "Cross-sell recommendations generated", resp)
 }
 
-func (c *aiController) GetDeadStockBundles(w http.ResponseWriter, r *http.Request) {
+func (c *AIController) GetDeadStockBundles(w http.ResponseWriter, r *http.Request) {
 	shopID := r.URL.Query().Get("shop_id")
 	resp, err := c.aiService.GetDeadStockBundleSuggestions(r.Context(), shopID)
 	if err != nil {
@@ -297,7 +281,7 @@ func (c *aiController) GetDeadStockBundles(w http.ResponseWriter, r *http.Reques
 	reuse.Success(w, "Dead stock liquidation bundles suggested", resp)
 }
 
-func (c *aiController) GenerateSmartRecoveryNudge(w http.ResponseWriter, r *http.Request) {
+func (c *AIController) GenerateSmartRecoveryNudge(w http.ResponseWriter, r *http.Request) {
 	var req dto.AIRecoveryNudgeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		reuse.Error(w, http.StatusBadRequest, "invalid request body")
