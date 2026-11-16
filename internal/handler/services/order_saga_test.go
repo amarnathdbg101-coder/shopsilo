@@ -4,14 +4,12 @@ import (
 	"context"
 	"errors"
 	"testing"
-
-	saga "shopMe/internal/pkg/saga"
 )
 
 func TestOrderSaga_SuccessfulOrchestration(t *testing.T) {
 	var stepOrder []string
 
-	coord := saga.New()
+	coord := newSagaCoordinator()
 	coord.AddStep(
 		"ValidateCart",
 		func(ctx context.Context) error {
@@ -73,7 +71,7 @@ func TestOrderSaga_SuccessfulOrchestration(t *testing.T) {
 func TestOrderSaga_ReverseCompensationOnFailure(t *testing.T) {
 	var stepLog []string
 
-	coord := saga.New()
+	coord := newSagaCoordinator()
 	// Step 1: Validate
 	coord.AddStep(
 		"ValidateOrder",
@@ -156,7 +154,7 @@ func TestOrderSaga_ContextCancellationCompensates(t *testing.T) {
 	var step1Compensated bool
 	ctx, cancel := context.WithCancel(context.Background())
 
-	coord := saga.New()
+	coord := newSagaCoordinator()
 	coord.AddStep(
 		"ReserveInventory",
 		func(c context.Context) error {
@@ -191,7 +189,7 @@ func TestOrderSaga_ContextCancellationCompensates(t *testing.T) {
 func TestOrderSaga_ObservabilityHook(t *testing.T) {
 	var observedEvents []string
 
-	coord := saga.New()
+	coord := newSagaCoordinator()
 	coord.OnStepEvent(func(name, phase string, err error) {
 		observedEvents = append(observedEvents, name+":"+phase)
 	})

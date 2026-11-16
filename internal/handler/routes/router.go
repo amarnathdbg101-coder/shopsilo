@@ -2,17 +2,16 @@
 package routes
 
 import (
-	"context"
-	"time"
+	"net/http"
 
 	"shopMe/internal/app"
 	"shopMe/internal/middleware"
+	"shopMe/internal/reuse"
 	"shopMe/internal/utils"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
-	gohealthcheck "shopMe/internal/pkg/healthcheck"
 	"go.uber.org/zap"
 )
 
@@ -56,11 +55,9 @@ func RouteSetup(c *app.Container) chi.Router {
 	// Global middlewares
 	r.Use(chimw.RequestID)
 	r.Use(chimw.RealIP)
-	r.Use(middleware.TraceMiddleware)
 	r.Use(middleware.BotGuard)
 	r.Use(middleware.BodySizeGuard(2 << 20))
 	r.Use(chimw.Compress(5))
-	r.Use(middleware.AdaptiveLimiterMiddleware)
 	r.Use(middleware.GlobalRateLimiter.Middleware())
 	r.Use(middleware.BanGuard(c.Repos.Moderation))
 	r.Use(chimw.Recoverer)
@@ -68,20 +65,32 @@ func RouteSetup(c *app.Container) chi.Router {
 	r.Use(middleware.SecurityHeaders)
 	r.Use(middleware.IdempotencyGuard)
 
-	// Production Health, Readiness & Liveness Orchestrator (Render / Kubernetes / Docker)
-	// Powered by zero-dependency go-healthcheck with 1s ping caching to protect database from health probes
-	healthManager := gohealthcheck.New(gohealthcheck.Config{
-		Timeout:  2 * time.Second,
-		CacheTTL: 1 * time.Second,
+	// Production Health, Readiness & Liveness endpoints
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		if err := c.DB.Ping(r.Context()); err != nil {
+			reuse.Error(w, http.StatusServiceUnavailable, "database ping failed")
+			return
+		}
+		reuse.Success(w, "ShopMe API is healthy and operational", map[string]string{
+			"status": "healthy",
+		})
 	})
-	healthManager.RegisterReadiness(gohealthcheck.NewCheckFunc("postgres", func(ctx context.Context) error {
-		return c.DB.Ping(ctx)
-	}))
-	healthManager.RegisterLiveness(gohealthcheck.NewMemoryChecker("heap_memory", 1024*1024*1024)) // 1GB heap limit
-
-	r.Get("/health", healthManager.ReadyHandler())
-	r.Get("/readyz", healthManager.ReadyHandler())
-	r.Get("/livez", healthManager.LiveHandler())
+	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if err := c.DB.Ping(r.Context()); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"status":"DOWN","details":{"postgres":"error"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"UP","details":{"postgres":"healthy"}}`))
+	})
+	r.Get("/livez", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"UP"}`))
+	})
 
 	// Centralized Feature Registry & Discovery endpoint
 	r.Get("/features", c.Features.ServeHTTP)
@@ -119,24 +128,20 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/catalog/lookup", catalogc.Lookup)                          // Both - query param fallback ?barcode=
 		r.Get("/catalog/search", catalogc.Search)                          // Both - Master Barcode Catalog Search
 		r.Get("/home-feed", sc.GetHomeFeed)                                // Customer
-		// Isolated AI Concurrency Bulkhead (max 8 parallel AI queries to prevent CPU starvation)
-		r.Group(func(r chi.Router) {
-			r.Use(middleware.BulkheadGuard(middleware.AIBulkhead, "AI Studio & Vision Engine"))
-			r.Post("/ai/customer-chat", aic.CustomerChat)                      // Customer
-			r.Post("/ai/scan-product", aic.ScanProduct)                        // Both
-			r.Post("/ai/smart-studio-scan", aic.SmartStudioScan)                // Both - Intelligent Vision + Studio Engine
-			r.Post("/ai/parse-parchi", aic.ParseParchi)                        // Both
-			r.Post("/ai/semantic-search", aic.SemanticSearch)                  // Customer
-			r.Post("/ai/voice-bill", aic.VoiceBill)                            // Shop
-			r.Post("/ai/marketing-campaign", aic.GenerateMarketingCampaign)   // Shop
-			r.Post("/ai/bargain-assist", aic.BargainAssist)                    // Both
-		})
+		r.Post("/ai/customer-chat", aic.CustomerChat)                      // Customer
+		r.Post("/ai/scan-product", aic.ScanProduct)                        // Both
+		r.Post("/ai/smart-studio-scan", aic.SmartStudioScan)                // Both - Intelligent Vision + Studio Engine
+		r.Post("/ai/parse-parchi", aic.ParseParchi)                        // Both
+		r.Post("/ai/semantic-search", aic.SemanticSearch)                  // Customer
+		r.Post("/ai/voice-bill", aic.VoiceBill)                            // Shop
+		r.Post("/ai/marketing-campaign", aic.GenerateMarketingCampaign)   // Shop
+		r.Post("/ai/bargain-assist", aic.BargainAssist)                    // Both
 		r.Get("/categories", catc.List)                                    // Both
 		r.Get("/shops", sc.List)                                           // Customer
 		r.Get("/shops/{id}", sc.GetByID)                                   // Customer
 		r.Get("/shops/slug/{slug}", sc.GetBySlug)                          // Customer
 		r.Get("/shops/{slug}/qr", sc.GetShopQR)                            // Customer
-		r.With(middleware.BulkheadGuard(middleware.PDFBulkhead, "Printable Standee PDF Engine")).Get("/shops/{slug}/standee.pdf", sc.GetShopStandeePDF)           // Customer Printable Standee
+		r.Get("/shops/{slug}/standee.pdf", sc.GetShopStandeePDF)           // Customer Printable Standee
 		r.Get("/shops/{slug}/products", pc.ListByShop)                     // Customer
 		r.Get("/shops/{slug}/live", wsc.ServePublicStorefrontWebSocket)    // Real-Time Storefront Live Channel
 		r.Get("/shops/{slug}/reviews", revc.List)                          // Customer
@@ -214,7 +219,7 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Use(middleware.JWTAuth(utils.MustLoad().Jwt))
 		r.Use(middleware.RequireRole("merchant", "shop", "shop_owner", "admin"))
 
-		r.With(middleware.BulkheadGuard(middleware.AIBulkhead, "Merchant AI Assistant")).Post("/chat", assistantc.Chat)
+		r.Post("/chat", assistantc.Chat)
 		r.Get("/conversations", assistantc.ListConversations)
 		r.Get("/conversations/{conversationID}/messages", assistantc.ListMessages)
 	})
@@ -336,8 +341,8 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Delete("/khata/{id}/transactions/{txId}", khatac.DeleteTransaction)
 
 		// Automated End-of-Day P&L PDF via Pure Go gopdf Engine
-		r.With(middleware.BulkheadGuard(middleware.PDFBulkhead, "EndOfDay P&L PDF Engine")).Get("/pos/day-close/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
-		r.With(middleware.BulkheadGuard(middleware.PDFBulkhead, "EndOfDay P&L PDF Engine")).Get("/shops/me/pos/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
+		r.Get("/pos/day-close/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
+		r.Get("/shops/me/pos/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
 
 		// Merchant AI Copilot & Vision Engines
 		r.Post("/ai/copilot", aic.MerchantCopilot)
@@ -409,7 +414,7 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/khata/micro-plans", microPlanc.ListPlans)
 
 		// 7. Automated End-of-Day P&L PDF (Pure Go)
-		r.With(middleware.BulkheadGuard(middleware.PDFBulkhead, "EndOfDay P&L PDF Engine")).Get("/pos/day-close/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
+		r.Get("/pos/day-close/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
 
 		// 8. 🧠 AI Layer Engines
 		r.Post("/ai/supplier-invoice", aic.ParseSupplierInvoice)

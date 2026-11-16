@@ -2,24 +2,23 @@ package utils
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 
-	gooutbox "shopMe/internal/pkg/outbox"
 	"github.com/jackc/pgx/v5"
 )
 
-// defaultOutboxStore provides standardized outbox persistence mapped to outbox_events table.
-var defaultOutboxStore = gooutbox.NewSQLStore(nil, &gooutbox.SQLOptions{
-	TableName:         "outbox_events",
-	TopicColumn:       "event_type",
-	AggregateIDColumn: "shop_id",
-})
-
-// EnqueueOutboxEventTx writes an event to outbox_events table within a database transaction (Transactional Outbox Pattern).
-// Powered by go-outbox for consistent schema validation, zero-dual-write atomicity, and retry scheduling.
+// EnqueueOutboxEventTx writes an event to outbox_events table within a database transaction (Transactional Outbox Pattern)
 func EnqueueOutboxEventTx(ctx context.Context, tx pgx.Tx, shopID string, eventType string, payload interface{}) error {
-	event, err := gooutbox.NewEvent(eventType, shopID, payload)
+	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to marshal outbox event payload: %w", err)
 	}
-	return defaultOutboxStore.Save(ctx, tx, event)
+
+	query := `
+		INSERT INTO outbox_events (shop_id, event_type, payload, status, created_at)
+		VALUES ($1, $2, $3, 'pending', NOW())
+	`
+	_, err = tx.Exec(ctx, query, shopID, eventType, payloadBytes)
+	return err
 }

@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	gohumanize "shopMe/internal/pkg/humanize"
 	"github.com/skip2/go-qrcode"
 	"github.com/signintech/gopdf"
 	"shopMe/internal/handler/model"
@@ -97,9 +96,6 @@ func GenerateNativeKhataStatementPDF(customer *model.CustomerKhata, transactions
 	pdf.SetFillColor(cTopBanner[0], cTopBanner[1], cTopBanner[2])
 	pdf.RectFromUpperLeftWithStyle(0, 0, pageW, bannerH, "F")
 
-	// ShopSilo Official Logo
-	_ = DrawShopSiloLogo(&pdf, 20, 10, 32)
-
 	// Store Name in Banner
 	pdf.SetTextColor(255, 255, 255)
 	_ = pdf.SetFont("noto-bold", "", 16)
@@ -158,7 +154,7 @@ func GenerateNativeKhataStatementPDF(customer *model.CustomerKhata, transactions
 	_ = pdf.Cell(&gopdf.Rect{W: cardW - 16, H: 12}, "TOTAL UDHAR GIVEN (DR)")
 	_ = pdf.SetFont("noto-bold", "", 12)
 	pdf.SetXY(x1+8, curY+20)
-	_ = pdf.Cell(&gopdf.Rect{W: cardW - 16, H: 18}, fmt.Sprintf("Rs. %s", gohumanize.FormatIndian(int64(totalDebit))))
+	_ = pdf.Cell(&gopdf.Rect{W: cardW - 16, H: 18}, fmt.Sprintf("₹%.2f", totalDebit))
 
 	// Card 2: Total Jama Repaid (Credit)
 	x2 := x1 + cardW + cardGap
@@ -172,7 +168,7 @@ func GenerateNativeKhataStatementPDF(customer *model.CustomerKhata, transactions
 	_ = pdf.Cell(&gopdf.Rect{W: cardW - 16, H: 12}, "TOTAL REPAID / JAMA (CR)")
 	_ = pdf.SetFont("noto-bold", "", 12)
 	pdf.SetXY(x2+8, curY+20)
-	_ = pdf.Cell(&gopdf.Rect{W: cardW - 16, H: 18}, fmt.Sprintf("Rs. %s", gohumanize.FormatIndian(int64(totalCredit))))
+	_ = pdf.Cell(&gopdf.Rect{W: cardW - 16, H: 18}, fmt.Sprintf("₹%.2f", totalCredit))
 
 	// Card 3: Net Outstanding Balance
 	x3 := x2 + cardW + cardGap
@@ -192,7 +188,7 @@ func GenerateNativeKhataStatementPDF(customer *model.CustomerKhata, transactions
 	_ = pdf.Cell(&gopdf.Rect{W: cardW - 16, H: 12}, "CURRENT OUTSTANDING DUE")
 	_ = pdf.SetFont("noto-bold", "", 13)
 	pdf.SetXY(x3+8, curY+20)
-	dueLabel := fmt.Sprintf("Rs. %s", gohumanize.FormatIndian(int64(currentDue)))
+	dueLabel := fmt.Sprintf("₹%.2f", currentDue)
 	if currentDue <= 0 {
 		dueLabel += " (SETTLED)"
 	} else {

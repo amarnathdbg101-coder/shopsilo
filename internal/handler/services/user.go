@@ -350,18 +350,8 @@ func (s *UserService) Login(ctx context.Context, input dto.UserLoginRequest) (*d
 		return nil, ErrAccountInactive
 	}
 
-	valid, needsUpgrade := reuse.CheckPasswordHashAndNeedsUpgrade(input.Password, user.PasswordHash)
-	if !valid {
+	if !reuse.CheckPasswordHash(input.Password, user.PasswordHash) {
 		return nil, ErrInvalidCredentials
-	}
-
-	// Asynchronously upgrade legacy Bcrypt password hashes to GPU-resistant Argon2id profile
-	if needsUpgrade && s.repo != nil {
-		go func(uid, plainPw string) {
-			if newHash, err := reuse.HashPassword(plainPw); err == nil {
-				_ = s.repo.UpdatePassword(context.Background(), uid, newHash)
-			}
-		}(user.ID, input.Password)
 	}
 
 	// Enforce strict permanent role segregation between Merchant and Customer apps

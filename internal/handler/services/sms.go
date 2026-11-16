@@ -1,7 +1,6 @@
 package services
 
 import (
-	"shopMe/internal/reuse"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -103,19 +102,16 @@ func (s *DefaultSMSService) SendRegistrationWhatsAppOTP(ctx context.Context, pho
 	}
 
 	apiURL := fmt.Sprintf("https://graph.facebook.com/v21.0/%s/messages", phoneID)
-
-	// Resilient execution with 3 automatic retries and exponential backoff
-	resp, err := reuse.ExecuteWithRetry(ctx, 3, func(retryCtx context.Context) (*http.Response, error) {
-		req, reqErr := http.NewRequestWithContext(retryCtx, http.MethodPost, apiURL, bytes.NewBuffer(bodyBytes))
-		if reqErr != nil {
-			return nil, reqErr
-		}
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("Content-Type", "application/json")
-		return s.httpClient.Do(req)
-	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewBuffer(bodyBytes))
 	if err != nil {
-		log.Printf("[WHATSAPP/ERROR] Failed to send WhatsApp OTP after retries: %v", err)
+		return fmt.Errorf("failed to create WhatsApp request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		log.Printf("[WHATSAPP/ERROR] Failed to send WhatsApp OTP: %v", err)
 		return err
 	}
 	defer resp.Body.Close()
@@ -154,17 +150,14 @@ func (s *DefaultSMSService) dispatchExternalSMS(ctx context.Context, phone, mess
 	endpoint := fmt.Sprintf("%s?authorization=%s&route=q&message=%s&language=english&flash=0&numbers=%s",
 		fast2smsURL, apiKey, url.QueryEscape(message), phone)
 
-	resp, err := reuse.ExecuteWithRetry(ctx, 3, func(retryCtx context.Context) (*http.Response, error) {
-		req, reqErr := http.NewRequestWithContext(retryCtx, http.MethodGet, endpoint, nil)
-		if reqErr != nil {
-			return nil, reqErr
-		}
-		return s.httpClient.Do(req)
-	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 	return nil
 }
-

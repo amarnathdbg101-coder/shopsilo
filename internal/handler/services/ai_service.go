@@ -16,6 +16,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"shopMe/internal/handler/dto"
@@ -23,8 +24,6 @@ import (
 	"shopMe/internal/reuse"
 	"shopMe/internal/reuse/ai"
 	"shopMe/internal/utils"
-
-	gogemini "shopMe/internal/pkg/gemini"
 )
 
 type AIService interface {
@@ -43,14 +42,49 @@ type AIService interface {
 	SmartStudioScan(ctx context.Context, req dto.SmartStudioScanRequest) (*dto.SmartStudioScanResponse, error)
 }
 
-// getAICache retrieves cached AI responses using high-hit-rate Window TinyLFU cache (powered by go-tinylfu).
-func getAICache(key string) (string, bool) {
-	return reuse.GlobalAICache.Get(key)
+type aiCacheEntry struct {
+	response  string
+	expiresAt time.Time
 }
 
-// setAICache stores AI responses in Window TinyLFU cache with automatic frequency admission and TTL.
+var (
+	aiCacheMu sync.RWMutex
+	aiCache   = make(map[string]aiCacheEntry)
+)
+
+func getAICache(key string) (string, bool) {
+	aiCacheMu.RLock()
+	defer aiCacheMu.RUnlock()
+	entry, found := aiCache[key]
+	if !found || time.Now().After(entry.expiresAt) {
+		return "", false
+	}
+	return entry.response, true
+}
+
 func setAICache(key, resp string, ttl time.Duration) {
-	reuse.GlobalAICache.Set(key, resp, ttl)
+	aiCacheMu.Lock()
+	defer aiCacheMu.Unlock()
+	now := time.Now()
+	if len(aiCache) > 500 {
+		for k, v := range aiCache {
+			if now.After(v.expiresAt) {
+				delete(aiCache, k)
+			}
+		}
+		if len(aiCache) > 250 {
+			for k := range aiCache {
+				delete(aiCache, k)
+				if len(aiCache) <= 250 {
+					break
+				}
+			}
+		}
+	}
+	aiCache[key] = aiCacheEntry{
+		response:  resp,
+		expiresAt: time.Now().Add(ttl),
+	}
 }
 
 type aiService struct {
@@ -1267,7 +1301,16 @@ func hashString(s string) string {
 }
 
 func extractCleanJSON(raw string) string {
-	cleaned := gogemini.ExtractJSON(raw)
+	cleaned := strings.TrimSpace(raw)
+	if strings.HasPrefix(cleaned, "```json") {
+		cleaned = strings.TrimPrefix(cleaned, "```json")
+	} else if strings.HasPrefix(cleaned, "```") {
+		cleaned = strings.TrimPrefix(cleaned, "```")
+	}
+	if strings.HasSuffix(cleaned, "```") {
+		cleaned = strings.TrimSuffix(cleaned, "```")
+	}
+	cleaned = strings.TrimSpace(cleaned)
 	start := strings.Index(cleaned, "{")
 	end := strings.LastIndex(cleaned, "}")
 	if start != -1 && end != -1 && end > start {

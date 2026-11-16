@@ -12,9 +12,93 @@ import (
 	"shopMe/internal/handler/model"
 	"shopMe/internal/handler/repository"
 
-	saga "shopMe/internal/pkg/saga"
 	"go.uber.org/zap"
 )
+
+type sagaStepAction func(ctx context.Context) error
+
+type sagaStep struct {
+	name       string
+	execute    sagaStepAction
+	compensate sagaStepAction
+}
+
+type sagaCoordinator struct {
+	steps  []sagaStep
+	onStep func(name, phase string, err error)
+}
+
+func newSagaCoordinator() *sagaCoordinator {
+	return &sagaCoordinator{}
+}
+
+func (c *sagaCoordinator) AddStep(name string, execute, compensate sagaStepAction) *sagaCoordinator {
+	c.steps = append(c.steps, sagaStep{
+		name:       name,
+		execute:    execute,
+		compensate: compensate,
+	})
+	return c
+}
+
+func (c *sagaCoordinator) OnStepEvent(fn func(name, phase string, err error)) *sagaCoordinator {
+	c.onStep = fn
+	return c
+}
+
+func (c *sagaCoordinator) Run(ctx context.Context) error {
+	var executed []sagaStep
+	var forwardErr error
+
+	for _, step := range c.steps {
+		if err := ctx.Err(); err != nil {
+			forwardErr = err
+			break
+		}
+		if c.onStep != nil {
+			c.onStep(step.name, "executing", nil)
+		}
+		if step.execute != nil {
+			if err := step.execute(ctx); err != nil {
+				forwardErr = fmt.Errorf("step '%s' failed: %w", step.name, err)
+				if c.onStep != nil {
+					c.onStep(step.name, "failed", err)
+				}
+				break
+			}
+		}
+		executed = append(executed, step)
+		if c.onStep != nil {
+			c.onStep(step.name, "completed", nil)
+		}
+	}
+
+	if forwardErr == nil {
+		return nil
+	}
+
+	// Compensation in reverse order
+	compCtx := context.Background()
+	for i := len(executed) - 1; i >= 0; i-- {
+		step := executed[i]
+		if step.compensate != nil {
+			if c.onStep != nil {
+				c.onStep(step.name, "compensating", nil)
+			}
+			if err := step.compensate(compCtx); err != nil {
+				if c.onStep != nil {
+					c.onStep(step.name, "compensation_failed", err)
+				}
+			} else {
+				if c.onStep != nil {
+					c.onStep(step.name, "compensated", nil)
+				}
+			}
+		}
+	}
+
+	return forwardErr
+}
 
 // OrderCheckoutSagaInput defines the payload for an end-to-end checkout saga.
 type OrderCheckoutSagaInput struct {
@@ -82,7 +166,7 @@ func (o *OrderSagaOrchestrator) Execute(ctx context.Context, input OrderCheckout
 		stepLogs     []string
 	)
 
-	coord := saga.New()
+	coord := newSagaCoordinator()
 
 	// Observability hook to trace forward and backward compensation events
 	coord.OnStepEvent(func(name, phase string, err error) {

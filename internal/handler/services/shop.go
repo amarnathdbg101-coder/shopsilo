@@ -14,6 +14,7 @@ import (
 	"shopMe/internal/reuse"
 	"shopMe/internal/utils"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -27,16 +28,16 @@ type ShopService struct {
 	productRepo      *repository.ProductRepo
 	posRepo          *repository.POSRepo
 	loyaltyRepo      *repository.LoyaltyRepo
-	categoryCache    *reuse.TinyLFUCache[string, []*model.Category]
+	catMu            sync.RWMutex
+	cachedCategories []*model.Category
+	categoriesExpiry time.Time
 }
 
 func NewShopService(shopRepo *repository.ShopRepo, userRepo *repository.UserRepo, modRepo *repository.ModerationRepo) *ShopService {
-	catCache, _ := reuse.NewTinyLFUCache[string, []*model.Category](100)
 	return &ShopService{
-		shopRepo:      shopRepo,
-		userRepo:      userRepo,
-		modRepo:       modRepo,
-		categoryCache: catCache,
+		shopRepo: shopRepo,
+		userRepo: userRepo,
+		modRepo:  modRepo,
 	}
 }
 
@@ -617,11 +618,13 @@ func (s *ShopService) GetMerchantDashboard(ctx context.Context, shopOwnerUserID 
 }
 
 func (s *ShopService) getCachedCategories(ctx context.Context) []*model.Category {
-	if s.categoryCache != nil {
-		if cats, found := s.categoryCache.Get("all_categories"); found && len(cats) > 0 {
-			return cats
-		}
+	s.catMu.RLock()
+	if len(s.cachedCategories) > 0 && time.Now().Before(s.categoriesExpiry) {
+		cats := s.cachedCategories
+		s.catMu.RUnlock()
+		return cats
 	}
+	s.catMu.RUnlock()
 
 	if s.categoryRepo == nil {
 		return []*model.Category{}
@@ -632,9 +635,10 @@ func (s *ShopService) getCachedCategories(ctx context.Context) []*model.Category
 		return []*model.Category{}
 	}
 
-	if s.categoryCache != nil {
-		s.categoryCache.Set("all_categories", cats, 5*time.Minute)
-	}
+	s.catMu.Lock()
+	s.cachedCategories = cats
+	s.categoriesExpiry = time.Now().Add(5 * time.Minute)
+	s.catMu.Unlock()
 
 	return cats
 }

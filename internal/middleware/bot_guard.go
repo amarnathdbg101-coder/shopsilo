@@ -2,13 +2,13 @@
 package middleware
 
 import (
-	"shopMe/internal/pkg/deadlock"
 	"net/http"
 	"net/url"
 	"regexp"
 	"shopMe/internal/reuse"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,7 +18,7 @@ type jailRecord struct {
 }
 
 var (
-	jailMu        deadlock.RWMutex
+	jailMu        sync.RWMutex
 	ipJailMap     = make(map[string]jailRecord)
 	stopJailPurge chan struct{}
 
@@ -338,5 +338,3 @@ func BotGuard(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
-
-

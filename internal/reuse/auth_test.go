@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	gojwt "shopMe/internal/pkg/jwt"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func TestHashPasswordAndCheck(t *testing.T) {
@@ -111,9 +111,16 @@ func TestGenerateJwt(t *testing.T) {
 		t.Fatalf("failed to generate jwt: %v", err)
 	}
 
-	claims := map[string]any{}
-	if err := gojwt.VerifyCustom([]byte("super-secret-jwt-key"), tokenStr, &claims); err != nil {
+	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
+		return []byte("super-secret-jwt-key"), nil
+	})
+	if err != nil || !token.Valid {
 		t.Fatalf("failed to parse generated jwt: %v", err)
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		t.Fatalf("failed to cast claims")
 	}
 	if claims["user_id"] != "test-id" || claims["email"] != "test@example.com" || claims["role"] != "customer" {
 		t.Fatalf("unexpected claims in token: %+v", claims)

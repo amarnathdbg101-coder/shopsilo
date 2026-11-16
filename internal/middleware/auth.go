@@ -3,29 +3,26 @@ package middleware
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
-	gojwt "shopMe/internal/pkg/jwt"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 type contextKey string
 
 const ContextKeyUser = contextKey("user")
 
-// Claims represents user authentication credentials in request context.
 type Claims struct {
-	UserID    string `json:"user_id"`
-	Email     string `json:"email"`
-	Role      string `json:"role"`
-	ExpiresAt int64  `json:"exp,omitempty"`
-	IssuedAt  int64  `json:"iat,omitempty"`
+	UserID string `json:"user_id"`
+	Email  string `json:"email"`
+	Role   string `json:"role"`
+	jwt.RegisteredClaims
 }
 
-// JWTAuth validates JWT bearer token and injects verified *Claims into request context.
 func JWTAuth(secret string) func(http.Handler) http.Handler {
-	secBytes := []byte(secret)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -54,10 +51,17 @@ func JWTAuth(secret string) func(http.Handler) http.Handler {
 				return
 			}
 
-			tokenStr := strings.TrimSpace(parts[1])
+			tokenStr := parts[1]
 			claims := &Claims{}
 
-			if err := gojwt.VerifyCustom(secBytes, tokenStr, claims); err != nil {
+			token, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (interface{}, error) {
+				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+				}
+				return []byte(secret), nil
+			})
+
+			if err != nil || !token.Valid {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				_, _ = w.Write([]byte(`{"success":false,"error":"invalid or expired token"}`))
@@ -73,7 +77,6 @@ func JWTAuth(secret string) func(http.Handler) http.Handler {
 // OptionalJWTAuth validates JWT token if present, attaching Claims to request context.
 // Allows unauthenticated guest requests to proceed with claims = nil.
 func OptionalJWTAuth(secret string) func(http.Handler) http.Handler {
-	secBytes := []byte(secret)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -98,10 +101,17 @@ func OptionalJWTAuth(secret string) func(http.Handler) http.Handler {
 				return
 			}
 
-			tokenStr := strings.TrimSpace(parts[1])
+			tokenStr := parts[1]
 			claims := &Claims{}
 
-			if err := gojwt.VerifyCustom(secBytes, tokenStr, claims); err == nil {
+			token, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (interface{}, error) {
+				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+				}
+				return []byte(secret), nil
+			})
+
+			if err == nil && token.Valid {
 				ctx := context.WithValue(r.Context(), ContextKeyUser, claims)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
@@ -112,7 +122,6 @@ func OptionalJWTAuth(secret string) func(http.Handler) http.Handler {
 	}
 }
 
-// GetUserFromContext retrieves authenticated user Claims from request context.
 func GetUserFromContext(ctx context.Context) *Claims {
 	if claims, ok := ctx.Value(ContextKeyUser).(*Claims); ok {
 		return claims
@@ -120,16 +129,17 @@ func GetUserFromContext(ctx context.Context) *Claims {
 	return nil
 }
 
-// GenerateToken creates an HMAC-SHA256 signed JWT token valid for 24 hours.
 func GenerateToken(userID, email, role, secret string) (string, error) {
-	now := time.Now()
 	claims := Claims{
-		UserID:    userID,
-		Email:     email,
-		Role:      role,
-		ExpiresAt: now.Add(24 * time.Hour).Unix(),
-		IssuedAt:  now.Unix(),
+		UserID: userID,
+		Email:  email,
+		Role:   role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
 	}
 
-	return gojwt.SignCustom([]byte(secret), claims)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(secret))
 }
