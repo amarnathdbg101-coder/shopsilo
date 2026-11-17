@@ -45,6 +45,19 @@ type AIScanProductRequest struct {
 	MimeType    string `json:"mime_type,omitempty"`
 }
 
+// ColorShade defines an exact Indian trade color shade name with Hindi name and Hex code.
+type ColorShade struct {
+	ShadeName string `json:"shade_name"`
+	HindiName string `json:"hindi_name,omitempty"`
+	HexCode   string `json:"hex_code"`
+}
+
+// AIColorDetails carries the primary calibrated shade and neighboring alternative chips for 1-tap merchant correction.
+type AIColorDetails struct {
+	PrimaryShade ColorShade   `json:"primary_shade"`
+	Alternatives []ColorShade `json:"alternatives,omitempty"`
+}
+
 type AIScanProductResponse struct {
 	Name                string            `json:"name"`
 	Brand               string            `json:"brand,omitempty"`
@@ -73,6 +86,7 @@ type AIScanProductResponse struct {
 	VisualKeywords      []string          `json:"visual_keywords,omitempty"`
 	StudioImageURL      string            `json:"studio_image_url,omitempty"`
 	StudioTheme         string            `json:"studio_theme,omitempty"`
+	ColorDetails        *AIColorDetails   `json:"color_details,omitempty"`
 }
 
 // ── AI Smart Studio & Vision Fusion DTOs ──
@@ -99,14 +113,15 @@ type AIMandiScanRequest struct {
 
 // AIMandiItem represents a single wholesale item detected from the camera snapshot with estimated rate & bulk unit.
 type AIMandiItem struct {
-	Name                   string  `json:"name"`
-	Category               string  `json:"category"`
-	WholesaleQty           string  `json:"wholesale_qty"`
-	WholesaleUnit          string  `json:"wholesale_unit"`
-	EstimatedWholesaleRate float64 `json:"estimated_wholesale_rate"`
-	EstimatedTotalBudget   float64 `json:"estimated_total_budget"`
-	Notes                  string  `json:"notes,omitempty"`
-	Confidence             float64 `json:"confidence,omitempty"`
+	Name                   string          `json:"name"`
+	Category               string          `json:"category"`
+	WholesaleQty           string          `json:"wholesale_qty"`
+	WholesaleUnit          string          `json:"wholesale_unit"`
+	EstimatedWholesaleRate float64         `json:"estimated_wholesale_rate"`
+	EstimatedTotalBudget   float64         `json:"estimated_total_budget"`
+	Notes                  string          `json:"notes,omitempty"`
+	Confidence             float64         `json:"confidence,omitempty"`
+	ColorDetails           *AIColorDetails `json:"color_details,omitempty"`
 }
 
 // AIMandiScanResponse returns list of detected low-stock/procurement items for 1-tap addition to Mandi Sheet.

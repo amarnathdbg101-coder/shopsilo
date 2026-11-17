@@ -249,7 +249,20 @@ Extract and infer comprehensive, professional product catalog data in pure JSON 
   },
   "suggested_sku": "Smart structured uppercase SKU identifier (e.g. 'FORT-MUST-1L-POUCH')",
   "barcode": "Barcode digits if clearly visible on packaging, otherwise empty string",
-  "visual_keywords": ["3-5 visual identifiers like packaging color, container shape, finish"]
+  "visual_keywords": ["3-5 visual identifiers like packaging color, container shape, finish"],
+  "color_details": {
+    "primary_shade": {
+      "shade_name": "Rani Pink",
+      "hindi_name": "रानी पिंक",
+      "hex_code": "#D81B60"
+    },
+    "alternatives": [
+      {"shade_name": "Magenta", "hindi_name": "मजेंटा", "hex_code": "#E0115F"},
+      {"shade_name": "Maroon", "hindi_name": "मैरून", "hex_code": "#800000"},
+      {"shade_name": "Deep Red", "hindi_name": "गहरा लाल", "hex_code": "#C62828"},
+      {"shade_name": "Baby Pink", "hindi_name": "गुलाबी", "hex_code": "#F48FB1"}
+    ]
+  }
 }
 
 CRITICAL CATALOGING SPECIALIST RULES:
@@ -258,10 +271,11 @@ CRITICAL CATALOGING SPECIALIST RULES:
    - Examples:
      * FMCG: "Dove Daily Shine Shampoo with Nutritive Serum - 340ml Bottle"
      * Edible: "Fortune Premium Kachi Ghani Pure Mustard Oil - 1 Litre Pouch"
-     * Apparel: "Kashvi Handcrafted Pure Banarasi Silk Zari Woven Saree with Unstitched Blouse Piece"
+     * Apparel: "Kashvi Handcrafted Pure Banarasi Silk Zari Woven Saree with Unstitched Blouse Piece - Rani Pink (रानी)"
      * Footwear: "Bata Men's Formal Genuine Leather Slip-On Shoes - Dark Tan"
      * Electronics: "boAt Bassheads 225 Heavy Bass in-Ear Wired Earphones with Mic - Metallic Black"
    - NEVER use vague or generic titles like "Blue Shirt" or "Oil Packet". Be precise and specific to the image.
+   - For apparel, ethnic wear, matching center items (blouse pieces, petticoats, sarees, dupattas), ALWAYS include the exact trade color shade name at the end of the title.
 
 2. COMMERCIAL PRICING & MARGIN INTELLIGENCE:
    - If an MRP (Maximum Retail Price) stamp or printed text is visible on the package (e.g. 'MRP ₹140.00 incl. of all taxes'), use that EXACT numeric value for 'mrp'.
@@ -288,7 +302,16 @@ CRITICAL CATALOGING SPECIALIST RULES:
 4. BILINGUAL HINGLISH SEARCH TAGS:
    - Provide 8 to 12 high-intent search keywords including common Hindi/Hinglish terms used by Indian shoppers (e.g., 'sarson tel', 'mustard oil', 'gehu aata', 'doodh', 'chai patti', 'nahane ka sabun').
 
-5. STRICT OUTPUT FORMAT:
+5. INDIAN TEXTILE & COLOR SHADE CALIBRATION:
+   - For all apparel, fabrics, clothing (blouse pieces, petticoats, sarees, dupattas, suits), cosmetics, or color-critical items:
+   - Precisely map the dominant fabric color to standard Indian commercial trade shade cards:
+     * Rani Pink (#D81B60), Baby Pink (#F48FB1), Maroon (#800000), Blood Red (#D32F2F), Rama Green (#00827F), Firozi / Cyan (#00BCD4), Bottle Green (#004D40), Mehendi Green (#556B2F), Navy Blue (#000080), Royal Blue (#1565C0), Mustard Yellow (#E5A823), Lemon Yellow (#FFF176), Wine / Jamuni (#4A154B), Purple (#7B1FA2), Rust / Gerua (#B7410E), Peach (#FFAB91), Pista Green (#A8D8B9), Black (#1A1A1A), White (#FFFFFF), Coffee Brown (#4E342E), Chiku / Beige (#D7C4B7).
+   - In 'color_details':
+     * 'primary_shade': best calibrated match with English shade name, Hindi name, and exact HexCode.
+     * 'alternatives': 3 to 4 closest neighboring color shades so merchants can 1-tap confirm without typing.
+   - Also add 'Color' to 'attributes' (e.g. 'Rani Pink').
+
+6. STRICT OUTPUT FORMAT:
    - Output MUST be pure, valid JSON only matching the schema. No markdown code blocks, no preamble.`
 
 	payload := geminiPayload{
@@ -605,8 +628,21 @@ Output pure JSON matching this exact schema:
       "wholesale_unit": "Strictly one of: 'kg', 'बोरी (Bags)', 'पेटी / बॉक्स (Box)', 'पैकेट (Pkt)', 'लीटर (Ltr)', 'पीस (Pcs)', 'क्विंटल (Qtl)', 'ग्राम (g)', 'दर्जन (Dzn)', 'कार्टन (Carton)', 'टिन / केन (Tin)'",
       "estimated_wholesale_rate": 1380.0,
       "estimated_total_budget": 1380.0,
-      "notes": "Brief Hindi/English sourcing note: pack size details, wholesale bundle count (e.g. '12 पाउच प्रति पेटी @ ₹115/पाउच')",
-      "confidence": 0.95
+      "notes": "Brief Hindi/English sourcing note: pack size details, wholesale bundle count (e.g. '12 पाउच प्रति पेटी @ ₹115/पाउच' or 'Shade: Rani Pink (रानी पिंक)')",
+      "confidence": 0.95,
+      "color_details": {
+        "primary_shade": {
+          "shade_name": "Rani Pink",
+          "hindi_name": "रानी पिंक",
+          "hex_code": "#D81B60"
+        },
+        "alternatives": [
+          {"shade_name": "Magenta", "hindi_name": "मजेंटा", "hex_code": "#E0115F"},
+          {"shade_name": "Maroon", "hindi_name": "मैरून", "hex_code": "#800000"},
+          {"shade_name": "Deep Red", "hindi_name": "गहरा लाल", "hex_code": "#C62828"},
+          {"shade_name": "Baby Pink", "hindi_name": "गुलाबी", "hex_code": "#F48FB1"}
+        ]
+      }
     }
   ],
   "raw_overview": "Short 1-line summary of items detected"
@@ -624,7 +660,12 @@ RULES:
    - 'estimated_wholesale_rate': total price for the requested wholesale quantity (or per bag/box).
 3. MULTIPLE ITEMS:
    - If multiple distinct low-stock products are visible in the photo, list each one as a separate item in the 'items' array (up to 4 items).
-4. STRICT JSON ONLY:
+4. COLOR CALIBRATION FOR TEXTILES & APPAREL:
+   - For any blouse pieces, petticoats, sarees, dupattas, matching fabrics, or color-specific goods:
+   - Accurately map the dominant color against standard Indian trade shades: Rani Pink (#D81B60), Baby Pink (#F48FB1), Maroon (#800000), Blood Red (#D32F2F), Rama Green (#00827F), Firozi / Cyan (#00BCD4), Bottle Green (#004D40), Mehendi Green (#556B2F), Navy Blue (#000080), Royal Blue (#1565C0), Mustard Yellow (#E5A823), Lemon Yellow (#FFF176), Wine / Jamuni (#4A154B), Purple (#7B1FA2), Rust / Gerua (#B7410E), Peach (#FFAB91), Pista Green (#A8D8B9), Black (#1A1A1A), White (#FFFFFF), Coffee Brown (#4E342E), Chiku / Beige (#D7C4B7).
+   - In 'color_details': set 'primary_shade' and 3 to 4 nearest 'alternatives'.
+   - Append the shade to the product name (e.g. 'Cotton Petticoat - Rani Pink (रानी पिंक)') and include 'Shade: Rani Pink (रानी)' in notes.
+5. STRICT JSON ONLY:
    - Output valid JSON only. No markdown formatting, no preamble.`
 
 	payload := geminiPayload{
