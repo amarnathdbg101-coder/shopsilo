@@ -354,15 +354,14 @@ func (s *UserService) Login(ctx context.Context, input dto.UserLoginRequest) (*d
 		return nil, ErrInvalidCredentials
 	}
 
-	// Enforce strict permanent role segregation between Merchant and Customer apps
+	// Auto-upgrade user role to merchant when logging into merchant partner app to allow shop setup
 	reqRole := strings.ToLower(strings.TrimSpace(input.Role))
 	if reqRole == "merchant" || reqRole == "shop" {
 		if user.Role != "merchant" && user.Role != "shop" && user.Role != "admin" {
-			return nil, errors.New("this account is registered as a customer and cannot access the merchant partner app")
-		}
-	} else if reqRole == "customer" {
-		if user.Role == "merchant" || user.Role == "shop" {
-			return nil, errors.New("this account is registered as a merchant and cannot access the customer app")
+			if s.repo != nil {
+				_ = s.repo.UpdateRole(ctx, user.ID, "merchant")
+				user.Role = "merchant"
+			}
 		}
 	}
 
@@ -457,8 +456,8 @@ func (s *UserService) GoogleLogin(ctx context.Context, input dto.GoogleLoginRequ
 
 	var info googleTokenInfo
 
-	// Support mock tokens ONLY during automated unit tests (ENV=test)
-	if strings.HasPrefix(idToken, "dev_mock_") && os.Getenv("ENV") == "test" {
+	// Support mock tokens during automated unit tests or local development (non-production)
+	if strings.HasPrefix(idToken, "dev_mock_") && os.Getenv("ENV") != "production" {
 		info = googleTokenInfo{
 			Iss:           "https://accounts.google.com",
 			Email:         "google.dev@shopme.com",

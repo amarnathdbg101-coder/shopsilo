@@ -25,7 +25,6 @@ type CreatePOSSaleRequest struct {
 	DiscountAmount      float64              `json:"discount_amount" validate:"gte=0"`
 	PaymentMethod       string               `json:"payment_method" validate:"required,oneof=cash upi card online credit khata split"`
 	SplitPayments       *POSSplitPayment     `json:"split_payments,omitempty"`
-	BargainDealCode     string               `json:"bargain_deal_code,omitempty"`
 	RedeemLoyaltyPoints int                  `json:"redeem_loyalty_points,omitempty" validate:"omitempty,gte=0"`
 }
 

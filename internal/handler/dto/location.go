@@ -43,7 +43,6 @@ type CreateVariantRequest struct {
 	Price        float64    `json:"price" validate:"required,gt=0"`
 	CostPrice    float64    `json:"cost_price,omitempty" validate:"omitempty,gte=0"`
 	ComparePrice float64    `json:"compare_price,omitempty" validate:"omitempty,gte=0"`
-	FloorPrice   float64    `json:"floor_price,omitempty" validate:"omitempty,gte=0"`
 	Weight       float64    `json:"weight,omitempty" validate:"omitempty,gte=0"`
 	ImageURL     string     `json:"image_url,omitempty"`
 	InitialStock int        `json:"initial_stock,omitempty" validate:"omitempty,gte=0"`
@@ -65,7 +64,6 @@ type GenerateVariantMatrixRequest struct {
 	Price            float64       `json:"price" validate:"required,gt=0"`       // Default selling price
 	CostPrice        float64       `json:"cost_price,omitempty"`                 // Wholesale kharid price
 	ComparePrice     float64       `json:"compare_price,omitempty"`              // MRP
-	FloorPrice       float64       `json:"floor_price,omitempty"`                // Bargain lower bound
 	InitialStockEach int           `json:"initial_stock_each,omitempty"`         // Seed stock for each generated variant
 	LocationID       string        `json:"location_id,omitempty"`                // Default location to seed stock into
 }
@@ -83,7 +81,6 @@ type UpdateVariantRequest struct {
 	Price        *float64   `json:"price,omitempty" validate:"omitempty,gt=0"`
 	CostPrice    *float64   `json:"cost_price,omitempty" validate:"omitempty,gte=0"`
 	ComparePrice *float64   `json:"compare_price,omitempty" validate:"omitempty,gte=0"`
-	FloorPrice   *float64   `json:"floor_price,omitempty" validate:"omitempty,gte=0"`
 	ImageURL     *string    `json:"image_url,omitempty"`
 	IsActive     *bool      `json:"is_active,omitempty"`
 }

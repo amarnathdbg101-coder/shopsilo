@@ -317,7 +317,7 @@ Guidelines:
    - For Sales & Profit: Highlight net profit after expenses.
    - For Khata & Udhar: Provide polite payment recovery advice and mention pending balances.
    - For Inventory: Flag low stock items and suggest reorder quantities.
-   - For Pricing & Bargaining: Recommend bottom-safe minimum selling prices that preserve profit margin.
+   - For Pricing & Margins: Recommend competitive selling prices that preserve profit margin.
 4. Response Format: Lead directly with the key answer. Use clear, bulleted points for lists or comparisons. Include exact currency symbols (₹) and quantities.`
 
 var merchantAssistantToolDefinitions = []MerchantAssistantTool{

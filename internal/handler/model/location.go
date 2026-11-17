@@ -49,7 +49,6 @@ type ProductVariant struct {
 	Price        float64    `json:"price"`                  // Selling Price (₹)
 	CostPrice    float64    `json:"cost_price"`             // Wholesale Purchase / Kharid Price (₹)
 	ComparePrice float64    `json:"compare_price"`          // MRP (₹)
-	FloorPrice   float64    `json:"floor_price"`            // Stealth bargaining lower limit (₹)
 	Weight       float64    `json:"weight,omitempty"`
 	ImageURL     string     `json:"image_url,omitempty"`    // Variant-specific photo
 	IsActive     bool       `json:"is_active"`

@@ -77,7 +77,6 @@ func TestGenerateVariantMatrix_Calculations(t *testing.T) {
 		Price:        899.0,
 		CostPrice:    450.0,
 		ComparePrice: 1299.0,
-		FloorPrice:   750.0,
 		IsActive:     true,
 	}, 0)
 	if err != nil {
@@ -97,7 +96,6 @@ func TestGenerateVariantMatrix_Calculations(t *testing.T) {
 		Price:            899.0,
 		CostPrice:        450.0,
 		ComparePrice:     1299.0,
-		FloorPrice:       750.0,
 		InitialStockEach: 5,
 	}
 
@@ -116,7 +114,7 @@ func TestGenerateVariantMatrix_Calculations(t *testing.T) {
 	for _, v := range variants {
 		if v.SKU == expectedSKU {
 			found = true
-			if v.Price != 899.0 || v.FloorPrice != 750.0 {
+			if v.Price != 899.0 {
 				t.Errorf("variant pricing mismatch: %+v", v)
 			}
 			break

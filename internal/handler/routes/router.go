@@ -32,10 +32,8 @@ func RouteSetup(c *app.Container) chi.Router {
 	custKhatac := c.Controllers.CustomerKhata
 	ac := c.Controllers.Analytics
 	loyc := c.Controllers.Loyalty
-	catalogc := c.Controllers.Catalog
 	telc := c.Controllers.Telemetry
 	aic := c.Controllers.AI
-	assistantc := c.Controllers.Assistant
 	posc := c.Controllers.POS
 	wsc := c.Controllers.WebSocket
 	staffc := c.Controllers.Staff
@@ -124,18 +122,9 @@ func RouteSetup(c *app.Container) chi.Router {
 
 		r.Get("/sitemap.xml", sc.GenerateDynamicSitemapXML)                // Search Engine Crawlers Dynamic XML Sitemap
 		r.Get("/catalog/home-feed", sc.GetHomeFeed)                        // Customer
-		r.Get("/catalog/barcode/{code}", catalogc.Lookup)                  // Both - Master Barcode Catalog Lookup
-		r.Get("/catalog/lookup", catalogc.Lookup)                          // Both - query param fallback ?barcode=
-		r.Get("/catalog/search", catalogc.Search)                          // Both - Master Barcode Catalog Search
 		r.Get("/home-feed", sc.GetHomeFeed)                                // Customer
-		r.Post("/ai/customer-chat", aic.CustomerChat)                      // Customer
-		r.Post("/ai/scan-product", aic.ScanProduct)                        // Both
+		r.Post("/ai/scan-product", aic.ScanProduct)                        // Both - Product Vision Autofill
 		r.Post("/ai/smart-studio-scan", aic.SmartStudioScan)                // Both - Intelligent Vision + Studio Engine
-		r.Post("/ai/parse-parchi", aic.ParseParchi)                        // Both
-		r.Post("/ai/semantic-search", aic.SemanticSearch)                  // Customer
-		r.Post("/ai/voice-bill", aic.VoiceBill)                            // Shop
-		r.Post("/ai/marketing-campaign", aic.GenerateMarketingCampaign)   // Shop
-		r.Post("/ai/bargain-assist", aic.BargainAssist)                    // Both
 		r.Get("/categories", catc.List)                                    // Both
 		r.Get("/shops", sc.List)                                           // Customer
 		r.Get("/shops/{id}", sc.GetByID)                                   // Customer
@@ -156,7 +145,6 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/products/{productId}/variants", locationc.GetPublicVariants) // Public Customer Variants (Size/Color/Shades)
 		r.Get("/products/scan/{code}", loyc.ScanProduct)                   // Customer
 		r.Post("/products/{id}/notify-me", invc.SubscribeStockAlert)       // Customer
-		r.With(middleware.IdempotencyGuard).Post("/products/{id}/make-offer", pc.MakeOffer)                  // Customer
 		r.Get("/receipts/{bill_number}", posc.ViewPublicReceiptPDF)        // Customer
 		r.Get("/app/version/android", sc.GetAndroidAppVersion)             // App Auto-Updater
 		r.Get("/app/version/windows", sc.GetWindowsAppVersion)             // App Auto-Updater
@@ -189,13 +177,6 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Put("/scan-go/session/{id}/items/{itemId}", scanc.UpdateItem)
 		r.Get("/scan-go/session/{id}", scanc.GetSessionDetails)
 
-		// Customer AI Sathi
-		r.Post("/ai/chat", aic.CustomerChat)
-		r.Post("/ai/parse-parchi", aic.ParseParchi)
-		r.Post("/ai/semantic-search", aic.SemanticSearch)
-		r.Post("/ai/scan-product", aic.ScanProduct)
-		r.Post("/ai/bargain-assist", aic.BargainAssist)
-
 		// Customer Khata, Loyalty & Item Hold Reservations (JWT Required)
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.JWTAuth(utils.MustLoad().Jwt))
@@ -213,15 +194,6 @@ func RouteSetup(c *app.Container) chi.Router {
 			r.Post("/reservations/{id}/cancel", resc.CancelUserReservation)
 			r.Get("/ws", wsc.ServeCustomerWebSocket) // Personal live orders & notifications
 		})
-	})
-
-	r.Route("/api/v1/merchant/ai-assistant", func(r chi.Router) {
-		r.Use(middleware.JWTAuth(utils.MustLoad().Jwt))
-		r.Use(middleware.RequireRole("merchant", "shop", "shop_owner", "admin"))
-
-		r.Post("/chat", assistantc.Chat)
-		r.Get("/conversations", assistantc.ListConversations)
-		r.Get("/conversations/{conversationID}/messages", assistantc.ListMessages)
 	})
 
 	// 🏪 Merchant / Shop Owner Route Group (/api/v1/merchant)
@@ -300,7 +272,6 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/pos/summary", posc.GetDailySummary)
 
 		// POS Financial Shield & Counter Velocity Hotkeys
-		r.Post("/pos/margin-check", marginc.CheckMargin)
 		r.Get("/pos/hotkeys", marginc.ListHotkeys)
 		r.Post("/pos/hotkeys", marginc.CreateHotkey)
 		r.Delete("/pos/hotkeys/{id}", marginc.DeleteHotkey)
@@ -344,22 +315,9 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/pos/day-close/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
 		r.Get("/shops/me/pos/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
 
-		// Merchant AI Copilot & Vision Engines
-		r.Post("/ai/copilot", aic.MerchantCopilot)
+		// Product Vision & Studio Ingestion (Add Product)
 		r.Post("/ai/scan-product", aic.ScanProduct)
 		r.Post("/ai/smart-studio-scan", aic.SmartStudioScan)
-		r.Post("/ai/voice-bill", aic.VoiceBill)
-		r.Post("/api/ai/voice-bill", aic.VoiceBill)
-		r.Post("/ai/marketing-campaign", aic.GenerateMarketingCampaign)
-		r.Post("/api/ai/marketing-campaign", aic.GenerateMarketingCampaign)
-		r.Post("/ai/supplier-invoice", aic.ParseSupplierInvoice)
-		r.Post("/api/ai/supplier-invoice", aic.ParseSupplierInvoice)
-		r.Post("/ai/cross-sell", aic.GetCrossSellRecommendations)
-		r.Post("/api/ai/cross-sell", aic.GetCrossSellRecommendations)
-		r.Get("/ai/dead-stock-bundles", aic.GetDeadStockBundles)
-		r.Get("/api/ai/dead-stock-bundles", aic.GetDeadStockBundles)
-		r.Post("/ai/recovery-nudge", aic.GenerateSmartRecoveryNudge)
-		r.Post("/api/ai/recovery-nudge", aic.GenerateSmartRecoveryNudge)
 
 		// Merchant Udhar Ledger
 		r.Get("/khata/summary", khatac.GetSummary)
@@ -376,8 +334,7 @@ func RouteSetup(c *app.Container) chi.Router {
 	r.Route("/api", func(r chi.Router) {
 		r.Use(middleware.JWTAuth(utils.MustLoad().Jwt))
 
-		// 1. Live Margin Floor Check & Touch Counter Hotkeys
-		r.Post("/pos/margin-check", marginc.CheckMargin)
+		// 1. Touch Counter Hotkeys
 		r.Get("/pos/hotkeys", marginc.ListHotkeys)
 		r.Post("/pos/hotkeys", marginc.CreateHotkey)
 		r.Delete("/pos/hotkeys/{id}", marginc.DeleteHotkey)
@@ -415,20 +372,6 @@ func RouteSetup(c *app.Container) chi.Router {
 
 		// 7. Automated End-of-Day P&L PDF (Pure Go)
 		r.Get("/pos/day-close/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
-
-		// 8. 🧠 AI Layer Engines
-		r.Post("/ai/supplier-invoice", aic.ParseSupplierInvoice)
-		r.Post("/api/ai/supplier-invoice", aic.ParseSupplierInvoice)
-		r.Post("/ai/cross-sell", aic.GetCrossSellRecommendations)
-		r.Post("/api/ai/cross-sell", aic.GetCrossSellRecommendations)
-		r.Get("/ai/dead-stock-bundles", aic.GetDeadStockBundles)
-		r.Get("/api/ai/dead-stock-bundles", aic.GetDeadStockBundles)
-		r.Post("/ai/recovery-nudge", aic.GenerateSmartRecoveryNudge)
-		r.Post("/api/ai/recovery-nudge", aic.GenerateSmartRecoveryNudge)
-		r.Post("/ai/voice-bill", aic.VoiceBill)
-		r.Post("/api/ai/voice-bill", aic.VoiceBill)
-		r.Post("/ai/marketing-campaign", aic.GenerateMarketingCampaign)
-		r.Post("/api/ai/marketing-campaign", aic.GenerateMarketingCampaign)
 	})
 
 	// Protected routes (JWT authentication required)
@@ -463,9 +406,6 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Post("/shops/me/restore", sc.RestoreMyShop)                                           // Shop
 		r.Get("/shops/me/ws", wsc.ServeShopWebSocket)                                            // Shop
 		r.With(middleware.UploadRateLimiter.Middleware()).Post("/shops/me/images", upc.UploadShopImages) // Shop
-
-		// Authenticated merchant intelligence
-		r.Post("/ai/merchant-copilot", aic.MerchantCopilot) // Shop
 
 		// Shop Staff & Cashier sub-accounts
 		r.Get("/shops/me/staff", staffc.ListStaff)             // Shop
@@ -520,8 +460,6 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/shops/me/pos/park", posc.ListParkedBills)                           // Shop
 		r.Get("/shops/me/pos/park/{id}", posc.GetParkedBill)                        // Shop
 		r.Delete("/shops/me/pos/park/{id}", posc.DeleteParkedBill)                  // Shop
-		r.Get("/shops/me/pos/bargain-assist", pc.GetPOSBargainAssist)               // Shop
-		r.Post("/shops/me/pos/parse-parchi", aic.ParseParchi)                      // Shop
 		r.Get("/shops/me/pos/weekly-scorecard", posc.GetWeeklyScorecard)           // Shop
 		r.Get("/shops/me/pos/customers/{phone}/recent-basket", posc.GetCustomerRecentBasket) // Shop
 		r.Post("/shops/me/pos/returns", posc.ProcessPOSReturn)                     // Shop

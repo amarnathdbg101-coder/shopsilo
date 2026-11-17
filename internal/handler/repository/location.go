@@ -257,9 +257,9 @@ func (r *LocationRepo) CreateVariant(ctx context.Context, shopID, productID stri
 		INSERT INTO product_variants (
 			product_id, shop_id, sku, barcode, title, size, color, color_hex,
 			shade_code, batch_number, expiry_date, price, cost_price, compare_price,
-			floor_price, weight, image_url, is_active
+			weight, image_url, is_active
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, true
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, true
 		) RETURNING id, created_at, updated_at;
 	`
 	var v model.ProductVariant
@@ -277,7 +277,6 @@ func (r *LocationRepo) CreateVariant(ctx context.Context, shopID, productID stri
 	v.Price = input.Price
 	v.CostPrice = input.CostPrice
 	v.ComparePrice = input.ComparePrice
-	v.FloorPrice = input.FloorPrice
 	v.Weight = input.Weight
 	v.ImageURL = input.ImageURL
 	v.IsActive = true
@@ -286,7 +285,7 @@ func (r *LocationRepo) CreateVariant(ctx context.Context, shopID, productID stri
 		productID, shopID, input.SKU, input.Barcode, input.Title,
 		input.Size, input.Color, input.ColorHex, input.ShadeCode,
 		input.BatchNumber, input.ExpiryDate, input.Price, input.CostPrice,
-		input.ComparePrice, input.FloorPrice, input.Weight, input.ImageURL,
+		input.ComparePrice, input.Weight, input.ImageURL,
 	).Scan(&v.ID, &v.CreatedAt, &v.UpdatedAt)
 
 	if err != nil {
@@ -343,9 +342,9 @@ func (r *LocationRepo) BulkCreateVariants(ctx context.Context, shopID, productID
 			INSERT INTO product_variants (
 				product_id, shop_id, sku, barcode, title, size, color, color_hex,
 				shade_code, batch_number, expiry_date, price, cost_price, compare_price,
-				floor_price, weight, image_url, is_active
+				weight, image_url, is_active
 			) VALUES (
-				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, true
+				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, true
 			) RETURNING id, created_at, updated_at;
 		`
 		var v model.ProductVariant
@@ -363,7 +362,6 @@ func (r *LocationRepo) BulkCreateVariants(ctx context.Context, shopID, productID
 		v.Price = input.Price
 		v.CostPrice = input.CostPrice
 		v.ComparePrice = input.ComparePrice
-		v.FloorPrice = input.FloorPrice
 		v.Weight = input.Weight
 		v.ImageURL = input.ImageURL
 		v.IsActive = true
@@ -372,7 +370,7 @@ func (r *LocationRepo) BulkCreateVariants(ctx context.Context, shopID, productID
 			productID, shopID, input.SKU, input.Barcode, input.Title,
 			input.Size, input.Color, input.ColorHex, input.ShadeCode,
 			input.BatchNumber, input.ExpiryDate, input.Price, input.CostPrice,
-			input.ComparePrice, input.FloorPrice, input.Weight, input.ImageURL,
+			input.ComparePrice, input.Weight, input.ImageURL,
 		).Scan(&v.ID, &v.CreatedAt, &v.UpdatedAt)
 
 		if err != nil {
@@ -408,7 +406,7 @@ func (r *LocationRepo) ListVariantsByProduct(ctx context.Context, shopID, produc
 		SELECT pv.id, pv.product_id, pv.shop_id, pv.sku, COALESCE(pv.barcode, ''), 
 		       pv.title, COALESCE(pv.size, ''), COALESCE(pv.color, ''), COALESCE(pv.color_hex, ''), 
 		       COALESCE(pv.shade_code, ''), COALESCE(pv.batch_number, ''), pv.expiry_date,
-		       pv.price, pv.cost_price, pv.compare_price, pv.floor_price, pv.weight, 
+		       pv.price, pv.cost_price, pv.compare_price, pv.weight, 
 		       COALESCE(pv.image_url, ''), pv.is_active,
 		       COALESCE(li.quantity - li.reserved_quantity, 0) AS available_qty,
 		       pv.created_at, pv.updated_at
@@ -431,7 +429,7 @@ func (r *LocationRepo) ListVariantsByProduct(ctx context.Context, shopID, produc
 			&v.ID, &v.ProductID, &v.ShopID, &v.SKU, &v.Barcode,
 			&v.Title, &v.Size, &v.Color, &v.ColorHex,
 			&v.ShadeCode, &v.BatchNumber, &v.ExpiryDate,
-			&v.Price, &v.CostPrice, &v.ComparePrice, &v.FloorPrice, &v.Weight,
+			&v.Price, &v.CostPrice, &v.ComparePrice, &v.Weight,
 			&v.ImageURL, &v.IsActive, &v.AvailableQty,
 			&v.CreatedAt, &v.UpdatedAt,
 		); err != nil {
@@ -449,7 +447,7 @@ func (r *LocationRepo) ListVariantsPublic(ctx context.Context, productID string)
 		SELECT pv.id, pv.product_id, pv.shop_id, pv.sku, COALESCE(pv.barcode, ''), 
 		       pv.title, COALESCE(pv.size, ''), COALESCE(pv.color, ''), COALESCE(pv.color_hex, ''), 
 		       COALESCE(pv.shade_code, ''), COALESCE(pv.batch_number, ''), pv.expiry_date,
-		       pv.price, 0.0 AS cost_price, pv.compare_price, 0.0 AS floor_price, pv.weight, 
+		       pv.price, 0.0 AS cost_price, pv.compare_price, pv.weight, 
 		       COALESCE(pv.image_url, ''), pv.is_active,
 		       COALESCE(SUM(li.quantity - li.reserved_quantity), 0) AS available_qty,
 		       pv.created_at, pv.updated_at
@@ -472,7 +470,7 @@ func (r *LocationRepo) ListVariantsPublic(ctx context.Context, productID string)
 			&v.ID, &v.ProductID, &v.ShopID, &v.SKU, &v.Barcode,
 			&v.Title, &v.Size, &v.Color, &v.ColorHex,
 			&v.ShadeCode, &v.BatchNumber, &v.ExpiryDate,
-			&v.Price, &v.CostPrice, &v.ComparePrice, &v.FloorPrice, &v.Weight,
+			&v.Price, &v.CostPrice, &v.ComparePrice, &v.Weight,
 			&v.ImageURL, &v.IsActive, &v.AvailableQty,
 			&v.CreatedAt, &v.UpdatedAt,
 		); err != nil {
@@ -489,7 +487,7 @@ func (r *LocationRepo) GetVariantByBarcode(ctx context.Context, shopID, barcode 
 		SELECT id, product_id, shop_id, sku, barcode, title, 
 		       COALESCE(size, ''), COALESCE(color, ''), COALESCE(color_hex, ''), 
 		       COALESCE(shade_code, ''), COALESCE(batch_number, ''), expiry_date,
-		       price, cost_price, compare_price, floor_price, weight, 
+		       price, cost_price, compare_price, weight, 
 		       COALESCE(image_url, ''), is_active, created_at, updated_at
 		FROM product_variants
 		WHERE shop_id = $1 AND barcode = $2 AND is_active = true
@@ -500,7 +498,7 @@ func (r *LocationRepo) GetVariantByBarcode(ctx context.Context, shopID, barcode 
 		&v.ID, &v.ProductID, &v.ShopID, &v.SKU, &v.Barcode, &v.Title,
 		&v.Size, &v.Color, &v.ColorHex,
 		&v.ShadeCode, &v.BatchNumber, &v.ExpiryDate,
-		&v.Price, &v.CostPrice, &v.ComparePrice, &v.FloorPrice, &v.Weight,
+		&v.Price, &v.CostPrice, &v.ComparePrice, &v.Weight,
 		&v.ImageURL, &v.IsActive, &v.CreatedAt, &v.UpdatedAt,
 	)
 	if err != nil {
@@ -527,15 +525,14 @@ func (r *LocationRepo) UpdateVariant(ctx context.Context, shopID, variantID stri
 		    price = COALESCE($11, price),
 		    cost_price = COALESCE($12, cost_price),
 		    compare_price = COALESCE($13, compare_price),
-		    floor_price = COALESCE($14, floor_price),
-		    image_url = COALESCE($15, image_url),
-		    is_active = COALESCE($16, is_active),
+		    image_url = COALESCE($14, image_url),
+		    is_active = COALESCE($15, is_active),
 		    updated_at = NOW()
 		WHERE shop_id = $1 AND id = $2
 		RETURNING id, product_id, shop_id, sku, COALESCE(barcode, ''), title, 
 		          COALESCE(size, ''), COALESCE(color, ''), COALESCE(color_hex, ''), 
 		          COALESCE(shade_code, ''), COALESCE(batch_number, ''), expiry_date,
-		          price, cost_price, compare_price, floor_price, weight, 
+		          price, cost_price, compare_price, weight, 
 		          COALESCE(image_url, ''), is_active, created_at, updated_at;
 	`
 	var v model.ProductVariant
@@ -543,12 +540,12 @@ func (r *LocationRepo) UpdateVariant(ctx context.Context, shopID, variantID stri
 		shopID, variantID, input.Barcode, input.Title,
 		input.Size, input.Color, input.ColorHex, input.ShadeCode,
 		input.BatchNumber, input.ExpiryDate, input.Price, input.CostPrice,
-		input.ComparePrice, input.FloorPrice, input.ImageURL, input.IsActive,
+		input.ComparePrice, input.ImageURL, input.IsActive,
 	).Scan(
 		&v.ID, &v.ProductID, &v.ShopID, &v.SKU, &v.Barcode, &v.Title,
 		&v.Size, &v.Color, &v.ColorHex,
 		&v.ShadeCode, &v.BatchNumber, &v.ExpiryDate,
-		&v.Price, &v.CostPrice, &v.ComparePrice, &v.FloorPrice, &v.Weight,
+		&v.Price, &v.CostPrice, &v.ComparePrice, &v.Weight,
 		&v.ImageURL, &v.IsActive, &v.CreatedAt, &v.UpdatedAt,
 	)
 	if err != nil {

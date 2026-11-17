@@ -26,34 +26,6 @@ func NewMarginController(service *services.MarginService) *MarginController {
 	}
 }
 
-// CheckMargin validates bargaining proposed price and returns stealth visual indicators.
-func (c *MarginController) CheckMargin(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetUserFromContext(r.Context())
-	if claims == nil || claims.UserID == "" {
-		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-
-	var input dto.MarginCheckRequest
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		reuse.Error(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-
-	if err := reuse.ValidateStruct(&input); err != nil {
-		reuse.Error(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	res, err := c.service.CheckMargin(r.Context(), claims.UserID, input)
-	if err != nil {
-		reuse.Error(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	reuse.Success(w, "Margin evaluation completed", res)
-}
-
 // ListHotkeys returns the active fast-grid buttons for cashier counter.
 func (c *MarginController) ListHotkeys(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())

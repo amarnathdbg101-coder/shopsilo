@@ -3,29 +3,6 @@ package dto
 
 import "shopMe/internal/handler/model"
 
-// MarginCheckRequest evaluates real-time bargaining safety on the counter.
-type MarginCheckRequest struct {
-	ProductID     string   `json:"product_id" validate:"required"`
-	VariantID     *string  `json:"variant_id,omitempty"`
-	ProposedPrice float64  `json:"proposed_price" validate:"required,gte=0"`
-	Quantity      int      `json:"quantity" validate:"omitempty,gt=0"`
-}
-
-// MarginCheckResponse returns stealth visual indicators and profit safety for cashier.
-type MarginCheckResponse struct {
-	IsAllowed       bool    `json:"is_allowed"`
-	FloorPrice      float64 `json:"floor_price"`
-	CostPrice       float64 `json:"cost_price"`
-	NormalPrice     float64 `json:"normal_price"`
-	ProposedPrice   float64 `json:"proposed_price"`
-	UnitProfit      float64 `json:"unit_profit"`
-	TotalProfit     float64 `json:"total_profit"`
-	ProfitMarginPct float64 `json:"profit_margin_pct"`
-	IndicatorColor  string  `json:"indicator_color"` // "GREEN", "ORANGE", "RED"
-	WarningMessage  string  `json:"warning_message,omitempty"`
-	StealthBadge    string  `json:"stealth_badge"`   // "🟢 SAFE PROFIT", "🟠 TIGHT MARGIN", "🔴 LOSS ALERT"
-}
-
 // CreateShopHotkeyRequest creates a fast-grid tile for rapid checkout.
 type CreateShopHotkeyRequest struct {
 	ProductID   string  `json:"product_id" validate:"required"`

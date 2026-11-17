@@ -175,7 +175,6 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 	var billItems []*model.POSBillItem
 	var subtotal float64
 	var totalCost float64
-	var redeemDealID string
 
 	// Fetch catalog products in a single optimized batch query
 	catalogProductIDs := make([]string, 0, len(input.Items))
@@ -241,25 +240,10 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 				unitPrice = *it.CustomPrice
 			}
 
-			// Check if a valid bargain deal code was supplied
-			if strings.TrimSpace(input.BargainDealCode) != "" {
-				if deal, err := s.productRepo.GetValidBargainDeal(ctx, prod.ID, input.BargainDealCode); err == nil && deal != nil {
-					unitPrice = deal.AgreedPrice
-					redeemDealID = deal.ID
-				}
-			}
-
 			// Strict Loss Prevention Guardrail
-			minAllowedPrice := prod.FloorPrice
-			if minAllowedPrice <= 0 && prod.CostPrice > 0 {
-				minAllowedPrice = prod.CostPrice
-			}
-			if minAllowedPrice > 0 && unitPrice < minAllowedPrice {
+			if prod.CostPrice > 0 && unitPrice < prod.CostPrice {
 				lossPerUnit := prod.CostPrice - unitPrice
-				if lossPerUnit < 0 {
-					lossPerUnit = minAllowedPrice - unitPrice
-				}
-				return nil, fmt.Errorf("loss prevention alert: cannot sell '%s' at Rs.%.2f. Minimum allowed floor price is Rs.%.2f (Cost: Rs.%.2f). Selling below floor causes a loss of Rs.%.2f per unit; bill generation blocked", prod.Name, unitPrice, minAllowedPrice, prod.CostPrice, lossPerUnit)
+				return nil, fmt.Errorf("loss prevention alert: cannot sell '%s' at Rs.%.2f below wholesale cost of Rs.%.2f (loss of Rs.%.2f per unit); bill generation blocked", prod.Name, unitPrice, prod.CostPrice, lossPerUnit)
 			}
 		}
 
@@ -427,11 +411,6 @@ case "split":
 				"stock":      itm.RemainingStock,
 			})
 		}
-	}
-
-	// Redeem bargain deal if applied
-	if redeemDealID != "" {
-		_ = s.productRepo.RedeemBargainDeal(ctx, redeemDealID)
 	}
 
 	receiptURL := fmt.Sprintf("/shops/me/pos/receipts/%s.pdf", createdBill.BillNumber)

@@ -252,6 +252,16 @@ func (r *UserRepo) FindByEmailOrPhone(ctx context.Context, identifier string) (*
 		return nil, ErrUserNotFound
 	}
 
+	digits := ""
+	for _, ch := range trimmed {
+		if ch >= '0' && ch <= '9' {
+			digits += string(ch)
+		}
+	}
+	if len(digits) > 10 {
+		digits = digits[len(digits)-10:]
+	}
+
 	query := `
 		SELECT id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, COALESCE(token_version, 1), created_at, updated_at
 		FROM users
@@ -259,11 +269,14 @@ func (r *UserRepo) FindByEmailOrPhone(ctx context.Context, identifier string) (*
 		UNION ALL
 		SELECT id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, COALESCE(token_version, 1), created_at, updated_at
 		FROM users
-		WHERE phone IS NOT NULL AND phone != '' AND phone = $1
+		WHERE phone IS NOT NULL AND phone != '' AND (
+			phone = $1 OR
+			($2 != '' AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = $2)
+		)
 		LIMIT 1
 	`
 	u := &model.User{}
-	err := r.db.QueryRow(ctx, query, trimmed).Scan(
+	err := r.db.QueryRow(ctx, query, trimmed, digits).Scan(
 		&u.ID,
 		&u.Email,
 		&u.PasswordHash,

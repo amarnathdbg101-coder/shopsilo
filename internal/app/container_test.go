@@ -87,7 +87,6 @@ func TestFeatureRegistry_Discovery(t *testing.T) {
 		"damage_claims",
 		"multi_godown",
 		"loyalty_offers",
-		"master_catalog",
 		"telemetry_audit",
 	}
 
@@ -102,8 +101,8 @@ func TestFeatureRegistry_Discovery(t *testing.T) {
 	}
 
 	all := registry.ListAll()
-	if len(all) < 13 {
-		t.Fatalf("expected at least 13 registered features, got %d", len(all))
+	if len(all) < 12 {
+		t.Fatalf("expected at least 12 registered features, got %d", len(all))
 	}
 
 	// Test HTTP discovery response

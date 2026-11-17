@@ -21,7 +21,6 @@ type CustomerProductResponseDTO struct {
 	IsInStock          bool                   `json:"is_in_stock"`
 	StockBadge         string                 `json:"stock_badge"` // "In Stock", "Only Few Left", "Out of Stock"
 	DistanceKm         float64                `json:"distance_km,omitempty"`
-	AllowBargain       bool                   `json:"allow_bargain"`
 	Rating             float64                `json:"rating,omitempty"`
 	ReviewCount        int                    `json:"review_count,omitempty"`
 	Attributes         map[string]interface{} `json:"attributes,omitempty"`
@@ -38,7 +37,6 @@ type MerchantProductResponseDTO struct {
 	SKU                string                 `json:"sku"`
 	CostPrice          float64                `json:"cost_price"`
 	SellingPrice       float64                `json:"selling_price"`
-	FloorPrice         float64                `json:"floor_price"`
 	ComparePrice       float64                `json:"compare_price,omitempty"`
 	MRP                float64                `json:"mrp,omitempty"`
 	ProfitMarginAmount float64                `json:"profit_margin_amount"`
@@ -53,7 +51,6 @@ type MerchantProductResponseDTO struct {
 	Weight             float64                `json:"weight,omitempty"`
 	IsActive           bool                   `json:"is_active"`
 	IsFeatured         bool                   `json:"is_featured"`
-	AllowBargain       bool                   `json:"allow_bargain"`
 	Tags               []string               `json:"tags,omitempty"`
 	Attributes         map[string]interface{} `json:"attributes,omitempty"`
 	CreatedAt          time.Time              `json:"created_at"`

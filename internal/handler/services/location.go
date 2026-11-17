@@ -165,7 +165,6 @@ func (s *LocationService) GenerateVariantMatrix(ctx context.Context, shopOwnerUs
 					Price:        input.Price,
 					CostPrice:    input.CostPrice,
 					ComparePrice: input.ComparePrice,
-					FloorPrice:   input.FloorPrice,
 				})
 			}
 		}
@@ -181,7 +180,6 @@ func (s *LocationService) GenerateVariantMatrix(ctx context.Context, shopOwnerUs
 				Price:        input.Price,
 				CostPrice:    input.CostPrice,
 				ComparePrice: input.ComparePrice,
-				FloorPrice:   input.FloorPrice,
 			})
 		}
 	} else if len(input.Shades) > 0 {
@@ -196,7 +194,6 @@ func (s *LocationService) GenerateVariantMatrix(ctx context.Context, shopOwnerUs
 				Price:        input.Price,
 				CostPrice:    input.CostPrice,
 				ComparePrice: input.ComparePrice,
-				FloorPrice:   input.FloorPrice,
 			})
 		}
 	} else {

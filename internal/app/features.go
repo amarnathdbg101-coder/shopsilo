@@ -161,17 +161,7 @@ func NewFeatureRegistry() *FeatureRegistry {
 		Version:     "v2.0.0",
 	})
 
-	// 13. Crowdsourced FMCG Master Catalog
-	r.Register(FeatureDescriptor{
-		Key:         "master_catalog",
-		Name:        "Crowdsourced FMCG Barcode Catalog",
-		Category:    "Catalog Intelligence",
-		Description: "Global FMCG product database with auto-complete for fast product onboarding",
-		Status:      FeatureStatusActive,
-		Version:     "v2.0.0",
-	})
-
-	// 14. Observability & Audit Engine
+	// 13. Observability & Audit Engine
 	r.Register(FeatureDescriptor{
 		Key:         "telemetry_audit",
 		Name:        "24-Hour Developer Telemetry & Audit Vault",

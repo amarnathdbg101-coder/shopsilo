@@ -134,21 +134,6 @@ type AIMarketingCampaignResponse struct {
 	SuggestedHashtags []string `json:"suggested_hashtags"`
 }
 
-// ── AI Bargain Assist DTOs ──
-type AIBargainAssistRequest struct {
-	ProductName string  `json:"product_name" validate:"required"`
-	MRP         float64 `json:"mrp" validate:"required"`
-	CostPrice   float64 `json:"cost_price" validate:"required"`
-	AskingPrice float64 `json:"asking_price,omitempty"`
-}
-
-type AIBargainAssistResponse struct {
-	MinSafePrice     float64 `json:"min_safe_price"`
-	IdealDealPrice   float64 `json:"ideal_deal_price"`
-	ShopkeeperAdvice string  `json:"shopkeeper_advice"`
-	CustomerScript   string  `json:"customer_script"`
-}
-
 // ── Supplier Invoice / Wholesale Bill OCR Ingestion DTOs (FEAT-POS-02) ──
 type ParseSupplierInvoiceRequest struct {
 	ImageBase64     string `json:"image_base64" validate:"required"`

@@ -16,7 +16,6 @@ type ShopHotkey struct {
 	IsActive    bool      `json:"is_active"`
 	Price       float64   `json:"price,omitempty"`       // Populated dynamically from product/variant
 	CostPrice   float64   `json:"cost_price,omitempty"`  // Populated dynamically
-	FloorPrice  float64   `json:"floor_price,omitempty"` // Populated dynamically
 	SKU         string    `json:"sku,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`

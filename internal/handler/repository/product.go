@@ -243,13 +243,13 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 	query := `
 		INSERT INTO products (
 			shop_id, name, slug, description, sku, price, cost_price, compare_price,
-			category_id, images, weight, is_active, is_featured, tags, attributes, floor_price, allow_bargain, is_price_public
+			category_id, images, weight, is_active, is_featured, tags, attributes, is_price_public
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15::jsonb, $16, $17, $18
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15::jsonb, $16
 		)
 		RETURNING id, shop_id, name, slug, COALESCE(description, ''), sku, price, COALESCE(cost_price, 0), COALESCE(compare_price, 0),
 		          COALESCE(category_id::text, ''), images, COALESCE(weight, 0), is_active, is_featured, COALESCE(tags, '{}'), COALESCE(attributes, '{}'::jsonb), created_at, updated_at,
-		          COALESCE(floor_price, 0), COALESCE(allow_bargain, true), COALESCE(is_price_public, true)
+		          COALESCE(is_price_public, true)
 	`
 
 	created := &model.Product{}
@@ -273,8 +273,6 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 		p.IsFeatured,
 		p.Tags,
 		string(attributesJSON),
-		p.FloorPrice,
-		p.AllowBargain,
 		p.IsPricePublic,
 	).Scan(
 		&created.ID,
@@ -295,8 +293,6 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 		&attributesBytes,
 		&created.CreatedAt,
 		&created.UpdatedAt,
-		&created.FloorPrice,
-		&created.AllowBargain,
 		&created.IsPricePublic,
 	)
 	if err != nil {
@@ -369,7 +365,7 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*model.Product, 
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1),
 		       COALESCE(s.name, ''), COALESCE(s.slug, ''), COALESCE(s.phone, ''), COALESCE(s.address, ''), COALESCE(s.city, ''),
 		       s.latitude, s.longitude, COALESCE(c.name, ''),
-		       COALESCE(p.floor_price, 0), COALESCE(p.allow_bargain, true), COALESCE(p.is_price_public, true)
+		       COALESCE(p.is_price_public, true)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
 		LEFT JOIN shops s ON s.id = p.shop_id
@@ -411,8 +407,6 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*model.Product, 
 		&p.ShopLatitude,
 		&p.ShopLongitude,
 		&p.CategoryName,
-		&p.FloorPrice,
-		&p.AllowBargain,
 		&p.IsPricePublic,
 	)
 	if err != nil {
@@ -456,7 +450,7 @@ func (r *ProductRepo) FindByIDs(ctx context.Context, shopID string, ids []string
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
 		       COALESCE(p.category_id::text, ''), COALESCE(p.images, '[]'::jsonb), COALESCE(p.weight, 0), p.is_active, p.is_featured, COALESCE(p.tags, '{}'), COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1),
-		       COALESCE(p.floor_price, 0), COALESCE(p.allow_bargain, true), COALESCE(p.is_price_public, true)
+		       COALESCE(p.is_price_public, true)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
 		WHERE p.shop_id = $1 AND p.id = ANY($2) AND p.is_active = true
@@ -497,8 +491,6 @@ func (r *ProductRepo) FindByIDs(ctx context.Context, shopID string, ids []string
 			&inv.Quantity,
 			&inv.ReservedQuantity,
 			&inv.LowStockThreshold,
-			&p.FloorPrice,
-			&p.AllowBargain,
 			&p.IsPricePublic,
 		)
 		if err != nil {
@@ -538,7 +530,7 @@ func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*model.Produ
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1),
 		       COALESCE(s.name, ''), COALESCE(s.slug, ''), COALESCE(s.phone, ''), COALESCE(s.address, ''), COALESCE(s.city, ''),
 		       s.latitude, s.longitude, COALESCE(c.name, ''),
-		       COALESCE(p.floor_price, 0), COALESCE(p.allow_bargain, true), COALESCE(p.is_price_public, true)
+		       COALESCE(p.is_price_public, true)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
 		LEFT JOIN shops s ON s.id = p.shop_id
@@ -580,8 +572,6 @@ func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*model.Produ
 		&p.ShopLatitude,
 		&p.ShopLongitude,
 		&p.CategoryName,
-		&p.FloorPrice,
-		&p.AllowBargain,
 		&p.IsPricePublic,
 	)
 	if err != nil {
@@ -621,7 +611,7 @@ func (r *ProductRepo) FindBySKU(ctx context.Context, shopID, sku string) (*model
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),
 		       COALESCE(p.category_id::text, ''), COALESCE(p.images, '[]'::jsonb), COALESCE(p.weight, 0), p.is_active, p.is_featured, COALESCE(p.tags, '{}'), COALESCE(p.attributes, '{}'::jsonb), p.created_at, p.updated_at,
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1),
-		       COALESCE(p.floor_price, 0), COALESCE(p.allow_bargain, true), COALESCE(p.is_price_public, true)
+		       COALESCE(p.is_price_public, true)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
 		WHERE p.shop_id = $1 AND (
@@ -660,8 +650,6 @@ func (r *ProductRepo) FindBySKU(ctx context.Context, shopID, sku string) (*model
 		&inv.Quantity,
 		&inv.ReservedQuantity,
 		&inv.LowStockThreshold,
-		&p.FloorPrice,
-		&p.AllowBargain,
 		&p.IsPricePublic,
 	)
 	if err != nil {
@@ -1008,7 +996,7 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 		       COALESCE(i.quantity, 0), COALESCE(i.reserved_quantity, 0), COALESCE(i.low_stock_threshold, 1),
 		       COALESCE(s.name, ''), COALESCE(s.slug, ''), COALESCE(s.phone, ''), COALESCE(s.address, ''), COALESCE(s.city, ''),
 		       s.latitude, s.longitude, COALESCE(c.name, ''),
-		       COALESCE(p.floor_price, 0), COALESCE(p.allow_bargain, true), COALESCE(p.is_price_public, true)
+		       COALESCE(p.is_price_public, true)
 		FROM products p
 		LEFT JOIN inventory i ON i.product_id = p.id
 		LEFT JOIN shops s ON s.id = p.shop_id
@@ -1064,8 +1052,6 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 			&p.ShopLatitude,
 			&p.ShopLongitude,
 			&p.CategoryName,
-			&p.FloorPrice,
-			&p.AllowBargain,
 			&p.IsPricePublic,
 		)
 		if err != nil {
@@ -1148,11 +1134,11 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 		UPDATE products
 		SET name = $1, slug = $2, description = $3, sku = $4, price = $5, cost_price = $6, compare_price = $7,
 		    category_id = $8, images = $9::jsonb, weight = $10, is_active = $11, is_featured = $12, tags = $13, attributes = $14::jsonb,
-		    floor_price = $15, allow_bargain = $16, is_price_public = $17, updated_at = NOW()
-		WHERE id = $18 AND shop_id = $19
+		    is_price_public = $15, updated_at = NOW()
+		WHERE id = $16 AND shop_id = $17
 		RETURNING id, shop_id, name, slug, COALESCE(description, ''), sku, price, COALESCE(cost_price, 0), COALESCE(compare_price, 0),
 		          COALESCE(category_id::text, ''), images, COALESCE(weight, 0), is_active, is_featured, COALESCE(tags, '{}'), COALESCE(attributes, '{}'::jsonb), created_at, updated_at,
-		          COALESCE(floor_price, 0), COALESCE(allow_bargain, true), COALESCE(is_price_public, true)
+		          COALESCE(is_price_public, true)
 	`
 	updated := &model.Product{}
 	var imagesBytes, attributesBytes []byte
@@ -1174,8 +1160,6 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 		p.IsFeatured,
 		p.Tags,
 		string(attributesJSON),
-		p.FloorPrice,
-		p.AllowBargain,
 		p.IsPricePublic,
 		p.ID,
 		p.ShopID,
@@ -1198,8 +1182,6 @@ func (r *ProductRepo) Update(ctx context.Context, p *model.Product, stock *int) 
 		&attributesBytes,
 		&updated.CreatedAt,
 		&updated.UpdatedAt,
-		&updated.FloorPrice,
-		&updated.AllowBargain,
 		&updated.IsPricePublic,
 	)
 	if err != nil {
@@ -1804,7 +1786,7 @@ func (r *ProductRepo) FindNearbyProducts(
 	sqlQuery := fmt.Sprintf(`
 		SELECT
 			p.id, p.name, p.slug, p.price, COALESCE(p.compare_price, 0), COALESCE(p.sku, ''),
-			COALESCE(p.is_price_public, true), COALESCE(p.allow_bargain, true),
+			COALESCE(p.is_price_public, true),
 			COALESCE(p.images, '[]'::jsonb), (i.quantity - i.reserved_quantity) AS avail_qty,
 			s.id AS shop_id, s.name AS shop_name, s.slug AS shop_slug, s.address AS shop_address, s.phone AS shop_phone,
 			COALESCE(s.city, ''), COALESCE(s.latitude, 0), COALESCE(s.longitude, 0),
@@ -1846,7 +1828,6 @@ func (r *ProductRepo) FindNearbyProducts(
 			&item.ComparePrice,
 			&item.SKU,
 			&item.IsPricePublic,
-			&item.AllowBargain,
 			&imagesBytes,
 			&item.AvailableQuantity,
 			&item.ShopID,
@@ -2110,53 +2091,6 @@ func (r *ProductRepo) CountWaitingCustomers(ctx context.Context, productID strin
 	var count int
 	err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM product_stock_alerts WHERE product_id = $1 AND notified = false`, productID).Scan(&count)
 	return count, err
-}
-
-// CreateBargainDeal saves a locked customer offer or accepted counter-offer.
-func (r *ProductRepo) CreateBargainDeal(ctx context.Context, deal *model.ProductBargainDeal) error {
-	query := `
-		INSERT INTO product_bargain_deals (
-			product_id, shop_id, customer_phone, customer_name, deal_code,
-			offered_price, agreed_price, bundle_quantity, status, expires_at, created_at
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
-		RETURNING id, created_at
-	`
-	return r.db.QueryRow(
-		ctx, query,
-		deal.ProductID, deal.ShopID, strings.TrimSpace(deal.CustomerPhone), strings.TrimSpace(deal.CustomerName),
-		deal.DealCode, deal.OfferedPrice, deal.AgreedPrice, deal.BundleQuantity, deal.Status, deal.ExpiresAt,
-	).Scan(&deal.ID, &deal.CreatedAt)
-}
-
-// GetValidBargainDeal fetches an active unexpired bargain deal for checkout redemption.
-func (r *ProductRepo) GetValidBargainDeal(ctx context.Context, productID, dealCode string) (*model.ProductBargainDeal, error) {
-	query := `
-		SELECT id, COALESCE(product_id::text, ''), shop_id, customer_phone, COALESCE(customer_name, ''),
-		       deal_code, offered_price, agreed_price, bundle_quantity, status, expires_at, created_at
-		FROM product_bargain_deals
-		WHERE product_id = $1 AND UPPER(deal_code) = UPPER($2) AND status = 'accepted' AND expires_at > NOW()
-		LIMIT 1
-	`
-	var deal model.ProductBargainDeal
-	err := r.db.QueryRow(ctx, query, productID, strings.TrimSpace(dealCode)).Scan(
-		&deal.ID, &deal.ProductID, &deal.ShopID, &deal.CustomerPhone, &deal.CustomerName,
-		&deal.DealCode, &deal.OfferedPrice, &deal.AgreedPrice, &deal.BundleQuantity, &deal.Status,
-		&deal.ExpiresAt, &deal.CreatedAt,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("bargain deal not found or expired")
-		}
-		return nil, err
-	}
-	return &deal, nil
-}
-
-// RedeemBargainDeal marks a deal code as redeemed upon POS sale completion.
-func (r *ProductRepo) RedeemBargainDeal(ctx context.Context, dealID string) error {
-	_, err := r.db.Exec(ctx, `UPDATE product_bargain_deals SET status = 'redeemed' WHERE id = $1`, dealID)
-	return err
 }
 
 // FindActiveProductsByTokens searches active store products by a set of keyword tokens for Parchi parsing.

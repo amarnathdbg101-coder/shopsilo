@@ -219,7 +219,6 @@ func sanitizePublicProduct(p *model.Product) {
 	}
 	// Enterprise Privacy Shield: Zero leakage of merchant-only commercial metrics (Rule 15)
 	p.CostPrice = 0
-	p.FloorPrice = 0
 	p.SKU = ""
 	if p.Attributes != nil {
 		delete(p.Attributes, "cost_price")
@@ -619,76 +618,6 @@ func (c *ProductController) ApplyClearanceMarkdown(w http.ResponseWriter, r *htt
 	}
 
 	reuse.Success(w, "Clearance markdown applied and WhatsApp broadcast generated successfully", res)
-}
-
-// MakeOffer lets online or mobile shoppers propose a bargained price for a product (Public / Customer).
-func (c *ProductController) MakeOffer(w http.ResponseWriter, r *http.Request) {
-	productID := chi.URLParam(r, "id")
-	if productID == "" {
-		reuse.Error(w, http.StatusBadRequest, "product id is required")
-		return
-	}
-
-	var input dto.MakeOfferRequest
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		reuse.Error(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-
-	if err := reuse.ValidateStruct(&input); err != nil {
-		reuse.Error(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	res, err := c.productService.NegotiateBargainOffer(r.Context(), productID, input)
-	if err != nil {
-		if errors.Is(err, services.ErrProductNotFound) {
-			reuse.Error(w, http.StatusNotFound, "product not found")
-			return
-		}
-		reuse.Error(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	reuse.Success(w, "Bargain offer processed successfully", res)
-}
-
-// GetPOSBargainAssist provides real-time margin guidance for counter cashiers negotiating in person (Protected - Shop Owner).
-func (c *ProductController) GetPOSBargainAssist(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetUserFromContext(r.Context())
-	if claims == nil || claims.UserID == "" {
-		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-
-	productID := r.URL.Query().Get("product_id")
-	if productID == "" {
-		reuse.Error(w, http.StatusBadRequest, "product_id is required")
-		return
-	}
-
-	proposedPriceStr := r.URL.Query().Get("proposed_price")
-	proposedPrice, _ := strconv.ParseFloat(proposedPriceStr, 64)
-	if proposedPrice <= 0 {
-		reuse.Error(w, http.StatusBadRequest, "proposed_price must be greater than 0")
-		return
-	}
-
-	res, err := c.productService.GetPOSBargainAssist(r.Context(), claims.UserID, productID, proposedPrice)
-	if err != nil {
-		if errors.Is(err, services.ErrProductNotFound) {
-			reuse.Error(w, http.StatusNotFound, "product not found")
-			return
-		}
-		if errors.Is(err, services.ErrShopNotFound) {
-			reuse.Error(w, http.StatusNotFound, "you do not have a registered shop")
-			return
-		}
-		reuse.Error(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	reuse.Success(w, "POS bargain assist margin advice retrieved successfully", res)
 }
 
 // BulkImport handles batch importing 500+ products via CSV file or JSON array (Protected - Shop Owner)

@@ -9,7 +9,6 @@ import (
 
 	"shopMe/internal/handler/model"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
@@ -18,19 +17,7 @@ var (
 	ErrHotkeyNotFound = errors.New("hotkey not found")
 )
 
-// ItemMarginBounds holds raw financial limits for pricing safety checks.
-type ItemMarginBounds struct {
-	ID               string
-	Name             string
-	SKU              string
-	Price            float64
-	CostPrice        float64
-	FloorPrice       float64
-	MinMarginPercent float64
-	IsVariant        bool
-}
-
-// HotkeyRepo manages fast-grid tiles and price bounds queries.
+// HotkeyRepo manages fast-grid tiles for POS rapid billing.
 type HotkeyRepo struct {
 	db     *pgxpool.Pool
 	logger *zap.Logger
@@ -42,55 +29,6 @@ func NewHotkeyRepo(db *pgxpool.Pool, logger *zap.Logger) *HotkeyRepo {
 		db:     db,
 		logger: logger,
 	}
-}
-
-// GetItemMarginBounds fetches exact financial constraints for a product or child variant.
-func (r *HotkeyRepo) GetItemMarginBounds(ctx context.Context, shopID, productID string, variantID *string) (*ItemMarginBounds, error) {
-	// If variantID is provided, check the specific variant first
-	if variantID != nil && strings.TrimSpace(*variantID) != "" {
-		query := `
-			SELECT pv.id, pv.title, pv.sku, pv.price, pv.cost_price, pv.floor_price, 
-			       COALESCE(pv.min_margin_percent, 10.00)
-			FROM product_variants pv
-			WHERE pv.id = $1 AND pv.shop_id = $2 AND pv.is_active = true
-			LIMIT 1;
-		`
-		var b ItemMarginBounds
-		err := r.db.QueryRow(ctx, query, *variantID, shopID).Scan(
-			&b.ID, &b.Name, &b.SKU, &b.Price, &b.CostPrice, &b.FloorPrice, &b.MinMarginPercent,
-		)
-		if err == nil {
-			b.IsVariant = true
-			return &b, nil
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			r.logger.Error("failed to query variant margin bounds", zap.Error(err), zap.String("variant_id", *variantID))
-			return nil, err
-		}
-		// Fallback to parent product if variant not found
-	}
-
-	// Query parent product
-	query := `
-		SELECT p.id, p.name, p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.floor_price, 0),
-		       COALESCE(p.min_margin_percent, 10.00)
-		FROM products p
-		WHERE p.id = $1 AND p.shop_id = $2 AND p.is_active = true
-		LIMIT 1;
-	`
-	var b ItemMarginBounds
-	err := r.db.QueryRow(ctx, query, productID, shopID).Scan(
-		&b.ID, &b.Name, &b.SKU, &b.Price, &b.CostPrice, &b.FloorPrice, &b.MinMarginPercent,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrProductNotFound
-		}
-		r.logger.Error("failed to query product margin bounds", zap.Error(err), zap.String("product_id", productID))
-		return nil, err
-	}
-	b.IsVariant = false
-	return &b, nil
 }
 
 // ListByShop retrieves all fast-grid tiles for a shop, optionally filtered by time slot.
@@ -108,7 +46,6 @@ func (r *HotkeyRepo) ListByShop(ctx context.Context, shopID string, timeSlot str
 		       h.sort_order, h.time_slot, h.is_active, h.created_at, h.updated_at,
 		       COALESCE(pv.price, p.price) AS price,
 		       COALESCE(pv.cost_price, p.cost_price, 0) AS cost_price,
-		       COALESCE(pv.floor_price, p.floor_price, 0) AS floor_price,
 		       COALESCE(pv.sku, p.sku) AS sku
 		FROM shop_hotkeys h
 		JOIN products p ON p.id = h.product_id
@@ -130,7 +67,7 @@ func (r *HotkeyRepo) ListByShop(ctx context.Context, shopID string, timeSlot str
 		err := rows.Scan(
 			&h.ID, &h.ShopID, &h.ProductID, &h.VariantID, &h.DisplayName, &h.ColorHex,
 			&h.SortOrder, &h.TimeSlot, &h.IsActive, &h.CreatedAt, &h.UpdatedAt,
-			&h.Price, &h.CostPrice, &h.FloorPrice, &h.SKU,
+			&h.Price, &h.CostPrice, &h.SKU,
 		)
 		if err != nil {
 			r.logger.Error("failed to scan shop hotkey", zap.Error(err))

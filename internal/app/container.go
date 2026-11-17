@@ -24,7 +24,6 @@ type Repositories struct {
 	Procurement  *repository.ProcurementRepo
 	Khata        *repository.KhataRepo
 	Loyalty      *repository.LoyaltyRepo
-	Catalog      *repository.CatalogRepo
 	Telemetry    *repository.TelemetryRepo
 	POS          *repository.POSRepo
 	Staff        *repository.StaffRepo
@@ -56,7 +55,6 @@ type Services struct {
 	Khata        *services.KhataService
 	Analytics    *services.AnalyticsService
 	Loyalty      *services.LoyaltyService
-	Catalog      *services.CatalogService
 	Telemetry    *services.TelemetryService
 	AI           *services.AIService
 	POS          *services.POSService
@@ -91,7 +89,6 @@ type Controllers struct {
 	CustomerKhata *controller.CustomerKhataController
 	Analytics     *controller.AnalyticsController
 	Loyalty       *controller.LoyaltyController
-	Catalog       *controller.CatalogController
 	Telemetry     *controller.TelemetryController
 	AI            *controller.AIController
 	POS           *controller.POSController
@@ -136,7 +133,6 @@ func NewContainer(db *pgxpool.Pool, logger *zap.Logger) *Container {
 		Procurement:  repository.NewProcurementRepo(db, logger),
 		Khata:        repository.NewKhataRepo(db, logger),
 		Loyalty:      repository.NewLoyaltyRepo(db, logger),
-		Catalog:      repository.NewCatalogRepo(db, logger),
 		Telemetry:    repository.NewTelemetryRepo(db, logger),
 		POS:          repository.NewPOSRepo(db, logger),
 		Staff:        repository.NewStaffRepo(db, logger),
@@ -171,7 +167,6 @@ func NewContainer(db *pgxpool.Pool, logger *zap.Logger) *Container {
 		Khata:        services.NewKhataService(repos.Khata, repos.Shop, repos.User),
 		Analytics:    services.NewAnalyticsService(repos.Product, repos.Shop, repos.Expense),
 		Loyalty:      services.NewLoyaltyService(repos.Loyalty, repos.Shop, repos.Product),
-		Catalog:      services.NewCatalogService(repos.Catalog),
 		Telemetry:    services.NewTelemetryService(repos.Telemetry),
 		AI:           services.NewAIService(repos.Shop),
 		POS:          posService,
@@ -195,7 +190,6 @@ func NewContainer(db *pgxpool.Pool, logger *zap.Logger) *Container {
 	svcs.User.SetKhataRepo(repos.Khata)
 
 	svcs.Reservation.SetUserRepo(repos.User)
-	svcs.Product.SetCatalogService(svcs.Catalog)
 	svcs.Shop.SetAggregatedRepos(repos.Category, repos.Product, repos.POS, repos.Loyalty)
 	svcs.Assistant = services.NewMerchantAssistantService(
 		repos.AIAssistant,
@@ -221,7 +215,6 @@ func NewContainer(db *pgxpool.Pool, logger *zap.Logger) *Container {
 		CustomerKhata: controller.NewCustomerKhataController(svcs.Khata),
 		Analytics:     controller.NewAnalyticsController(svcs.Analytics),
 		Loyalty:       controller.NewLoyaltyController(svcs.Loyalty),
-		Catalog:       controller.NewCatalogController(svcs.Catalog),
 		Telemetry:     controller.NewTelemetryController(svcs.Telemetry),
 		AI:            controller.NewAIController(svcs.AI),
 		POS:           controller.NewPOSController(svcs.POS),
