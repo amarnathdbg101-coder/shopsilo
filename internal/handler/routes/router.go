@@ -125,8 +125,6 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/home-feed", sc.GetHomeFeed)                                // Customer
 		r.Post("/ai/scan-product", aic.ScanProduct)                        // Both - Product Vision Autofill
 		r.Post("/ai/smart-studio-scan", aic.SmartStudioScan)                // Both - Intelligent Vision + Studio Engine
-		r.Post("/ai/enhance-product-image", aic.EnhanceProductImage)        // Both - DSLR Bokeh & Studio Background Enhancer
-		r.Post("/api/v1/ai/enhance-product-image", aic.EnhanceProductImage) // Both - DSLR Bokeh & Studio Background Enhancer Alias
 		r.Get("/categories", catc.List)                                    // Both
 		r.Get("/shops", sc.List)                                           // Customer
 		r.Get("/shops/{id}", sc.GetByID)                                   // Customer
@@ -135,7 +133,6 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/shops/{slug}/standee.pdf", sc.GetShopStandeePDF)           // Customer Printable Standee
 		r.Get("/shops/{slug}/products", pc.ListByShop)                     // Customer
 		r.Get("/shops/{slug}/live", wsc.ServePublicStorefrontWebSocket)    // Real-Time Storefront Live Channel
-		r.Get("/api/v1/shops/{slug}/live", wsc.ServePublicStorefrontWebSocket) // Real-Time Storefront Live Channel Alias
 		r.Get("/shops/{slug}/reviews", revc.List)                          // Customer
 		r.Get("/shops/{slug}/offers", loyc.ListOffers)                     // Customer
 		r.Get("/offers", loyc.ListAllOffers)                               // Customer
@@ -271,7 +268,6 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/reservations", resc.ListShopReservations)
 		r.Post("/reservations/verify", resc.VerifyShopReservation)
 		r.Post("/reservations/{id}/cancel", resc.CancelShopReservation)
-		r.Get("/ws", wsc.ServeShopWebSocket) // /api/v1/merchant/ws
 		r.With(middleware.IdempotencyGuard).Post("/pos/checkout", posc.CreateSale)
 		r.Get("/pos/summary", posc.GetDailySummary)
 
@@ -408,11 +404,7 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Patch("/shops/me/status", sc.ToggleStatus)                                            // Shop
 		r.Delete("/shops/me", sc.DeleteMyShop)                                                  // Shop
 		r.Post("/shops/me/restore", sc.RestoreMyShop)                                           // Shop
-		r.Get("/shops/me/ws", wsc.ServeShopWebSocket)                                            // Shop Counter WebSocket
-		r.Get("/api/v1/merchant/ws", wsc.ServeShopWebSocket)                                     // Shop Counter Alias
-		r.Get("/merchant/ws", wsc.ServeShopWebSocket)                                            // Shop Counter Alias
-		r.Get("/ws", wsc.ServeCustomerWebSocket)                                                 // Customer WebSocket Root Alias
-		r.Get("/customer/ws", wsc.ServeCustomerWebSocket)                                        // Customer WebSocket Alias
+		r.Get("/shops/me/ws", wsc.ServeShopWebSocket)                                            // Shop
 		r.With(middleware.UploadRateLimiter.Middleware()).Post("/shops/me/images", upc.UploadShopImages) // Shop
 
 		// Shop Staff & Cashier sub-accounts

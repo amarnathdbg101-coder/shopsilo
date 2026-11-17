@@ -235,13 +235,6 @@ func (s *ReservationService) CancelUserReservation(ctx context.Context, id, user
 		"id":                 res.ID,
 		"reservation_number": res.ReservationNumber,
 		"product_id":         res.ProductID,
-		"status":             "cancelled",
-	})
-	wsHub.BroadcastToCustomer(res.UserID, "RESERVATION_STATUS_MUTATED", map[string]interface{}{
-		"id":                 res.ID,
-		"reservation_number": res.ReservationNumber,
-		"status":             "cancelled",
-		"message":            "Your pickup order has been cancelled.",
 	})
 
 	return res, nil
@@ -378,12 +371,6 @@ func (s *ReservationService) VerifyShopReservation(ctx context.Context, shopOwne
 		"status":             "completed",
 		"message":            "Your pickup order has been completed at the store counter!",
 	})
-	wsHub.BroadcastToShop(shop.ID, "RESERVATION_STATUS_MUTATED", map[string]interface{}{
-		"id":                 completed.ID,
-		"reservation_number": completed.ReservationNumber,
-		"status":             "completed",
-		"pickup_code":        completed.PickupCode,
-	})
 	wsHub.BroadcastToShop(shop.ID, "POS_SALE_COMPLETED", map[string]interface{}{
 		"bill_number":    billNum,
 		"total_amount":   totalAmount,
@@ -427,12 +414,6 @@ func (s *ReservationService) CancelShopReservation(ctx context.Context, id, shop
 		"reservation_number": cancelled.ReservationNumber,
 		"status":             "cancelled",
 		"message":            "Your pickup order was cancelled by the store.",
-	})
-	wsHub.BroadcastToShop(shop.ID, "RESERVATION_CANCELLED", map[string]interface{}{
-		"id":                 cancelled.ID,
-		"reservation_number": cancelled.ReservationNumber,
-		"status":             "cancelled",
-		"product_id":         cancelled.ProductID,
 	})
 	wsHub.BroadcastToShop(shop.ID, "STOCK_CHANGED", map[string]interface{}{
 		"product_id": cancelled.ProductID,

@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -9,10 +8,8 @@ import (
 	"shopMe/internal/handler/services"
 	"shopMe/internal/middleware"
 	"shopMe/internal/reuse"
-	"shopMe/internal/utils"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 )
@@ -39,58 +36,9 @@ func NewWebSocketController(shopService *services.ShopService, logger *zap.Logge
 	}
 }
 
-// extractClaims attempts to resolve JWT claims from Context, Query params, or WebSocket protocols.
-func (c *WebSocketController) extractClaims(r *http.Request) *middleware.Claims {
-	claims := middleware.GetUserFromContext(r.Context())
-	if claims != nil && claims.UserID != "" {
-		return claims
-	}
-
-	tokenStr := strings.TrimSpace(r.URL.Query().Get("token"))
-	if tokenStr == "" {
-		tokenStr = strings.TrimSpace(r.URL.Query().Get("access_token"))
-	}
-	if tokenStr == "" {
-		authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
-		if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
-			tokenStr = strings.TrimSpace(authHeader[7:])
-		}
-	}
-	if tokenStr == "" {
-		proto := r.Header.Get("Sec-WebSocket-Protocol")
-		if proto != "" {
-			parts := strings.Split(proto, ",")
-			for _, p := range parts {
-				p = strings.TrimSpace(p)
-				if strings.HasPrefix(p, "bearer.") || strings.HasPrefix(p, "token.") {
-					tokenStr = strings.TrimPrefix(strings.TrimPrefix(p, "bearer."), "token.")
-					break
-				}
-			}
-		}
-	}
-
-	if tokenStr == "" {
-		return nil
-	}
-
-	jwtSecret := utils.MustLoad().Jwt
-	parsedClaims := &middleware.Claims{}
-	token, err := jwt.ParseWithClaims(tokenStr, parsedClaims, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		return []byte(jwtSecret), nil
-	})
-	if err != nil || !token.Valid {
-		return nil
-	}
-	return parsedClaims
-}
-
 // ServeShopWebSocket handles real-time counter WebSocket connection (Protected - Shop Owner & Counter Staff)
 func (c *WebSocketController) ServeShopWebSocket(w http.ResponseWriter, r *http.Request) {
-	claims := c.extractClaims(r)
+	claims := middleware.GetUserFromContext(r.Context())
 	if claims == nil || claims.UserID == "" {
 		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -102,16 +50,7 @@ func (c *WebSocketController) ServeShopWebSocket(w http.ResponseWriter, r *http.
 		return
 	}
 
-	var responseHeader http.Header
-	if subproto := r.Header.Get("Sec-WebSocket-Protocol"); subproto != "" {
-		responseHeader = http.Header{}
-		parts := strings.Split(subproto, ",")
-		if len(parts) > 0 {
-			responseHeader.Set("Sec-WebSocket-Protocol", strings.TrimSpace(parts[0]))
-		}
-	}
-
-	conn, err := upgrader.Upgrade(w, r, responseHeader)
+	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		c.logger.Error("failed to upgrade HTTP connection to websocket", zap.Error(err))
 		return
@@ -216,22 +155,13 @@ func (c *WebSocketController) ServePublicStorefrontWebSocket(w http.ResponseWrit
 
 // ServeCustomerWebSocket handles personal order & pickup notifications for authenticated customers
 func (c *WebSocketController) ServeCustomerWebSocket(w http.ResponseWriter, r *http.Request) {
-	claims := c.extractClaims(r)
+	claims := middleware.GetUserFromContext(r.Context())
 	if claims == nil || claims.UserID == "" {
 		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
-	var responseHeader http.Header
-	if subproto := r.Header.Get("Sec-WebSocket-Protocol"); subproto != "" {
-		responseHeader = http.Header{}
-		parts := strings.Split(subproto, ",")
-		if len(parts) > 0 {
-			responseHeader.Set("Sec-WebSocket-Protocol", strings.TrimSpace(parts[0]))
-		}
-	}
-
-	conn, err := upgrader.Upgrade(w, r, responseHeader)
+	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		c.logger.Error("failed to upgrade customer connection to websocket", zap.Error(err))
 		return

@@ -183,81 +183,31 @@ type geminiCandidateResponse struct {
 	} `json:"error,omitempty"`
 }
 
-// ── 1. Packet & Product Vision Scanner (Multi-Image 10+ Attributes Extraction) ──
+// ── 1. Packet & Product Vision Scanner (10+ Attributes Extraction) ──
 func (s *AIService) ScanProduct(ctx context.Context, req dto.AIScanProductRequest) (*dto.AIScanProductResponse, error) {
-	var rawImages []dto.ImageItem
-	if len(req.Images) > 0 {
-		rawImages = req.Images
-	} else if strings.TrimSpace(req.ImageBase64) != "" {
-		rawImages = []dto.ImageItem{
-			{
-				ImageBase64: req.ImageBase64,
-				MimeType:    req.MimeType,
-			},
-		}
+	mimeType := req.MimeType
+	if mimeType == "" {
+		mimeType = "image/jpeg"
 	}
 
-	if len(rawImages) == 0 {
-		return nil, fmt.Errorf("no image data provided for scanning")
-	}
-
-	// Cap at maximum 10 images to prevent token overload
-	if len(rawImages) > 10 {
-		rawImages = rawImages[:10]
-	}
-
-	type processedImage struct {
-		mimeType string
-		base64   string
-	}
-	processed := make([]processedImage, len(rawImages))
-	var wg sync.WaitGroup
-
-	// Parallel downscale and compress each image (max 768px, JPEG quality 80)
-	// Reduces Gemini multimodal vision tiles and saves 60-75% tokens while executing ultra-fast
-	for i, item := range rawImages {
-		wg.Add(1)
-		go func(idx int, it dto.ImageItem) {
-			defer wg.Done()
-			m := it.MimeType
-			if m == "" {
-				m = "image/jpeg"
-			}
-			clean := cleanBase64String(it.ImageBase64)
-			if clean == "" {
-				return
-			}
-			if optBase64, optMime, err := reuse.CompressBase64Image(clean, 768, 80); err == nil && optBase64 != "" {
-				clean = optBase64
-				m = optMime
-			}
-			processed[idx] = processedImage{mimeType: m, base64: clean}
-		}(i, item)
-	}
-	wg.Wait()
-
-	// Filter out any invalid / empty images
-	var validImages []processedImage
-	for _, p := range processed {
-		if p.base64 != "" {
-			validImages = append(validImages, p)
-		}
-	}
-	if len(validImages) == 0 {
+	cleanBase64 := cleanBase64String(req.ImageBase64)
+	if cleanBase64 == "" {
 		return nil, fmt.Errorf("empty or invalid image data")
 	}
 
-	// Cache key using composite hash of image snippets to prevent duplicate billing on identical images
-	var cacheKeyBuilder strings.Builder
-	cacheKeyBuilder.WriteString(fmt.Sprintf("scan:count:%d:", len(validImages)))
-	for idx, img := range validImages {
-		subLen := len(img.base64)
-		if subLen > 128 {
-			subLen = 128
-		}
-		cacheKeyBuilder.WriteString(fmt.Sprintf("%d:%s;", idx, hashString(img.base64[:subLen])))
+	// Token Optimization: Downscale large image (max 768px, JPEG quality 80)
+	// This reduces Gemini multimodal vision tiles and saves 60-75% input tokens.
+	if optBase64, optMime, err := reuse.CompressBase64Image(cleanBase64, 768, 80); err == nil && optBase64 != "" {
+		cleanBase64 = optBase64
+		mimeType = optMime
 	}
-	cacheKey := cacheKeyBuilder.String()
+
+	// Cache key using hash of base64 snippet to prevent duplicate billing on identical images
+	subLen := len(cleanBase64)
+	if subLen > 512 {
+		subLen = 512
+	}
+	cacheKey := fmt.Sprintf("scan:%d:%s", len(cleanBase64), hashString(cleanBase64[:subLen]))
 
 	if cached, ok := getAICache(cacheKey); ok {
 		var resp dto.AIScanProductResponse
@@ -266,16 +216,11 @@ func (s *AIService) ScanProduct(ctx context.Context, req dto.AIScanProductReques
 		}
 	}
 
-	scanPrompt := fmt.Sprintf(`You are "ShopSilo Master Catalog AI" — an elite, hyper-accurate Chief Retail Merchandising Specialist and Multimodal Vision Cataloging Analyst for Indian retail stores, supermarkets, grocery/kirana, ethnic wear & sarees, footwear, personal care, and local retail shops.
+	scanPrompt := `You are "ShopSilo Master Catalog AI" — an elite, hyper-accurate Chief Retail Merchandising Specialist and Vision Cataloging Analyst for Indian retail stores, supermarkets, grocery/kirana, ethnic wear & sarees, footwear, personal care, and local retail shops.
 
-You have been provided with %d image(s) representing a single retail product from various angles (e.g. Front packaging, Back label with ingredients & directions, Side panel specs, MRP/Batch/Expiry printed stamp, Barcode label, Fabric/Texture close-up).
+Your mission is to perform a surgical visual inspection of the uploaded product image, extract every visible commercial detail (OCR text, brand logos, net volume/pack sizes, MRP stamps, barcodes, certifications), and produce a flawless, production-ready retail catalog entry.
 
-YOUR MISSION:
-Carefully inspect and cross-synthesize details across ALL %d provided images to construct a 100%% complete, professional, production-ready retail catalog entry.
-- Combine front view (commercial brand, product name, flavor/variant, volume/weight) with back/side view (ingredients, nutrition, FSSAI lic, directions) and stamp views (printed MRP, batch, expiry, barcode).
-- If any detail appears on ANY of the images, extract it accurately!
-
-Extract and infer comprehensive product catalog data in pure JSON matching this exact schema:
+Extract and infer comprehensive, professional product catalog data in pure JSON matching this exact schema:
 {
   "name": "Full professional commercial product name in Title Case (e.g., 'Dove Daily Shine Shampoo with Nutritive Serum - 340ml Bottle' or 'Fortune Premium Kachi Ghani Pure Mustard Oil - 1 Litre Pouch' or 'Royal Banarasi Silk Zari Woven Saree With Blouse Piece')",
   "brand": "Exact brand name (e.g. 'Dove', 'Fortune', 'Tata Consumer', 'Amul', 'Patanjali', 'Kashvi', 'boAt', or 'Generic'/'Local Artisan' if unbranded)",
@@ -285,8 +230,7 @@ Extract and infer comprehensive product catalog data in pure JSON matching this 
   "selling_price": 249.0,
   "estimated_cost": 199.0,
   "profit_margin_percent": 20.1,
-  "weight": 340.0,
-  "unit": "Appropriate unit: 'pcs', 'pack', 'bottle', 'pouch', 'box', 'kg', 'g', 'litre', 'ml', 'meter', 'pair', 'dozen'",
+  "unit": "Appropriate unit: 'piece', 'packet', 'bottle', 'pouch', 'box', 'pack', 'kg', 'gm', 'litre', 'ml', 'meter', 'pair'",
   "description": "Engaging, professional 2-3 line commercial marketing overview highlighting material/formulation, quality benefits, and consumer usage.",
   "key_features": [
     "Core feature with customer benefit",
@@ -294,11 +238,6 @@ Extract and infer comprehensive product catalog data in pure JSON matching this 
     "Usage, storage, or certification highlight"
   ],
   "ingredients": "Key ingredients, composition, or fabric blend if visible or standard for this item",
-  "expiry_date": "Expiry date or 'Best Before X Months' if visible on any stamp/label, else empty string",
-  "batch_number": "Manufacturing batch or lot number if visible on any stamp, else empty string",
-  "barcode": "Numeric barcode digits (EAN-13, UPC, Code-128) if visible on any packaging angle, else empty string",
-  "hsn_code": "Standard Indian GST HSN code for this product category if determinable (e.g., '1514', '3305', '5208'), else empty string",
-  "gst_rate": 18.0,
   "tags": [
     "8 to 12 high-intent search keywords in English and Hinglish (e.g. 'sarson tel', 'mustard oil', 'kachi ghani', 'cooking oil')"
   ],
@@ -310,11 +249,11 @@ Extract and infer comprehensive product catalog data in pure JSON matching this 
     "Storage Instructions": "Store in a cool and dry place"
   },
   "suggested_sku": "Smart structured uppercase SKU identifier (e.g. 'FORT-MUST-1L-POUCH')",
-  "min_stock_alert": 5,
+  "barcode": "Barcode digits if clearly visible on packaging, otherwise empty string",
   "visual_keywords": ["3-5 visual identifiers like packaging color, container shape, finish"]
 }
 
-CRITICAL RULES:
+CRITICAL CATALOGING SPECIALIST RULES:
 1. COMMERCIAL PRODUCT TITLE:
    - Construct a rich, professional, complete title in Title Case: [Brand] + [Product Line / Sub-brand] + [Key Flavor / Scent / Variant / Material] + [Pack Size or Volume with Unit].
    - Examples:
@@ -323,19 +262,16 @@ CRITICAL RULES:
      * Apparel: "Kashvi Handcrafted Pure Banarasi Silk Zari Woven Saree with Unstitched Blouse Piece"
      * Footwear: "Bata Men's Formal Genuine Leather Slip-On Shoes - Dark Tan"
      * Electronics: "boAt Bassheads 225 Heavy Bass in-Ear Wired Earphones with Mic - Metallic Black"
-   - NEVER use vague or generic titles. Be precise and specific to the synthesized images.
+   - NEVER use vague or generic titles like "Blue Shirt" or "Oil Packet". Be precise and specific to the image.
 
 2. COMMERCIAL PRICING & MARGIN INTELLIGENCE:
-   - If an MRP stamp or printed price is visible on ANY of the images (e.g. 'MRP ₹140.00 incl. of all taxes'), use that EXACT numeric value for 'mrp'.
+   - If an MRP (Maximum Retail Price) stamp or printed text is visible on the package (e.g. 'MRP ₹140.00 incl. of all taxes'), use that EXACT numeric value for 'mrp'.
    - If not visible, infer a highly realistic Indian retail MRP in INR (₹) based on standard current Indian market prices.
-   - 'selling_price': Compute an attractive neighborhood discount price (typically 5%% to 15%% below MRP for packaged FMCG, 10%% to 25%% for apparel/electronics).
-   - 'estimated_cost': Calculate the retailer's wholesale procurement cost (typically 12%% to 20%% margin for grocery/FMCG; 30%% to 45%% for fashion/cosmetics).
+   - 'selling_price': Compute an attractive neighborhood discount price (typically 5% to 15% below MRP for packaged FMCG, 10% to 25% for apparel/electronics).
+   - 'estimated_cost': Calculate the retailer's wholesale procurement cost (typically 12% to 20% margin for grocery/FMCG; 30% to 45% for fashion/cosmetics).
    - 'profit_margin_percent': Compute exact margin percentage: round(((selling_price - estimated_cost) / selling_price) * 100, 1).
 
-3. BARCODE & STAMPS (CROSS-IMAGE INSPECTION):
-   - Check all images for barcode stamps, batch codes, and expiry dates. If present, extract the exact numbers.
-
-4. SPECIALIZED ATTRIBUTES (DEEP SPECS):
+3. SPECIALIZED ATTRIBUTES (DEEP SPECS):
    - Provide 5 to 8 real, structured key-value pairs in 'attributes' dictionary with Title Case keys tailored specifically to the product's category:
      * For Food / Grocery: 'Dietary Preference' (Vegetarian/Non-Vegetarian), 'Shelf Life', 'Packaging Type', 'Storage Instructions', 'Item Form'.
      * For Personal Care / Beauty: 'Item Form', 'Skin/Hair Type', 'Fragrance', 'Target Gender', 'Benefits'.
@@ -343,35 +279,31 @@ CRITICAL RULES:
      * For Electronics / Hardware: 'Connectivity', 'Color', 'Material', 'Warranty'.
      * For Home & Cleaning: 'Item Form', 'Surface Recommendation', 'Scent'.
 
-5. BILINGUAL HINGLISH SEARCH TAGS:
+4. BILINGUAL HINGLISH SEARCH TAGS:
    - Provide 8 to 12 high-intent search keywords including common Hindi/Hinglish terms used by Indian shoppers (e.g., 'sarson tel', 'mustard oil', 'gehu aata', 'doodh', 'chai patti', 'nahane ka sabun').
 
-6. STRICT OUTPUT FORMAT:
-   - Output MUST be pure, valid JSON only matching the schema. No markdown code blocks, no preamble.`, len(validImages), len(validImages))
-
-	parts := []geminiPart{
-		{Text: scanPrompt},
-	}
-	for _, img := range validImages {
-		parts = append(parts, geminiPart{
-			InlineData: &geminiInlineData{
-				MimeType: img.mimeType,
-				Data:     img.base64,
-			},
-		})
-	}
+5. STRICT OUTPUT FORMAT:
+   - Output MUST be pure, valid JSON only matching the schema. No markdown code blocks, no preamble.`
 
 	payload := geminiPayload{
 		Contents: []geminiContent{
 			{
-				Role:  "user",
-				Parts: parts,
+				Role: "user",
+				Parts: []geminiPart{
+					{Text: scanPrompt},
+					{
+						InlineData: &geminiInlineData{
+							MimeType: mimeType,
+							Data:     cleanBase64,
+						},
+					},
+				},
 			},
 		},
 		GenerationConfig: geminiGenerationConfig{
 			ResponseMimeType: "application/json",
 			Temperature:      0.1,
-			MaxOutputTokens:  1800, // Sufficient tokens for multi-image extraction & all attributes
+			MaxOutputTokens:  1500, // Sufficient tokens for all 10+ attributes
 		},
 	}
 
@@ -503,7 +435,6 @@ func extractCleanJSON(raw string) string {
 	}
 	return cleaned
 }
-
 // SmartStudioScan performs simple product scan: extracts details via Gemini Vision and uploads original image untouched.
 // Background removal and light enhancement have been completely removed per request.
 func (s *AIService) SmartStudioScan(ctx context.Context, req dto.SmartStudioScanRequest) (*dto.SmartStudioScanResponse, error) {
@@ -565,75 +496,5 @@ func (s *AIService) SmartStudioScan(ctx context.Context, req dto.SmartStudioScan
 		StudioTheme:    "original",
 		CutoutImageURL: "",
 		ProcessingMs:   elapsed,
-	}, nil
-}
-
-// EnhanceProductImage applies DSLR bokeh or studio white background transformation to a product image.
-func (s *AIService) EnhanceProductImage(ctx context.Context, req dto.EnhanceProductImageRequest) (*dto.EnhanceProductImageResponse, error) {
-	startTime := time.Now()
-
-	cleanBase64 := strings.TrimSpace(req.ImageBase64)
-	if idx := strings.Index(cleanBase64, ","); idx != -1 {
-		cleanBase64 = cleanBase64[idx+1:]
-	}
-	rawBytes, err := base64.StdEncoding.DecodeString(cleanBase64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid base64 image data: %w", err)
-	}
-
-	mode := strings.ToLower(strings.TrimSpace(req.Mode))
-	if mode == "" {
-		mode = "bokeh"
-	}
-
-	var processedBytes []byte
-	switch mode {
-	case "studio_white", "studio":
-		cutout, _, bgErr := reuse.RemoveBackground(ctx, rawBytes)
-		if bgErr == nil && len(cutout) > 0 {
-			processedBytes, err = reuse.RenderProductStudio(cutout, reuse.StudioCompositorOptions{
-				Theme:        reuse.StudioThemePackagedRetail,
-				CanvasSize:   1080,
-				PaddingRatio: 0.10,
-			})
-		}
-		if err != nil || len(processedBytes) == 0 {
-			processedBytes, _ = reuse.RenderProductStudio(rawBytes, reuse.StudioCompositorOptions{
-				Theme:        reuse.StudioThemePackagedRetail,
-				CanvasSize:   1080,
-				PaddingRatio: 0.10,
-			})
-		}
-
-	case "bokeh", "dslr":
-		fallthrough
-	default:
-		mode = "bokeh"
-		processedBytes, err = reuse.RenderProductBokeh(rawBytes, 16)
-		if err != nil {
-			processedBytes = rawBytes
-		}
-	}
-
-	if len(processedBytes) == 0 {
-		processedBytes = rawBytes
-	}
-
-	enhancedURL, err := reuse.UploadBytes(processedBytes, "image/jpeg", "products/enhanced", ".jpg")
-	resultB64 := ""
-	if err != nil {
-		resultB64 = base64.StdEncoding.EncodeToString(processedBytes)
-		enhancedURL = fmt.Sprintf("data:image/jpeg;base64,%s", resultB64)
-	} else {
-		resultB64 = base64.StdEncoding.EncodeToString(processedBytes)
-	}
-
-	elapsed := time.Since(startTime).Milliseconds()
-
-	return &dto.EnhanceProductImageResponse{
-		EnhancedImageURL: enhancedURL,
-		ImageBase64:      resultB64,
-		Mode:             mode,
-		ProcessingMs:     elapsed,
 	}, nil
 }
