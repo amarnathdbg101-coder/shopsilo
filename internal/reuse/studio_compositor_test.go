@@ -184,3 +184,43 @@ func TestAdaptiveBoundaryFloodCutout(t *testing.T) {
 		t.Fatalf("RenderProductStudio produced empty output")
 	}
 }
+
+func TestRenderProductBokeh(t *testing.T) {
+	// Create a test 400x400 image: neutral gray background with a bright red rectangular product box in the center
+	img := image.NewRGBA(image.Rect(0, 0, 400, 400))
+	for y := 0; y < 400; y++ {
+		for x := 0; x < 400; x++ {
+			img.Set(x, y, color.RGBA{R: 190, G: 190, B: 195, A: 255}) // Gray shelf background
+		}
+	}
+	// Center product box (from 80 to 320 x, 60 to 340 y)
+	for y := 60; y < 340; y++ {
+		for x := 80; x < 320; x++ {
+			img.Set(x, y, color.RGBA{R: 220, G: 30, B: 40, A: 255}) // Red product box
+		}
+	}
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("failed to encode test png: %v", err)
+	}
+
+	bokehBytes, err := RenderProductBokeh(buf.Bytes(), 14)
+	if err != nil {
+		t.Fatalf("RenderProductBokeh failed: %v", err)
+	}
+	if len(bokehBytes) == 0 {
+		t.Fatal("RenderProductBokeh produced empty output")
+	}
+
+	decoded, format, err := image.Decode(bytes.NewReader(bokehBytes))
+	if err != nil {
+		t.Fatalf("failed to decode bokeh jpeg: %v", err)
+	}
+	if format != "jpeg" {
+		t.Errorf("expected format jpeg, got %s", format)
+	}
+	if decoded.Bounds().Dx() != 400 || decoded.Bounds().Dy() != 400 {
+		t.Errorf("expected 400x400, got %dx%d", decoded.Bounds().Dx(), decoded.Bounds().Dy())
+	}
+}

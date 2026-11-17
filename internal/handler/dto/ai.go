@@ -39,10 +39,16 @@ type MerchantAICopilotResponse struct {
 	ActionType string `json:"action_type,omitempty"`
 }
 
-// AIScane Packet Vision Scanner DTOs ──
-type AIScanProductRequest struct {
-	ImageBase64 string `json:"image_base64" validate:"required"`
+// AIScan Product Vision Scanner DTOs ──
+type ImageItem struct {
+	ImageBase64 string `json:"image_base64"`
 	MimeType    string `json:"mime_type,omitempty"`
+}
+
+type AIScanProductRequest struct {
+	ImageBase64 string      `json:"image_base64,omitempty"`
+	MimeType    string      `json:"mime_type,omitempty"`
+	Images      []ImageItem `json:"images,omitempty"`
 }
 
 type AIScanProductResponse struct {
@@ -88,6 +94,20 @@ type SmartStudioScanResponse struct {
 	StudioTheme    string                `json:"studio_theme"`
 	CutoutImageURL string                `json:"cutout_image_url,omitempty"`
 	ProcessingMs   int64                 `json:"processing_ms"`
+}
+
+// ── AI Product Image Enhancement DTOs ──
+type EnhanceProductImageRequest struct {
+	ImageBase64 string `json:"image_base64" validate:"required"`
+	MimeType    string `json:"mime_type,omitempty"`
+	Mode        string `json:"mode,omitempty"` // "bokeh", "studio_white", "hdr"
+}
+
+type EnhanceProductImageResponse struct {
+	EnhancedImageURL string `json:"enhanced_image_url"`
+	ImageBase64      string `json:"image_base64,omitempty"`
+	Mode             string `json:"mode"`
+	ProcessingMs     int64  `json:"processing_ms"`
 }
 
 // ── AI Semantic Search DTOs ──
