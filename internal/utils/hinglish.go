@@ -204,6 +204,58 @@ var hinglishDictionary = map[string][]string{
 	"chappal":    {"slipper", "chappal", "sandals", "flipflop"},
 	"shoes":      {"shoes", "joota", "sneakers", "footwear"},
 	"slipper":    {"slipper", "chappal", "flipflop"},
+
+	// Devanagari Hindi Staples
+	"दूध":         {"milk", "doodh", "dudh", "दूध"},
+	"दही":         {"curd", "dahi", "दही"},
+	"पनीर":        {"paneer", "cheese", "panir", "पनीर"},
+	"मक्खन":       {"butter", "makhan", "मक्खन"},
+	"अंडा":        {"egg", "anda", "अंडा"},
+	"अंडे":        {"egg", "anda", "ande", "अंडे"},
+	"तेल":         {"oil", "tel", "mustard", "refined", "तेल"},
+	"सरसों":       {"mustard", "sarson", "oil", "tel", "सरसों"},
+	"घी":          {"ghee", "ghi", "घी"},
+	"चावल":        {"rice", "chawal", "basmati", "चावल"},
+	"आटा":         {"atta", "flour", "gehu", "wheat", "आटा"},
+	"गेहूं":        {"wheat", "atta", "gehu", "गेहूं"},
+	"मैदा":        {"maida", "flour", "मैदा"},
+	"बेसन":        {"besan", "gram flour", "बेसन"},
+	"सूजी":        {"sooji", "suji", "semolina", "सूजी"},
+	"पोहा":        {"poha", "chura", "पोहा"},
+	"दाल":         {"dal", "daal", "pulse", "lentil", "arhar", "toor", "moong", "दाल"},
+	"चना":         {"chana", "gram", "chhole", "चना"},
+	"राजमा":       {"rajma", "kidney beans", "राजमा"},
+	"चीनी":        {"sugar", "cheeni", "chini", "shakkar", "चीनी"},
+	"शक्कर":       {"sugar", "cheeni", "shakkar", "शक्कर"},
+	"गुड़":         {"jaggery", "gud", "gur", "गुड़"},
+	"नमक":         {"salt", "namak", "tata", "नमक"},
+	"मसाला":       {"masala", "spice", "powder", "मसाला"},
+	"हल्दी":        {"turmeric", "haldi", "हल्दी"},
+	"मिर्च":        {"chilli", "mirch", "मिर्च"},
+	"धनिया":       {"coriander", "dhaniya", "धनिया"},
+	"जीरा":        {"jeera", "zeera", "cumin", "जीरा"},
+	"अदरक":        {"ginger", "adrak", "अदरक"},
+	"लहसुन":       {"garlic", "lehsun", "lahsun", "लहसुन"},
+	"चाय":         {"tea", "chai", "चाय"},
+	"कॉफ़ी":       {"coffee", "कॉफ़ी"},
+	"पानी":        {"water", "paani", "pani", "bisleri", "पानी"},
+	"बिस्कुट":      {"biscuit", "biskut", "cookie", "parle", "बिस्कुट"},
+	"बिस्किट":      {"biscuit", "biskut", "cookie", "parle", "बिस्किट"},
+	"नमकीन":       {"namkeen", "bhujia", "sev", "नमकीन"},
+	"भुजिया":      {"bhujia", "namkeen", "भुजिया"},
+	"चिप्स":       {"chips", "kurkure", "lays", "चिप्स"},
+	"कुरकुरे":      {"kurkure", "chips", "कुरकुरे"},
+	"चॉकलेट":      {"chocolate", "cadbury", "चॉकलेट"},
+	"साबुन":       {"soap", "sabun", "bath", "dettol", "साबुन"},
+	"शैम्पू":       {"shampoo", "hair", "शैम्पू"},
+	"सर्फ":         {"detergent", "surf", "washing powder", "tide", "ghadi", "सर्फ"},
+	"सर्फ़":        {"detergent", "surf", "washing powder", "सर्फ़"},
+	"हार्पिक":      {"harpic", "cleaner", "हार्पिक"},
+	"दवा":         {"medicine", "dawa", "tablet", "syrup", "दवा"},
+	"मैगी":         {"maggi", "noodles", "nestle", "मैगी"},
+	"आलू":         {"potato", "aloo", "aalu", "आलू"},
+	"प्याज":        {"onion", "pyaz", "प्याज"},
+	"टमाटर":       {"tomato", "tamatar", "टमाटर"},
 }
 
 // MaxSearchQueryLength caps search queries to 80 characters to prevent ReDoS / CPU exhaustion attacks on trigram matching.
@@ -222,7 +274,7 @@ func CleanSearchQuery(q string) string {
 	var sb strings.Builder
 	sb.Grow(len(q))
 	for _, r := range q {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsSpace(r) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r) || unicode.IsSpace(r) {
 			sb.WriteRune(unicode.ToLower(r))
 		} else {
 			sb.WriteRune(' ')
@@ -257,6 +309,30 @@ var hinglishStopwords = map[string]struct{}{
 	"packet":  {},
 	"dabba":   {},
 	"pauwa":   {},
+	// Devanagari Stopwords
+	"चाहिए":   {},
+	"का":      {},
+	"की":      {},
+	"के":      {},
+	"को":      {},
+	"से":      {},
+	"में":     {},
+	"पर":      {},
+	"और":      {},
+	"या":      {},
+	"दिखाओ":   {},
+	"दिखाइए":  {},
+	"बताओ":    {},
+	"वाला":    {},
+	"वाली":    {},
+	"वाले":    {},
+	"सबसे":    {},
+	"सस्ता":   {},
+	"अच्छा":   {},
+	"भाई":     {},
+	"भैया":    {},
+	"पैकेट":   {},
+	"डब्बा":   {},
 }
 
 // IsHinglishStopword checks if a word is an everyday Hinglish conversational filler.

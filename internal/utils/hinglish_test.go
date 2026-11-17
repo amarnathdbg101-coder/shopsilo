@@ -25,6 +25,10 @@ func TestHinglishExpansion(t *testing.T) {
 		{"chai", 4, "tea"},
 		{"biskut", 3, "biscuit"},
 		{"cold drink", 7, "beverage"},
+		{"दूध", 4, "milk"},
+		{"टाटा नमक", 4, "salt"},
+		{"सरसों तेल", 5, "oil"},
+		{"चीनी", 4, "sugar"},
 	}
 
 	for _, tt := range tests {
@@ -85,6 +89,22 @@ func TestHinglishStopwordStripping(t *testing.T) {
 		}
 		if !hasOil {
 			t.Errorf("expected group to contain 'oil', got %v", groups[0].Terms)
+		}
+	})
+
+	t.Run("Strips Devanagari stopwords like 'चाहिए' and expands 'दूध'", func(t *testing.T) {
+		groups := ExpandHinglishSearchGroups("अमूल दूध चाहिए")
+		if len(groups) != 2 {
+			t.Fatalf("expected 2 groups (अमूल, दूध), got %d: %+v", len(groups), groups)
+		}
+		hasMilk := false
+		for _, term := range groups[1].Terms {
+			if term == "milk" {
+				hasMilk = true
+			}
+		}
+		if !hasMilk {
+			t.Errorf("expected group to contain 'milk', got %v", groups[1].Terms)
 		}
 	})
 }
