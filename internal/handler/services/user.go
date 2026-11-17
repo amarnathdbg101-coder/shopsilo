@@ -494,10 +494,19 @@ func (s *UserService) GoogleLogin(ctx context.Context, input dto.GoogleLoginRequ
 			return nil, errors.New("invalid google token issuer")
 		}
 
-		// Security Check 2: Audience validation against configured Client ID
+		// Security Check 2: Audience validation against configured Client ID(s)
 		expectedClientID := os.Getenv("GOOGLE_CLIENT_ID")
-		if expectedClientID != "" && info.Aud != expectedClientID {
-			return nil, errors.New("google token audience mismatch: token was not issued for this application")
+		if expectedClientID != "" {
+			valid := false
+			for _, cid := range strings.Split(expectedClientID, ",") {
+				if info.Aud == strings.TrimSpace(cid) {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				return nil, errors.New("google token audience mismatch: token was not issued for this application")
+			}
 		}
 
 		// Security Check 3: Email verified check
