@@ -89,21 +89,6 @@ type AIScanProductResponse struct {
 	ColorDetails        *AIColorDetails   `json:"color_details,omitempty"`
 }
 
-// ── AI Smart Studio & Vision Fusion DTOs ──
-type SmartStudioScanRequest struct {
-	ImageBase64 string `json:"image_base64" validate:"required"`
-	MimeType    string `json:"mime_type,omitempty"`
-	ThemeHint   string `json:"theme_hint,omitempty"` // auto, cosmetics, fashion, packaged
-}
-
-type SmartStudioScanResponse struct {
-	ScanData       AIScanProductResponse `json:"scan_data"`
-	StudioImageURL string                `json:"studio_image_url"`
-	StudioTheme    string                `json:"studio_theme"`
-	CutoutImageURL string                `json:"cutout_image_url,omitempty"`
-	ProcessingMs   int64                 `json:"processing_ms"`
-}
-
 // ── AI Mandi Sourcing & Wholesale Vision DTOs ──
 // AIMandiScanRequest carries base64 image of empty shelves, low stock items, or cartons to reorder from Mandi.
 type AIMandiScanRequest struct {

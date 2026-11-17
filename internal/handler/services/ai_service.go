@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -525,70 +524,6 @@ func extractCleanJSON(raw string) string {
 		return cleaned[start : end+1]
 	}
 	return cleaned
-}
-
-// SmartStudioScan performs simple product scan: extracts details via Gemini Vision and uploads original image untouched.
-// Background removal and light enhancement have been completely removed per request.
-func (s *AIService) SmartStudioScan(ctx context.Context, req dto.SmartStudioScanRequest) (*dto.SmartStudioScanResponse, error) {
-	startTime := time.Now()
-
-	// 1. Decode raw image bytes
-	cleanBase64 := strings.TrimSpace(req.ImageBase64)
-	if idx := strings.Index(cleanBase64, ","); idx != -1 {
-		cleanBase64 = cleanBase64[idx+1:]
-	}
-	rawBytes, err := base64.StdEncoding.DecodeString(cleanBase64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid base64 image data: %w", err)
-	}
-
-	// 2. Run Gemini Vision Scanning for catalog details extraction
-	scanData, err := s.ScanProduct(ctx, dto.AIScanProductRequest{
-		ImageBase64: req.ImageBase64,
-		MimeType:    req.MimeType,
-	})
-	if scanData == nil {
-		scanData = &dto.AIScanProductResponse{
-			Name:         "New Retail Product",
-			CategoryHint: "General Store",
-			Unit:         "piece",
-		}
-	}
-	if err != nil {
-		log.Printf("[SmartStudioScan] Gemini vision notice: %v", err)
-	}
-
-	// 3. Upload raw original image directly to R2 (without background removal or light enhancement)
-	mimeType := req.MimeType
-	if mimeType == "" {
-		mimeType = "image/jpeg"
-	}
-	ext := ".jpg"
-	if strings.Contains(mimeType, "png") {
-		ext = ".png"
-	} else if strings.Contains(mimeType, "webp") {
-		ext = ".webp"
-	}
-
-	originalImageURL, err := reuse.UploadBytes(rawBytes, mimeType, "products/original", ext)
-	if err != nil {
-		// If R2 upload fails, encode as data URI fallback so client still gets the image
-		originalImageURL = fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(rawBytes))
-	}
-
-	// Attach image URL to scanData
-	scanData.StudioImageURL = originalImageURL
-	scanData.StudioTheme = "original"
-
-	elapsed := time.Since(startTime).Milliseconds()
-
-	return &dto.SmartStudioScanResponse{
-		ScanData:       *scanData,
-		StudioImageURL: originalImageURL,
-		StudioTheme:    "original",
-		CutoutImageURL: "",
-		ProcessingMs:   elapsed,
-	}, nil
 }
 
 // ScanMandiItem visually inspects camera snapshots of running-out products, empty shelves,

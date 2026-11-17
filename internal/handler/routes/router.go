@@ -124,7 +124,6 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/catalog/home-feed", sc.GetHomeFeed)                        // Customer
 		r.Get("/home-feed", sc.GetHomeFeed)                                // Customer
 		r.Post("/ai/scan-product", aic.ScanProduct)                        // Both - Product Vision Autofill
-		r.Post("/ai/smart-studio-scan", aic.SmartStudioScan)                // Both - Intelligent Vision + Studio Engine
 		r.Post("/ai/mandi-scan", aic.ScanMandiItem)                        // Shop - Mandi Sourcing Wholesale Vision
 		r.Get("/categories", catc.List)                                    // Both
 		r.Get("/shops", sc.List)                                           // Customer
@@ -318,7 +317,6 @@ func RouteSetup(c *app.Container) chi.Router {
 
 		// Product Vision & Studio Ingestion (Add Product)
 		r.Post("/ai/scan-product", aic.ScanProduct)
-		r.Post("/ai/smart-studio-scan", aic.SmartStudioScan)
 		r.Post("/ai/mandi-scan", aic.ScanMandiItem)
 
 		// Merchant Udhar Ledger
