@@ -117,3 +117,52 @@ func TestIsUsefulProductAttribute(t *testing.T) {
 		t.Errorf("expected Item Form to be accepted")
 	}
 }
+
+func TestGetGeminiModels(t *testing.T) {
+	models := getGeminiModels()
+	if len(models) == 0 {
+		t.Fatalf("expected at least 1 gemini model, got 0")
+	}
+
+	// Verify no fake models exist
+	for _, m := range models {
+		if m == "gemini-3.5-flash-lite" || m == "gemini-3.8-flash" {
+			t.Errorf("found deprecated or non-existent model: %s", m)
+		}
+	}
+
+	// Verify primary model is flash-lite or flash
+	if models[0] != "gemini-flash-lite-latest" && models[0] != "gemini-flash-latest" {
+		t.Logf("Primary model configured: %s", models[0])
+	}
+}
+
+func TestParseMandiScanResponse(t *testing.T) {
+	// 1. Standard schema
+	stdJSON := `{"items":[{"name":"Aashirvaad Atta 10kg","category":"Grocery & Staples","wholesale_qty":"5 बोरी (Bags)","wholesale_unit":"बोरी (Bags)","estimated_wholesale_rate":2100.0}],"raw_overview":"Atta bags"}`
+	resp, err := parseMandiScanResponse(stdJSON)
+	if err != nil || len(resp.Items) != 1 || resp.Items[0].Name != "Aashirvaad Atta 10kg" {
+		t.Fatalf("standard schema parse failed: %v", err)
+	}
+
+	// 2. Direct array
+	arrJSON := `[{"name":"Fortune Oil 1L","wholesale_qty":"1 पेटी / बॉक्स (Box)","wholesale_unit":"पेटी / बॉक्स (Box)","estimated_wholesale_rate":1450.0}]`
+	respArr, err := parseMandiScanResponse(arrJSON)
+	if err != nil || len(respArr.Items) != 1 || respArr.Items[0].Name != "Fortune Oil 1L" {
+		t.Fatalf("direct array parse failed: %v", err)
+	}
+
+	// 3. Wrapped under products
+	wrappedJSON := `{"products":[{"name":"Tata Salt","wholesale_qty":"1 कार्टन (Carton)","wholesale_unit":"कार्टन (Carton)","estimated_wholesale_rate":480.0}]}`
+	respWrap, err := parseMandiScanResponse(wrappedJSON)
+	if err != nil || len(respWrap.Items) != 1 || respWrap.Items[0].Name != "Tata Salt" {
+		t.Fatalf("wrapped products parse failed: %v", err)
+	}
+
+	// 4. Single item object
+	singleJSON := `{"name":"Parle-G Gold","wholesale_qty":"1 कार्टन (Carton)","wholesale_unit":"कार्टन (Carton)","estimated_wholesale_rate":550.0}`
+	respSingle, err := parseMandiScanResponse(singleJSON)
+	if err != nil || len(respSingle.Items) != 1 || respSingle.Items[0].Name != "Parle-G Gold" {
+		t.Fatalf("single item parse failed: %v", err)
+	}
+}

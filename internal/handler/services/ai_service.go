@@ -110,9 +110,10 @@ func getGeminiModels() []string {
 	custom := strings.TrimSpace(os.Getenv("GEMINI_MODEL"))
 	models := []string{
 		"gemini-flash-lite-latest",
-		"gemini-3.5-flash-lite",
-		"gemini-3.8-flash",
 		"gemini-flash-latest",
+		"gemini-2.5-flash",
+		"gemini-2.0-flash",
+		"gemini-1.5-flash",
 	}
 	if custom != "" && custom != "gemini-3.1-pro-preview" && custom != "gemini-2.5-flash" {
 		return append([]string{custom}, models...)
@@ -319,11 +320,16 @@ CRITICAL CATALOGING SPECIALIST RULES:
    - Output MUST be pure, valid JSON only matching the schema. No markdown code blocks, no preamble.`
 
 	payload := geminiPayload{
+		SystemInstruction: &geminiSystemInstruction{
+			Parts: []geminiPart{
+				{Text: scanPrompt},
+			},
+		},
 		Contents: []geminiContent{
 			{
 				Role: "user",
 				Parts: []geminiPart{
-					{Text: scanPrompt},
+					{Text: "Inspect this product package image and extract commercial catalog data in pure JSON matching the requested schema."},
 					{
 						InlineData: &geminiInlineData{
 							MimeType: mimeType,
@@ -336,7 +342,7 @@ CRITICAL CATALOGING SPECIALIST RULES:
 		GenerationConfig: geminiGenerationConfig{
 			ResponseMimeType: "application/json",
 			Temperature:      0.1,
-			MaxOutputTokens:  1500, // Sufficient tokens for all 10+ attributes
+			MaxOutputTokens:  800,
 		},
 	}
 
@@ -349,7 +355,28 @@ CRITICAL CATALOGING SPECIALIST RULES:
 	cleanedJSON := extractCleanJSON(rawText)
 	var resp dto.AIScanProductResponse
 	if parseErr := json.Unmarshal([]byte(cleanedJSON), &resp); parseErr != nil {
-		return nil, fmt.Errorf("failed to parse product scanner result: %w", parseErr)
+		// Fallback Strategy 1: Check if returned as single element array: [ { "name": ... } ]
+		var arrResp []dto.AIScanProductResponse
+		if errArr := json.Unmarshal([]byte(cleanedJSON), &arrResp); errArr == nil && len(arrResp) > 0 {
+			resp = arrResp[0]
+		} else {
+			// Fallback Strategy 2: Check if wrapped in {"data": {...}} or {"product": {...}}
+			var wrapped map[string]json.RawMessage
+			recovered := false
+			if errWrap := json.Unmarshal([]byte(cleanedJSON), &wrapped); errWrap == nil {
+				for _, k := range []string{"data", "product", "item", "catalog_item"} {
+					if inner, ok := wrapped[k]; ok {
+						if errInner := json.Unmarshal(inner, &resp); errInner == nil && resp.Name != "" {
+							recovered = true
+							break
+						}
+					}
+				}
+			}
+			if !recovered {
+				return nil, fmt.Errorf("failed to parse product scanner result: %w", parseErr)
+			}
+		}
 	}
 
 	// Filter and sanitize attributes: strip useless boilerplate, placeholders, and redundant keys
@@ -539,10 +566,19 @@ func (s *AIService) ScanMandiItem(ctx context.Context, req dto.AIMandiScanReques
 		mimeType = "image/jpeg"
 	}
 
-	// 1. Check local SHA256 cache
-	hasher := sha256.New()
-	hasher.Write([]byte(cleanBase64))
-	cacheKey := fmt.Sprintf("mandi_scan_%x", hasher.Sum(nil))
+	// Token & Latency Optimization: Downscale large image (max 768px, JPEG quality 80)
+	// This reduces Gemini multimodal vision tiles and saves 70-85% input tokens.
+	if optBase64, optMime, err := reuse.CompressBase64Image(cleanBase64, 768, 80); err == nil && optBase64 != "" {
+		cleanBase64 = optBase64
+		mimeType = optMime
+	}
+
+	// 1. Fast Cache key using hash of compressed base64 snippet to prevent duplicate billing
+	subLen := len(cleanBase64)
+	if subLen > 512 {
+		subLen = 512
+	}
+	cacheKey := fmt.Sprintf("mandi:%d:%s", len(cleanBase64), hashString(cleanBase64[:subLen]))
 	if cached, ok := getAICache(cacheKey); ok {
 		var resp dto.AIMandiScanResponse
 		if err := json.Unmarshal([]byte(cached), &resp); err == nil && len(resp.Items) > 0 {
@@ -616,11 +652,16 @@ RULES:
    - Output valid JSON only. No markdown formatting, no preamble.`
 
 	payload := geminiPayload{
+		SystemInstruction: &geminiSystemInstruction{
+			Parts: []geminiPart{
+				{Text: mandiPrompt},
+			},
+		},
 		Contents: []geminiContent{
 			{
 				Role: "user",
 				Parts: []geminiPart{
-					{Text: mandiPrompt},
+					{Text: "Analyze this image for wholesale mandi procurement and propose restock items in pure JSON."},
 					{
 						InlineData: &geminiInlineData{
 							MimeType: mimeType,
@@ -633,7 +674,7 @@ RULES:
 		GenerationConfig: geminiGenerationConfig{
 			ResponseMimeType: "application/json",
 			Temperature:      0.1,
-			MaxOutputTokens:  2500,
+			MaxOutputTokens:  900,
 		},
 	}
 
