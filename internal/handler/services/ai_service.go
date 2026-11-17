@@ -305,11 +305,19 @@ CRITICAL CATALOGING SPECIALIST RULES:
 5. INDIAN TEXTILE & COLOR SHADE CALIBRATION:
    - For all apparel, fabrics, clothing (blouse pieces, petticoats, sarees, dupattas, suits), cosmetics, or color-critical items:
    - Precisely map the dominant fabric color to standard Indian commercial trade shade cards:
-     * Rani Pink (#D81B60), Baby Pink (#F48FB1), Maroon (#800000), Blood Red (#D32F2F), Rama Green (#00827F), Firozi / Cyan (#00BCD4), Bottle Green (#004D40), Mehendi Green (#556B2F), Navy Blue (#000080), Royal Blue (#1565C0), Mustard Yellow (#E5A823), Lemon Yellow (#FFF176), Wine / Jamuni (#4A154B), Purple (#7B1FA2), Rust / Gerua (#B7410E), Peach (#FFAB91), Pista Green (#A8D8B9), Black (#1A1A1A), White (#FFFFFF), Coffee Brown (#4E342E), Chiku / Beige (#D7C4B7).
+     * Greens & Parrots: Sugapankhi / Parrot Green (#7CB342), Pista Green (#A8D8B9), Rama Green (#00827F), Mehendi Green (#556B2F), Bottle Green (#004D40), Morpankhi (#005B5C).
+     * Yellows & Oranges: Lemon Yellow (#FFF176), Haldi Yellow (#FFB300), Mustard Yellow (#E5A823), Rust / Gerua (#B7410E), Peach (#FFAB91).
+     * Pinks & Reds: Rani Pink (#D81B60), Baby Pink (#F48FB1), Gajari (#FF6F61), Pyazi (#A36B7E), Blood Red (#D32F2F), Tamatar Red (#E53935), Maroon (#800000), Katha (#5D2524).
+     * Blues & Purples: Firozi / Cyan (#00BCD4), Royal Blue (#1565C0), Navy Blue (#000080), Wine / Jamuni (#4A154B), Purple (#7B1FA2).
+     * Neutrals: Off White (#FAF0E6), Badami / Cream (#FFF8E7), Chiku / Beige (#D7C4B7), Coffee Brown (#4E342E), Slate Grey (#757575), Black (#1A1A1A).
+   - CAMERA WHITE BALANCE & UNDERTONE RULE:
+     * Indoor warm/yellow lighting or camera sensor overexposure often shifts vibrant chartreuse/lime greens (like 'Sugapankhi' / 'Parrot Green' / 'तोता हरा') to look yellowish. Check fabric undertones carefully: if there is a green tint/pigment with high vibrancy, label it as 'Sugapankhi' (सुगापंखी/तोता), NOT plain 'Lemon Yellow'.
+   - STRICT CHROMATIC NEIGHBOR RULE FOR ALTERNATIVES:
+     * 'alternatives' MUST strictly be adjacent shades from the EXACT SAME color family (e.g., if primary is Sugapankhi / Yellow-Green, alternatives can ONLY be Lemon Yellow, Pista Green, Mehendi Green, Haldi Yellow. NEVER suggest distant, unrelated colors like Red, Maroon, Black, or Blue in alternatives!).
    - In 'color_details':
      * 'primary_shade': best calibrated match with English shade name, Hindi name, and exact HexCode.
-     * 'alternatives': 3 to 4 closest neighboring color shades so merchants can 1-tap confirm without typing.
-   - Also add 'Color' to 'attributes' (e.g. 'Rani Pink').
+     * 'alternatives': 3 to 4 closest neighboring color shades strictly from the same chromatic family.
+   - Also add 'Color' to 'attributes' (e.g. 'Sugapankhi (सुगापंखी)').
 
 6. STRICT OUTPUT FORMAT:
    - Output MUST be pure, valid JSON only matching the schema. No markdown code blocks, no preamble.`
@@ -662,9 +670,18 @@ RULES:
    - If multiple distinct low-stock products are visible in the photo, list each one as a separate item in the 'items' array (up to 4 items).
 4. COLOR CALIBRATION FOR TEXTILES & APPAREL:
    - For any blouse pieces, petticoats, sarees, dupattas, matching fabrics, or color-specific goods:
-   - Accurately map the dominant color against standard Indian trade shades: Rani Pink (#D81B60), Baby Pink (#F48FB1), Maroon (#800000), Blood Red (#D32F2F), Rama Green (#00827F), Firozi / Cyan (#00BCD4), Bottle Green (#004D40), Mehendi Green (#556B2F), Navy Blue (#000080), Royal Blue (#1565C0), Mustard Yellow (#E5A823), Lemon Yellow (#FFF176), Wine / Jamuni (#4A154B), Purple (#7B1FA2), Rust / Gerua (#B7410E), Peach (#FFAB91), Pista Green (#A8D8B9), Black (#1A1A1A), White (#FFFFFF), Coffee Brown (#4E342E), Chiku / Beige (#D7C4B7).
-   - In 'color_details': set 'primary_shade' and 3 to 4 nearest 'alternatives'.
-   - Append the shade to the product name (e.g. 'Cotton Petticoat - Rani Pink (रानी पिंक)') and include 'Shade: Rani Pink (रानी)' in notes.
+   - Accurately map the dominant color against standard Indian trade shades:
+     * Greens & Parrots: Sugapankhi / Parrot Green (#7CB342), Pista Green (#A8D8B9), Rama Green (#00827F), Mehendi Green (#556B2F), Bottle Green (#004D40), Morpankhi (#005B5C).
+     * Yellows & Oranges: Lemon Yellow (#FFF176), Haldi Yellow (#FFB300), Mustard Yellow (#E5A823), Rust / Gerua (#B7410E), Peach (#FFAB91).
+     * Pinks & Reds: Rani Pink (#D81B60), Baby Pink (#F48FB1), Gajari (#FF6F61), Pyazi (#A36B7E), Blood Red (#D32F2F), Tamatar Red (#E53935), Maroon (#800000), Katha (#5D2524).
+     * Blues & Purples: Firozi / Cyan (#00BCD4), Royal Blue (#1565C0), Navy Blue (#000080), Wine / Jamuni (#4A154B), Purple (#7B1FA2).
+     * Neutrals: Off White (#FAF0E6), Badami / Cream (#FFF8E7), Chiku / Beige (#D7C4B7), Coffee Brown (#4E342E), Slate Grey (#757575), Black (#1A1A1A).
+   - CAMERA WHITE BALANCE & UNDERTONE RULE:
+     * Indoor warm/yellow lighting or camera sensor overexposure often shifts vibrant chartreuse/lime greens (like 'Sugapankhi' / 'Parrot Green' / 'तोता हरा') to look yellowish. Check fabric undertones carefully: if there is a green tint/pigment with high vibrancy, label it as 'Sugapankhi' (सुगापंखी/तोता), NOT plain 'Lemon Yellow'.
+   - STRICT CHROMATIC NEIGHBOR RULE FOR ALTERNATIVES:
+     * 'alternatives' MUST strictly be adjacent shades from the EXACT SAME color family (e.g., if primary is Sugapankhi / Yellow-Green, alternatives can ONLY be Lemon Yellow, Pista Green, Mehendi Green, Haldi Yellow. NEVER suggest distant, unrelated colors like Red, Maroon, Black, or Blue in alternatives!).
+   - In 'color_details': set 'primary_shade' and 3 to 4 nearest 'alternatives' from the same color family.
+   - Append the shade to the product name (e.g. 'Cotton Petticoat - Sugapankhi (सुगापंखी)') and include 'Shade: Sugapankhi (सुगापंखी)' in notes.
 5. STRICT JSON ONLY:
    - Output valid JSON only. No markdown formatting, no preamble.`
 
