@@ -498,6 +498,7 @@ func extractCleanJSON(raw string) string {
 	}
 	return cleaned
 }
+
 // SmartStudioScan performs simple product scan: extracts details via Gemini Vision and uploads original image untouched.
 // Background removal and light enhancement have been completely removed per request.
 func (s *AIService) SmartStudioScan(ctx context.Context, req dto.SmartStudioScanRequest) (*dto.SmartStudioScanResponse, error) {
@@ -560,4 +561,129 @@ func (s *AIService) SmartStudioScan(ctx context.Context, req dto.SmartStudioScan
 		CutoutImageURL: "",
 		ProcessingMs:   elapsed,
 	}, nil
+}
+
+// ScanMandiItem visually inspects camera snapshots of running-out products, empty shelves,
+// cartons, or loose items and constructs structured Mandi Sourcing & Wholesale procurement proposals.
+func (s *AIService) ScanMandiItem(ctx context.Context, req dto.AIMandiScanRequest) (*dto.AIMandiScanResponse, error) {
+	cleanBase64 := cleanBase64String(req.ImageBase64)
+	if cleanBase64 == "" {
+		return nil, errors.New("empty image data")
+	}
+
+	mimeType := req.MimeType
+	if mimeType == "" {
+		mimeType = "image/jpeg"
+	}
+
+	// 1. Check local SHA256 cache
+	hasher := sha256.New()
+	hasher.Write([]byte(cleanBase64))
+	cacheKey := fmt.Sprintf("mandi_scan_%x", hasher.Sum(nil))
+	if cached, ok := getAICache(cacheKey); ok {
+		var resp dto.AIMandiScanResponse
+		if err := json.Unmarshal([]byte(cached), &resp); err == nil && len(resp.Items) > 0 {
+			return &resp, nil
+		}
+	}
+
+	// 2. Specialized Wholesale Mandi Sourcing Prompt
+	mandiPrompt := `You are "ShopSilo Mandi Procurement AI" — an expert Chief Wholesale Sourcing Specialist for Indian Kirana stores, supermarkets, and Mandi traders.
+
+The merchant has taken a photo of a product running low on stock, an empty shelf, a carton, a box, or loose commodities that need to be reordered from the wholesale mandi/market.
+
+YOUR TASK:
+Analyze the image with precision, identify the product(s) needing restock, determine appropriate Indian WHOLESALE purchasing units and quantities (e.g. Box, Bags/Bori, Carton, Quintal, Kg), and estimate current Indian Mandi wholesale rates.
+
+Output pure JSON matching this exact schema:
+{
+  "items": [
+    {
+      "name": "Full professional commercial product name in Title Case (e.g., 'Fortune Premium Kachi Ghani Pure Mustard Oil - 1 Litre Pouch' or 'Tata Salt Vacuum Evaporated - 1kg' or 'Aashirvaad Shudh Chakki Atta')",
+      "category": "Strictly one of: 'Grocery & Staples', 'Snacks & Munchies', 'Beverages & Drinks', 'Dairy & Eggs', 'Personal Care & Beauty', 'Home & Kitchen', 'Clothing & Fashion', 'Electronics & Mobile', 'Hardware & Tools', 'Stationery & Office', 'General Store'",
+      "wholesale_qty": "Realistic commercial reorder quantity with unit: '1 पेटी / बॉक्स (Box)' or '1 बोरी (Bags)' or '1 कार्टन (Carton)' or '25 kg' or '50 kg' or '1 क्विंटल (Qtl)' or '1 टिन / केन (Tin)' or '12 पैकेट (Pkt)' or '24 पीस (Pcs)'",
+      "wholesale_unit": "Strictly one of: 'kg', 'बोरी (Bags)', 'पेटी / बॉक्स (Box)', 'पैकेट (Pkt)', 'लीटर (Ltr)', 'पीस (Pcs)', 'क्विंटल (Qtl)', 'ग्राम (g)', 'दर्जन (Dzn)', 'कार्टन (Carton)', 'टिन / केन (Tin)'",
+      "estimated_wholesale_rate": 1380.0,
+      "estimated_total_budget": 1380.0,
+      "notes": "Brief Hindi/English sourcing note: pack size details, wholesale bundle count (e.g. '12 पाउच प्रति पेटी @ ₹115/पाउच')",
+      "confidence": 0.95
+    }
+  ],
+  "raw_overview": "Short 1-line summary of items detected"
+}
+
+RULES:
+1. WHOLESALE REORDER UNITS:
+   - For edible oil pouches/bottles: suggest 'पेटी / बॉक्स (Box)' (usually 12-16 units per box) or 'टिन / केन (Tin)' (15 Litre).
+   - For grains, flours, pulses, rice, sugar: suggest 'बोरी (Bags)' (25kg or 50kg) or 'क्विंटल (Qtl)'.
+   - For biscuits, snacks, noodles: suggest 'कार्टन (Carton)' (24 to 48 packets per carton).
+   - For soaps, shampoos, toothpastes: suggest 'पेटी / बॉक्स (Box)' or 'पीस (Pcs)'.
+   - For loose commodities: suggest 'kg' (e.g. 25 kg or 50 kg).
+2. PRICING:
+   - Provide realistic Indian Mandi wholesale procurement rates in INR (₹).
+   - 'estimated_wholesale_rate': total price for the requested wholesale quantity (or per bag/box).
+3. MULTIPLE ITEMS:
+   - If multiple distinct low-stock products are visible in the photo, list each one as a separate item in the 'items' array (up to 4 items).
+4. STRICT JSON ONLY:
+   - Output valid JSON only. No markdown formatting, no preamble.`
+
+	payload := geminiPayload{
+		Contents: []geminiContent{
+			{
+				Role: "user",
+				Parts: []geminiPart{
+					{Text: mandiPrompt},
+					{
+						InlineData: &geminiInlineData{
+							MimeType: mimeType,
+							Data:     cleanBase64,
+						},
+					},
+				},
+			},
+		},
+		GenerationConfig: geminiGenerationConfig{
+			ResponseMimeType: "application/json",
+			Temperature:      0.1,
+			MaxOutputTokens:  1200,
+		},
+	}
+
+	apiKey := getGeminiAPIKey()
+	rawText, err := s.callGeminiWithFallback(ctx, apiKey, payload)
+	if err != nil {
+		return nil, fmt.Errorf("gemini mandi vision failed: %w", err)
+	}
+
+	cleanedJSON := extractCleanJSON(rawText)
+	var resp dto.AIMandiScanResponse
+	if parseErr := json.Unmarshal([]byte(cleanedJSON), &resp); parseErr != nil {
+		return nil, fmt.Errorf("failed to parse mandi scanner result: %w", parseErr)
+	}
+
+	// Sanitize items: filter empty names
+	var validItems []dto.AIMandiItem
+	for _, item := range resp.Items {
+		item.Name = strings.TrimSpace(item.Name)
+		if item.Name == "" {
+			continue
+		}
+		if item.Category == "" {
+			item.Category = "General Store"
+		}
+		if item.WholesaleUnit == "" {
+			item.WholesaleUnit = "पेटी / बॉक्स (Box)"
+		}
+		if item.WholesaleQty == "" {
+			item.WholesaleQty = fmt.Sprintf("1 %s", item.WholesaleUnit)
+		}
+		if item.EstimatedTotalBudget <= 0 && item.EstimatedWholesaleRate > 0 {
+			item.EstimatedTotalBudget = item.EstimatedWholesaleRate
+		}
+		validItems = append(validItems, item)
+	}
+	resp.Items = validItems
+
+	setAICache(cacheKey, rawText, 30*time.Minute)
+	return &resp, nil
 }

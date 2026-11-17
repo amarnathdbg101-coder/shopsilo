@@ -90,6 +90,31 @@ type SmartStudioScanResponse struct {
 	ProcessingMs   int64                 `json:"processing_ms"`
 }
 
+// ── AI Mandi Sourcing & Wholesale Vision DTOs ──
+// AIMandiScanRequest carries base64 image of empty shelves, low stock items, or cartons to reorder from Mandi.
+type AIMandiScanRequest struct {
+	ImageBase64 string `json:"image_base64" validate:"required"`
+	MimeType    string `json:"mime_type,omitempty"`
+}
+
+// AIMandiItem represents a single wholesale item detected from the camera snapshot with estimated rate & bulk unit.
+type AIMandiItem struct {
+	Name                   string  `json:"name"`
+	Category               string  `json:"category"`
+	WholesaleQty           string  `json:"wholesale_qty"`
+	WholesaleUnit          string  `json:"wholesale_unit"`
+	EstimatedWholesaleRate float64 `json:"estimated_wholesale_rate"`
+	EstimatedTotalBudget   float64 `json:"estimated_total_budget"`
+	Notes                  string  `json:"notes,omitempty"`
+	Confidence             float64 `json:"confidence,omitempty"`
+}
+
+// AIMandiScanResponse returns list of detected low-stock/procurement items for 1-tap addition to Mandi Sheet.
+type AIMandiScanResponse struct {
+	Items       []AIMandiItem `json:"items"`
+	RawOverview string        `json:"raw_overview,omitempty"`
+}
+
 // ── AI Semantic Search DTOs ──
 type SemanticSearchRequest struct {
 	Query string `json:"query" validate:"required"`

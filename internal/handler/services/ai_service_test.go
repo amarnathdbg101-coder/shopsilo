@@ -90,3 +90,30 @@ func TestHashString(t *testing.T) {
 		t.Errorf("expected different hashes for different inputs")
 	}
 }
+
+func TestIsUsefulProductAttribute(t *testing.T) {
+	// Should reject useless boilerplate
+	if isUsefulProductAttribute("Storage Instructions", "Store in a cool and dry place") {
+		t.Errorf("expected storage instructions to be rejected")
+	}
+	if isUsefulProductAttribute("Usage", "Apply as directed") {
+		t.Errorf("expected usage advice to be rejected")
+	}
+	if isUsefulProductAttribute("Warranty", "N/A") {
+		t.Errorf("expected dummy placeholder 'N/A' to be rejected")
+	}
+	if isUsefulProductAttribute("Category", "Grocery & Staples") {
+		t.Errorf("expected redundant category to be rejected")
+	}
+
+	// Should accept high-value specs
+	if !isUsefulProductAttribute("Dietary Preference", "Vegetarian") {
+		t.Errorf("expected Dietary Preference to be accepted")
+	}
+	if !isUsefulProductAttribute("Packaging Type", "Pouch") {
+		t.Errorf("expected Packaging Type to be accepted")
+	}
+	if !isUsefulProductAttribute("Item Form", "Liquid") {
+		t.Errorf("expected Item Form to be accepted")
+	}
+}
