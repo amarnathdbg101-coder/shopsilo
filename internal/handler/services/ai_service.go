@@ -244,9 +244,8 @@ Extract and infer comprehensive, professional product catalog data in pure JSON 
   "attributes": {
     "Dietary Preference": "Vegetarian",
     "Packaging Type": "Pouch",
-    "Shelf Life": "9 Months",
     "Item Form": "Liquid",
-    "Storage Instructions": "Store in a cool and dry place"
+    "Flavor": "Mustard"
   },
   "suggested_sku": "Smart structured uppercase SKU identifier (e.g. 'FORT-MUST-1L-POUCH')",
   "barcode": "Barcode digits if clearly visible on packaging, otherwise empty string",
@@ -271,13 +270,20 @@ CRITICAL CATALOGING SPECIALIST RULES:
    - 'estimated_cost': Calculate the retailer's wholesale procurement cost (typically 12% to 20% margin for grocery/FMCG; 30% to 45% for fashion/cosmetics).
    - 'profit_margin_percent': Compute exact margin percentage: round(((selling_price - estimated_cost) / selling_price) * 100, 1).
 
-3. SPECIALIZED ATTRIBUTES (DEEP SPECS):
-   - Provide 5 to 8 real, structured key-value pairs in 'attributes' dictionary with Title Case keys tailored specifically to the product's category:
-     * For Food / Grocery: 'Dietary Preference' (Vegetarian/Non-Vegetarian), 'Shelf Life', 'Packaging Type', 'Storage Instructions', 'Item Form'.
-     * For Personal Care / Beauty: 'Item Form', 'Skin/Hair Type', 'Fragrance', 'Target Gender', 'Benefits'.
-     * For Clothing / Fashion: 'Fabric', 'Pattern', 'Color', 'Occasion', 'Fit Type', 'Wash Care'.
+3. SPECIALIZED ATTRIBUTES (HIGH-VALUE PRODUCT SPECS ONLY — NO USELESS BOILERPLATE):
+   - Provide 3 to 6 strictly relevant, concise, high-value key-value pairs in 'attributes' dictionary with Title Case keys.
+   - ONLY include physical, technical, or customer-differentiating specs:
+     * For Food / Grocery: 'Dietary Preference' (Vegetarian/Non-Vegetarian), 'Packaging Type' (Pouch/Bottle/Jar/Tin), 'Item Form' (Liquid/Powder/Paste/Grain), 'Flavor'.
+     * For Personal Care / Beauty: 'Item Form', 'Skin/Hair Type', 'Fragrance', 'Target Gender', 'Key Benefits'.
+     * For Clothing / Fashion: 'Fabric', 'Pattern', 'Color', 'Fit Type', 'Occasion'.
      * For Electronics / Hardware: 'Connectivity', 'Color', 'Material', 'Warranty'.
-     * For Home & Cleaning: 'Item Form', 'Surface Recommendation', 'Scent'.
+     * For Home & Cleaning: 'Item Form', 'Fragrance', 'Surface Recommendation'.
+   - STRICTLY FORBIDDEN IN ATTRIBUTES (DO NOT OUTPUT THESE):
+     * NEVER include generic storage instructions (e.g. 'Store in a cool and dry place').
+     * NEVER include usage directions, care instructions, or generic warnings.
+     * NEVER repeat basic fields already present in schema (do NOT add 'Name', 'Brand', 'Category', 'MRP', 'Price', 'Weight', 'Unit', 'Barcode').
+     * NEVER use placeholder values like 'N/A', 'None', 'Unknown', 'Standard', 'Generic', '-', 'Null'.
+     * Keep all attribute values ultra-concise (under 35 characters, e.g. 'Vegetarian', 'Cotton Blend', '1 Year', 'Pouch').
 
 4. BILINGUAL HINGLISH SEARCH TAGS:
    - Provide 8 to 12 high-intent search keywords including common Hindi/Hinglish terms used by Indian shoppers (e.g., 'sarson tel', 'mustard oil', 'gehu aata', 'doodh', 'chai patti', 'nahane ka sabun').
@@ -319,8 +325,65 @@ CRITICAL CATALOGING SPECIALIST RULES:
 		return nil, fmt.Errorf("failed to parse product scanner result: %w", parseErr)
 	}
 
+	// Filter and sanitize attributes: strip useless boilerplate, placeholders, and redundant keys
+	if resp.Attributes != nil {
+		cleanAttrs := make(map[string]string)
+		for k, v := range resp.Attributes {
+			if isUsefulProductAttribute(k, v) {
+				cleanAttrs[strings.TrimSpace(k)] = strings.TrimSpace(v)
+			}
+		}
+		resp.Attributes = cleanAttrs
+	}
+
 	setAICache(cacheKey, rawText, 30*time.Minute)
 	return &resp, nil
+}
+
+// isUsefulProductAttribute ensures only high-value, commercial product specs are retained,
+// filtering out generic boilerplate advice, dummy placeholders, and redundant keys.
+func isUsefulProductAttribute(k, v string) bool {
+	kClean := strings.ToLower(strings.TrimSpace(k))
+	vClean := strings.ToLower(strings.TrimSpace(v))
+	if kClean == "" || vClean == "" {
+		return false
+	}
+
+	// Reject placeholder/dummy values
+	switch vClean {
+	case "n/a", "na", "none", "unknown", "null", "not specified", "not applicable",
+		"standard", "generic", "-", "--", "nil", "undefined", "default", "regular", "general":
+		return false
+	}
+
+	// Reject overly long values (> 45 chars) — custom attributes should be concise badges/specs
+	if len(v) > 45 {
+		return false
+	}
+
+	// Reject generic advice or storage sentences
+	if strings.Contains(vClean, "store in") ||
+		strings.Contains(vClean, "keep away") ||
+		strings.Contains(vClean, "keep out") ||
+		strings.Contains(vClean, "as directed") ||
+		strings.Contains(vClean, "refer pack") ||
+		strings.Contains(vClean, "sunlight") ||
+		strings.Contains(vClean, "consult") {
+		return false
+	}
+
+	// Reject redundant or useless keys
+	switch kClean {
+	case "storage instructions", "storage", "usage", "how to use", "instructions",
+		"directions", "care instructions", "wash care", "warning", "safety warning",
+		"caution", "disclaimer", "notice", "country of origin", "origin",
+		"name", "product name", "brand", "category", "subcategory", "sub category",
+		"mrp", "price", "selling price", "cost price", "weight", "net weight",
+		"unit", "net quantity", "barcode", "sku", "description", "highlights":
+		return false
+	}
+
+	return true
 }
 func (s *AIService) callGeminiWithFallback(ctx context.Context, explicitKey string, payload geminiPayload) (string, error) {
 	keyAttempts := s.rotator.KeyCount()
