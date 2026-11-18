@@ -22,6 +22,7 @@ var (
 	ErrInvalidVerificationToken  = errors.New("invalid or expired phone verification token")
 	ErrPhoneVerificationMismatch = errors.New("phone number does not match verified token")
 	ErrTokenAlreadyUsed          = repository.ErrTokenAlreadyUsed
+	ErrCustomerCannotLoginAsMerchant = errors.New("this account is already registered as a Customer. Please use a separate Merchant account")
 
 	// Shop errors
 	ErrUserAlreadyHasShop     = errors.New("you already have a registered shop")

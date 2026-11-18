@@ -119,6 +119,14 @@ func (s *ShopService) CreateShop(
 		return nil, ErrUserAlreadyHasShop
 	}
 
+	// 1b. Verify user is not a customer (customer accounts cannot create a shop)
+	if s.userRepo != nil {
+		u, uErr := s.userRepo.FindByID(ctx, userID)
+		if uErr == nil && u != nil && u.Role == "customer" {
+			return nil, ErrCustomerCannotLoginAsMerchant
+		}
+	}
+
 	// 2. Generate slug
 	slug := strings.TrimSpace(input.Slug)
 	if slug == "" {

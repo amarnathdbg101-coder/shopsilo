@@ -354,14 +354,11 @@ func (s *UserService) Login(ctx context.Context, input dto.UserLoginRequest) (*d
 		return nil, ErrInvalidCredentials
 	}
 
-	// Auto-upgrade user role to merchant when logging into merchant partner app to allow shop setup
+	// Strictly prevent customer accounts from logging into merchant partner app
 	reqRole := strings.ToLower(strings.TrimSpace(input.Role))
 	if reqRole == "merchant" || reqRole == "shop" {
-		if user.Role != "merchant" && user.Role != "shop" && user.Role != "admin" {
-			if s.repo != nil {
-				_ = s.repo.UpdateRole(ctx, user.ID, "merchant")
-				user.Role = "merchant"
-			}
+		if user.Role == "customer" {
+			return nil, ErrCustomerCannotLoginAsMerchant
 		}
 	}
 
@@ -541,12 +538,10 @@ func (s *UserService) GoogleLogin(ctx context.Context, input dto.GoogleLoginRequ
 			return nil, ErrAccountInactive
 		}
 
-		// Seamless role transition: if customer is logging into merchant app with role 'shop', upgrade role
-		if strings.ToLower(strings.TrimSpace(input.Role)) == "shop" && user.Role == "customer" {
-			if s.repo != nil {
-				_ = s.repo.UpdateRole(ctx, user.ID, "shop")
-				user.Role = "shop"
-			}
+		// Strictly block customer accounts from logging into or converting into shop/merchant portal
+		reqRole := strings.ToLower(strings.TrimSpace(input.Role))
+		if (reqRole == "shop" || reqRole == "merchant") && user.Role == "customer" {
+			return nil, ErrCustomerCannotLoginAsMerchant
 		}
 
 		// If existing user has no avatar set, update with Google picture
