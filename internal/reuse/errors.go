@@ -3,6 +3,7 @@ package reuse
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 type Response struct {
@@ -27,7 +28,18 @@ func Created(w http.ResponseWriter, msg string, data interface{}) {
 }
 
 func Error(w http.ResponseWriter, status int, err string) {
-	JSON(w, status, Response{Success: false, Error: err})
+	cleanErr := err
+	// OWASP Information Leakage Guard:
+	// Mask raw database driver/connection errors from being leaked in HTTP 500 responses.
+	if status == http.StatusInternalServerError {
+		lower := strings.ToLower(err)
+		if strings.Contains(lower, "pgx:") || strings.Contains(lower, "sql:") || strings.Contains(lower, "pq:") ||
+			strings.Contains(lower, "connection refused") || strings.Contains(lower, "password") ||
+			strings.Contains(lower, "syntax error at or near") || strings.Contains(lower, "driver:") {
+			cleanErr = "An internal server error occurred. Please try again later."
+		}
+	}
+	JSON(w, status, Response{Success: false, Error: cleanErr})
 }
 
 func Message(w http.ResponseWriter, status int, msg string) {
