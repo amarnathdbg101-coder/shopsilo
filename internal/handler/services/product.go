@@ -214,6 +214,25 @@ func (s *ProductService) GetProductByID(ctx context.Context, id string) (*model.
 	return s.productRepo.FindByID(ctx, id)
 }
 
+// GetProductByBarcode retrieves a product by barcode/SKU within the merchant's own shop.
+func (s *ProductService) GetProductByBarcode(ctx context.Context, userID, barcode string) (*model.Product, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, userID)
+	if err != nil {
+		return nil, ErrShopRequired
+	}
+
+	trimmed := strings.TrimSpace(barcode)
+	if trimmed == "" {
+		return nil, errors.New("barcode cannot be empty")
+	}
+
+	prod, err := s.productRepo.FindBySKU(ctx, shop.ID, trimmed)
+	if err != nil {
+		return nil, err
+	}
+	return prod, nil
+}
+
 func (s *ProductService) GetProductBySlug(ctx context.Context, slug string) (*model.Product, error) {
 	return s.productRepo.FindBySlug(ctx, slug)
 }

@@ -419,9 +419,13 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Put("/shops/me/categories/{id}", catc.UpdateShopCategory)                                        // Shop
 		r.Delete("/shops/me/categories/{id}", catc.DeleteShopCategory)                                     // Shop
 		r.Get("/shops/me/products", pc.ListMyShopProducts)                                                 // Shop
+		r.Get("/shops/me/products/barcode/{barcode}", pc.GetByBarcode)                                     // Shop
 		r.With(middleware.MutationRateLimiter.Middleware()).Post("/products", pc.Create)                  // Shop
+		r.With(middleware.MutationRateLimiter.Middleware()).Post("/shops/me/products", pc.Create)         // Shop Alias
 		r.Put("/products/{id}", pc.Update)                                                                 // Shop
+		r.Put("/shops/me/products/{id}", pc.Update)                                                       // Shop Alias
 		r.Delete("/products/{id}", pc.Delete)                                                              // Shop
+		r.Delete("/shops/me/products/{id}", pc.Delete)                                                     // Shop Alias
 		r.Delete("/shops/me/products/batch", pc.BatchDelete)                                               // Shop
 		r.Patch("/shops/me/products/batch-status", pc.BatchToggleStatus)                                   // Shop
 		r.With(middleware.UploadRateLimiter.Middleware()).Post("/products/images", upc.UploadProductImages) // Shop

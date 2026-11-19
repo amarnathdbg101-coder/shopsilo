@@ -273,6 +273,38 @@ func (c *ProductController) GetByID(w http.ResponseWriter, r *http.Request) {
 	reuse.Success(w, "Product retrieved successfully", product)
 }
 
+// GetByBarcode handles retrieving a product by barcode/SKU within the merchant's shop (Protected - Shop Owner)
+func (c *ProductController) GetByBarcode(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	barcode := chi.URLParam(r, "barcode")
+	barcode = strings.TrimSpace(barcode)
+	if barcode == "" {
+		reuse.Error(w, http.StatusBadRequest, "barcode is required")
+		return
+	}
+
+	product, err := c.productService.GetProductByBarcode(r.Context(), claims.UserID, barcode)
+	if err != nil {
+		if errors.Is(err, repository.ErrProductNotFound) {
+			reuse.Error(w, http.StatusNotFound, "product not found for this barcode")
+			return
+		}
+		if errors.Is(err, services.ErrShopRequired) {
+			reuse.Error(w, http.StatusNotFound, "shop not found")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Product retrieved successfully", services.MapProductToMerchantDTO(product))
+}
+
 // GetBySlug handles retrieving a single product by SEO slug (Public)
 func (c *ProductController) GetBySlug(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
