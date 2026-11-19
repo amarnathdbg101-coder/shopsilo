@@ -2,12 +2,13 @@
 package repository
 
 import (
-	"shopMe/internal/reuse"
-	"strings"
 	"context"
 	"errors"
+	"fmt"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
+	"shopMe/internal/reuse"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,13 +23,107 @@ var (
 	catCacheMu       sync.RWMutex
 	cachedCategories []*model.Category
 	catCacheExpires  time.Time
+
+	catLookupCache   = make(map[string]categoryCacheEntry)
+	shopCatListCache = make(map[string]shopCategoryListCacheEntry)
 )
+
+type categoryCacheEntry struct {
+	category  *model.Category
+	expiresAt time.Time
+}
+
+type shopCategoryListCacheEntry struct {
+	list      []*dto.ShopCategoryItem
+	expiresAt time.Time
+}
 
 func invalidateCategoryCache() {
 	catCacheMu.Lock()
 	cachedCategories = nil
 	catCacheExpires = time.Time{}
+	catLookupCache = make(map[string]categoryCacheEntry)
+	shopCatListCache = make(map[string]shopCategoryListCacheEntry)
 	catCacheMu.Unlock()
+}
+
+func getCachedCategory(key string) (*model.Category, bool) {
+	catCacheMu.RLock()
+	defer catCacheMu.RUnlock()
+	entry, ok := catLookupCache[key]
+	if !ok || time.Now().After(entry.expiresAt) {
+		return nil, false
+	}
+	cp := *entry.category
+	return &cp, true
+}
+
+func setCachedCategory(key string, c *model.Category) {
+	if c == nil {
+		return
+	}
+	catCacheMu.Lock()
+	defer catCacheMu.Unlock()
+	if catLookupCache == nil {
+		catLookupCache = make(map[string]categoryCacheEntry)
+	}
+	if len(catLookupCache) > 500 {
+		now := time.Now()
+		for k, v := range catLookupCache {
+			if now.After(v.expiresAt) {
+				delete(catLookupCache, k)
+			}
+		}
+	}
+	catLookupCache[key] = categoryCacheEntry{
+		category:  c,
+		expiresAt: time.Now().Add(10 * time.Minute),
+	}
+}
+
+func setCachedCategoryEntity(c *model.Category) {
+	if c == nil {
+		return
+	}
+	setCachedCategory("id:"+c.ID, c)
+	if c.Slug != "" {
+		setCachedCategory("slug:"+strings.ToLower(strings.TrimSpace(c.Slug)), c)
+	}
+	if c.Name != "" {
+		setCachedCategory("name:"+strings.ToLower(strings.TrimSpace(c.Name)), c)
+	}
+}
+
+func getCachedShopCategoryList(shopID string) ([]*dto.ShopCategoryItem, bool) {
+	catCacheMu.RLock()
+	defer catCacheMu.RUnlock()
+	entry, ok := shopCatListCache[shopID]
+	if !ok || time.Now().After(entry.expiresAt) {
+		return nil, false
+	}
+	res := make([]*dto.ShopCategoryItem, len(entry.list))
+	copy(res, entry.list)
+	return res, true
+}
+
+func setCachedShopCategoryList(shopID string, list []*dto.ShopCategoryItem) {
+	catCacheMu.Lock()
+	defer catCacheMu.Unlock()
+	if shopCatListCache == nil {
+		shopCatListCache = make(map[string]shopCategoryListCacheEntry)
+	}
+	if len(shopCatListCache) > 200 {
+		now := time.Now()
+		for k, v := range shopCatListCache {
+			if now.After(v.expiresAt) {
+				delete(shopCatListCache, k)
+			}
+		}
+	}
+	shopCatListCache[shopID] = shopCategoryListCacheEntry{
+		list:      list,
+		expiresAt: time.Now().Add(5 * time.Minute),
+	}
 }
 
 type CategoryRepo struct {
@@ -102,6 +197,13 @@ func (r *CategoryRepo) FindAll(ctx context.Context) ([]*model.Category, error) {
 }
 
 func (r *CategoryRepo) FindByID(ctx context.Context, id string) (*model.Category, error) {
+	cleanID := strings.TrimSpace(id)
+	if cleanID != "" {
+		if cached, ok := getCachedCategory("id:" + cleanID); ok {
+			return cached, nil
+		}
+	}
+
 	query := `
 		SELECT id, name, slug, COALESCE(description, ''), COALESCE(image_url, ''), parent_id, is_active, created_at
 		FROM categories
@@ -126,10 +228,18 @@ func (r *CategoryRepo) FindByID(ctx context.Context, id string) (*model.Category
 		r.logger.Error("failed to find category by id", zap.Error(err), zap.String("category_id", id))
 		return nil, err
 	}
+	setCachedCategoryEntity(c)
 	return c, nil
 }
 
 func (r *CategoryRepo) FindBySlug(ctx context.Context, slug string) (*model.Category, error) {
+	cleanSlug := strings.ToLower(strings.TrimSpace(slug))
+	if cleanSlug != "" {
+		if cached, ok := getCachedCategory("slug:" + cleanSlug); ok {
+			return cached, nil
+		}
+	}
+
 	query := `
 		SELECT id, name, slug, COALESCE(description, ''), COALESCE(image_url, ''), parent_id, is_active, created_at
 		FROM categories
@@ -154,6 +264,7 @@ func (r *CategoryRepo) FindBySlug(ctx context.Context, slug string) (*model.Cate
 		r.logger.Error("failed to find category by slug", zap.Error(err), zap.String("slug", slug))
 		return nil, err
 	}
+	setCachedCategoryEntity(c)
 	return c, nil
 }
 
@@ -162,7 +273,19 @@ func (r *CategoryRepo) FindByNameOrSlug(ctx context.Context, term string) (*mode
 	if trimmed == "" {
 		return nil, ErrCategoryNotFound
 	}
+	termLower := strings.ToLower(trimmed)
+	if cached, ok := getCachedCategory("slug:" + termLower); ok {
+		return cached, nil
+	}
+	if cached, ok := getCachedCategory("name:" + termLower); ok {
+		return cached, nil
+	}
 	slug := reuse.Slugify(trimmed)
+	if slug != "" {
+		if cached, ok := getCachedCategory("slug:" + strings.ToLower(slug)); ok {
+			return cached, nil
+		}
+	}
 
 	query := `
 		SELECT id, name, slug, COALESCE(description, ''), COALESCE(image_url, ''), parent_id, is_active, created_at
@@ -194,6 +317,7 @@ func (r *CategoryRepo) FindByNameOrSlug(ctx context.Context, term string) (*mode
 		}
 		return nil, err
 	}
+	setCachedCategoryEntity(c)
 	return c, nil
 }
 
@@ -354,8 +478,15 @@ func (r *CategoryRepo) Delete(ctx context.Context, id string) error {
 }
 
 // ListByShop returns all active global categories combined with custom categories created by this shop.
-// Custom categories created by the shop appear first.
+// Custom categories created by the shop appear first. Cached per shopID with 5-minute TTL.
 func (r *CategoryRepo) ListByShop(ctx context.Context, shopID string) ([]*dto.ShopCategoryItem, error) {
+	cleanShopID := strings.TrimSpace(shopID)
+	if cleanShopID != "" {
+		if cached, ok := getCachedShopCategoryList(cleanShopID); ok {
+			return cached, nil
+		}
+	}
+
 	query := `
 		SELECT c.id, c.name, c.slug, COALESCE(c.description, ''), COALESCE(c.image_url, ''),
 		       COALESCE(c.icon, '📦'), c.shop_id, (c.shop_id IS NOT NULL) AS is_custom, c.is_active,
@@ -405,11 +536,23 @@ func (r *CategoryRepo) ListByShop(ctx context.Context, shopID string) ([]*dto.Sh
 	if list == nil {
 		list = []*dto.ShopCategoryItem{}
 	}
+	if cleanShopID != "" {
+		setCachedShopCategoryList(cleanShopID, list)
+	}
 	return list, nil
 }
 
 // FindShopCategoryBySlug looks up a category by slug either within the shop's custom categories or global defaults.
 func (r *CategoryRepo) FindShopCategoryBySlug(ctx context.Context, shopID, slug string) (*model.Category, error) {
+	cleanShopID := strings.TrimSpace(shopID)
+	cleanSlug := strings.ToLower(strings.TrimSpace(slug))
+	cacheKey := fmt.Sprintf("shop_cat:%s:slug:%s", cleanShopID, cleanSlug)
+	if cleanShopID != "" && cleanSlug != "" {
+		if cached, ok := getCachedCategory(cacheKey); ok {
+			return cached, nil
+		}
+	}
+
 	query := `
 		SELECT id, name, slug, COALESCE(description, ''), COALESCE(image_url, ''), parent_id, is_active, created_at
 		FROM categories
@@ -434,6 +577,9 @@ func (r *CategoryRepo) FindShopCategoryBySlug(ctx context.Context, shopID, slug 
 		}
 		return nil, err
 	}
+	if cleanShopID != "" && cleanSlug != "" {
+		setCachedCategory(cacheKey, c)
+	}
 	return c, nil
 }
 
@@ -443,6 +589,14 @@ func (r *CategoryRepo) FindShopCategoryByNameOrSlug(ctx context.Context, shopID,
 	trimmed := strings.TrimSpace(term)
 	if trimmed == "" {
 		return nil, ErrCategoryNotFound
+	}
+	cleanShopID := strings.TrimSpace(shopID)
+	termLower := strings.ToLower(trimmed)
+	cacheKey := fmt.Sprintf("shop_cat:%s:term:%s", cleanShopID, termLower)
+	if cleanShopID != "" {
+		if cached, ok := getCachedCategory(cacheKey); ok {
+			return cached, nil
+		}
 	}
 	slug := reuse.Slugify(trimmed)
 
@@ -476,6 +630,9 @@ func (r *CategoryRepo) FindShopCategoryByNameOrSlug(ctx context.Context, shopID,
 			return nil, ErrCategoryNotFound
 		}
 		return nil, err
+	}
+	if cleanShopID != "" {
+		setCachedCategory(cacheKey, c)
 	}
 	return c, nil
 }

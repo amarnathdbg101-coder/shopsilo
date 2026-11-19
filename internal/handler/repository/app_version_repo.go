@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
+	"time"
 
 	"shopMe/internal/handler/model"
 
@@ -16,7 +19,22 @@ import (
 
 var (
 	ErrVersionNotFound = errors.New("app version not found")
+
+	versionCacheMu sync.RWMutex
+	versionCache   = make(map[string]versionCacheEntry)
 )
+
+type versionCacheEntry struct {
+	version   *model.AppVersion
+	expiresAt time.Time
+}
+
+// InvalidateAppVersionCache flushes the in-memory app version cache when a new release is published.
+func InvalidateAppVersionCache() {
+	versionCacheMu.Lock()
+	defer versionCacheMu.Unlock()
+	versionCache = make(map[string]versionCacheEntry)
+}
 
 // AppVersionRepo manages database queries for published app releases and version checks.
 type AppVersionRepo struct {
@@ -33,7 +51,22 @@ func NewAppVersionRepo(db *pgxpool.Pool, logger *zap.Logger) *AppVersionRepo {
 }
 
 // GetLatestActiveVersion fetches the newest active release record for a given app type and platform.
+// Results are cached in-memory with a 10-minute TTL to handle startup traffic surges in sub-microseconds.
 func (r *AppVersionRepo) GetLatestActiveVersion(ctx context.Context, appType, platform string) (*model.AppVersion, error) {
+	cleanType := strings.ToLower(strings.TrimSpace(appType))
+	cleanPlatform := strings.ToLower(strings.TrimSpace(platform))
+	cacheKey := cleanType + ":" + cleanPlatform
+
+	if cleanType != "" && cleanPlatform != "" {
+		versionCacheMu.RLock()
+		if entry, ok := versionCache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
+			cp := *entry.version
+			versionCacheMu.RUnlock()
+			return &cp, nil
+		}
+		versionCacheMu.RUnlock()
+	}
+
 	query := `
 		SELECT id, app_type, platform, version_code, version_name, min_supported_version_code,
 		       apk_url, file_size_bytes, release_notes, is_force_update, is_active, created_at
@@ -83,6 +116,15 @@ func (r *AppVersionRepo) GetLatestActiveVersion(ctx context.Context, appType, pl
 		v.ReleaseNotes = []string{}
 	}
 
+	if cleanType != "" && cleanPlatform != "" {
+		versionCacheMu.Lock()
+		versionCache[cacheKey] = versionCacheEntry{
+			version:   &v,
+			expiresAt: time.Now().Add(10 * time.Minute),
+		}
+		versionCacheMu.Unlock()
+	}
+
 	return &v, nil
 }
 
@@ -120,5 +162,6 @@ func (r *AppVersionRepo) PublishVersion(ctx context.Context, v *model.AppVersion
 		return nil, fmt.Errorf("publishing app version failed: %w", err)
 	}
 
+	InvalidateAppVersionCache()
 	return v, nil
 }
