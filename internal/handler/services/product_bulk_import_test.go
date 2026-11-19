@@ -79,3 +79,39 @@ Harpic Original Toilet Cleaner 500ml,Household & Cleaning,Harpic,95,78,99,4.0,17
 		t.Errorf("Expected StockQuantity 15, got %d", surf.StockQuantity)
 	}
 }
+
+func TestResolveImportColumnMap_StreamingRow(t *testing.T) {
+	header := []string{"Item Name", "SKU", "Selling Price", "Cost Price", "Stock", "Category", "Unit"}
+	colMap := resolveImportColumnMap(header)
+
+	row1 := []string{"Tata Salt 1kg", "SALT01", "28", "22", "100", "Spices & Seasoning", "Packet"}
+	item1 := colMap.parseRow(row1)
+
+	if item1 == nil {
+		t.Fatalf("expected non-nil item")
+	}
+	if item1.Name != "Tata Salt 1kg" {
+		t.Errorf("expected 'Tata Salt 1kg', got '%s'", item1.Name)
+	}
+	if item1.Price != 28.0 {
+		t.Errorf("expected price 28.0, got %f", item1.Price)
+	}
+	if item1.CostPrice != 22.0 {
+		t.Errorf("expected cost price 22.0, got %f", item1.CostPrice)
+	}
+	if item1.StockQuantity != 100 {
+		t.Errorf("expected stock 100, got %d", item1.StockQuantity)
+	}
+	if item1.CategoryName != "Spices & Seasoning" {
+		t.Errorf("expected category 'Spices & Seasoning', got '%s'", item1.CategoryName)
+	}
+	if item1.Unit != "Packet" {
+		t.Errorf("expected unit 'Packet', got '%s'", item1.Unit)
+	}
+
+	// Empty row should return nil
+	if itemEmpty := colMap.parseRow([]string{""}); itemEmpty != nil {
+		t.Errorf("expected nil for empty row, got %+v", itemEmpty)
+	}
+}
+

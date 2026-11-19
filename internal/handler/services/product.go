@@ -2,6 +2,7 @@
 package services
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/csv"
@@ -636,30 +637,41 @@ func cleanImportSKU(val string) string {
 	return s
 }
 
-// parseRecordsToImportItems extracts product items from a 2D grid of CSV/Excel cells.
-func parseRecordsToImportItems(records [][]string) []dto.BulkImportProductItem {
-	if len(records) <= 1 {
-		return nil
-	}
+type attrPair struct {
+	nameCol int
+	valCol  int
+}
 
-	header := records[0]
-	nameCol := -1
-	skuCol := -1
-	priceCol := -1
-	costCol := -1
-	compareCol := -1
-	stockCol := -1
-	minStockCol := -1
-	catCol := -1
-	unitCol := -1
-	descCol := -1
-	brandCol := -1
+type importColumnMap struct {
+	nameCol     int
+	skuCol      int
+	priceCol    int
+	costCol     int
+	compareCol  int
+	stockCol    int
+	minStockCol int
+	catCol      int
+	unitCol     int
+	descCol     int
+	brandCol    int
+	attrPairs   []attrPair
+}
 
-	type attrPair struct {
-		nameCol int
-		valCol  int
+// resolveImportColumnMap inspects the header row to dynamically locate and map product attribute columns.
+func resolveImportColumnMap(header []string) *importColumnMap {
+	m := &importColumnMap{
+		nameCol:     -1,
+		skuCol:      -1,
+		priceCol:    -1,
+		costCol:     -1,
+		compareCol:  -1,
+		stockCol:    -1,
+		minStockCol: -1,
+		catCol:      -1,
+		unitCol:     -1,
+		descCol:     -1,
+		brandCol:    -1,
 	}
-	var attrPairs []attrPair
 
 	for i, h := range header {
 		cleanH := strings.ToLower(strings.Trim(strings.TrimSpace(h), "\uFEFF\"' "))
@@ -680,10 +692,10 @@ func parseRecordsToImportItems(records [][]string) []dto.BulkImportProductItem {
 		if !isAttr && !isBadge && !isDiscount && !isAlert && !isCost {
 			if cleanH == "product name" || cleanH == "product_name" || cleanH == "item name" || cleanH == "item_name" ||
 				cleanH == "title" || cleanH == "name" || cleanH == "product" || cleanH == "item" || cleanH == "saman" || cleanH == "naam" {
-				nameCol = i
-			} else if nameCol == -1 && (strings.Contains(cleanH, "name") || strings.Contains(cleanH, "title") || strings.Contains(cleanH, "product") || strings.Contains(cleanH, "item")) &&
+				m.nameCol = i
+			} else if m.nameCol == -1 && (strings.Contains(cleanH, "name") || strings.Contains(cleanH, "title") || strings.Contains(cleanH, "product") || strings.Contains(cleanH, "item")) &&
 				!strings.Contains(cleanH, "category") && !strings.Contains(cleanH, "brand") {
-				nameCol = i
+				m.nameCol = i
 			}
 		}
 
@@ -692,23 +704,23 @@ func parseRecordsToImportItems(records [][]string) []dto.BulkImportProductItem {
 			if strings.Contains(cleanH, "sku") || strings.Contains(cleanH, "barcode") ||
 				strings.Contains(cleanH, "item code") || strings.Contains(cleanH, "product code") ||
 				strings.Contains(cleanH, "upc") || strings.Contains(cleanH, "ean") || cleanH == "code" {
-				if skuCol == -1 {
-					skuCol = i
+				if m.skuCol == -1 {
+					m.skuCol = i
 				}
 			}
 		}
 
 		// 3. Cost Price
 		if isCost && !isDiscount {
-			if costCol == -1 {
-				costCol = i
+			if m.costCol == -1 {
+				m.costCol = i
 			}
 		}
 
 		// 4. MRP / Compare Price (strictly exclude discount/margin)
 		if isCompare && !isDiscount {
-			if compareCol == -1 {
-				compareCol = i
+			if m.compareCol == -1 {
+				m.compareCol = i
 			}
 		}
 
@@ -717,23 +729,23 @@ func parseRecordsToImportItems(records [][]string) []dto.BulkImportProductItem {
 			if strings.Contains(cleanH, "selling") || strings.Contains(cleanH, "sell") ||
 				strings.Contains(cleanH, "sales") || strings.Contains(cleanH, "price") ||
 				strings.Contains(cleanH, "rate") || cleanH == "sp" {
-				if priceCol == -1 {
-					priceCol = i
+				if m.priceCol == -1 {
+					m.priceCol = i
 				}
 			}
 		}
 
 		// 6. Min Stock / Low Stock Alert
 		if isAlert {
-			if minStockCol == -1 {
-				minStockCol = i
+			if m.minStockCol == -1 {
+				m.minStockCol = i
 			}
 		}
 
 		// 7. Stock Quantity (strictly exclude alert / min / low)
 		if isStock && !isAlert {
-			if stockCol == -1 {
-				stockCol = i
+			if m.stockCol == -1 {
+				m.stockCol = i
 			}
 		}
 
@@ -741,8 +753,8 @@ func parseRecordsToImportItems(records [][]string) []dto.BulkImportProductItem {
 		if !isAttr {
 			if strings.Contains(cleanH, "category") || cleanH == "cat" ||
 				strings.Contains(cleanH, "group") || strings.Contains(cleanH, "department") {
-				if catCol == -1 {
-					catCol = i
+				if m.catCol == -1 {
+					m.catCol = i
 				}
 			}
 		}
@@ -751,8 +763,8 @@ func parseRecordsToImportItems(records [][]string) []dto.BulkImportProductItem {
 		if !isAttr {
 			if strings.Contains(cleanH, "unit") || strings.Contains(cleanH, "uom") ||
 				cleanH == "pack" || cleanH == "packaging" {
-				if unitCol == -1 {
-					unitCol = i
+				if m.unitCol == -1 {
+					m.unitCol = i
 				}
 			}
 		}
@@ -760,8 +772,8 @@ func parseRecordsToImportItems(records [][]string) []dto.BulkImportProductItem {
 		// 10. Description
 		if strings.Contains(cleanH, "desc") || strings.Contains(cleanH, "detail") ||
 			strings.Contains(cleanH, "notes") || strings.Contains(cleanH, "about") {
-			if descCol == -1 {
-				descCol = i
+			if m.descCol == -1 {
+				m.descCol = i
 			}
 		}
 
@@ -769,8 +781,8 @@ func parseRecordsToImportItems(records [][]string) []dto.BulkImportProductItem {
 		if !isAttr {
 			if strings.Contains(cleanH, "brand") || strings.Contains(cleanH, "company") ||
 				strings.Contains(cleanH, "manufacturer") || strings.Contains(cleanH, "mfg") {
-				if brandCol == -1 {
-					brandCol = i
+				if m.brandCol == -1 {
+					m.brandCol = i
 				}
 			}
 		}
@@ -778,176 +790,208 @@ func parseRecordsToImportItems(records [][]string) []dto.BulkImportProductItem {
 		// 12. Attribute pair detection (e.g. Attribute 1 Name, Attribute 1 Value)
 		if isAttr && strings.Contains(cleanH, "name") {
 			if i+1 < len(header) && strings.Contains(strings.ToLower(header[i+1]), "val") {
-				attrPairs = append(attrPairs, attrPair{nameCol: i, valCol: i + 1})
+				m.attrPairs = append(m.attrPairs, attrPair{nameCol: i, valCol: i + 1})
 			}
 		}
 	}
 
-	if nameCol == -1 {
-		nameCol = 0
+	if m.nameCol == -1 {
+		m.nameCol = 0
 	}
-	if priceCol == -1 {
-		priceCol = 1
+	if m.priceCol == -1 {
+		m.priceCol = 1
 	}
 
-	var items []dto.BulkImportProductItem
+	return m
+}
 
-	for _, row := range records[1:] {
-		if len(row) == 0 {
-			continue
-		}
+// parseRow extracts a single product item from an imported row using the mapped column positions.
+func (m *importColumnMap) parseRow(row []string) *dto.BulkImportProductItem {
+	if len(row) == 0 {
+		return nil
+	}
 
-		name := ""
-		if nameCol < len(row) {
-			name = strings.TrimSpace(row[nameCol])
-		}
-		if name == "" {
-			continue
-		}
+	name := ""
+	if m.nameCol < len(row) {
+		name = strings.TrimSpace(row[m.nameCol])
+	}
+	if name == "" {
+		return nil
+	}
 
-		item := dto.BulkImportProductItem{
-			Name: name,
-		}
+	item := dto.BulkImportProductItem{
+		Name: name,
+	}
 
-		if skuCol != -1 && skuCol < len(row) {
-			item.SKU = cleanImportSKU(row[skuCol])
-		}
+	if m.skuCol != -1 && m.skuCol < len(row) {
+		item.SKU = cleanImportSKU(row[m.skuCol])
+	}
 
-		if priceCol < len(row) {
-			pVal, _ := strconv.ParseFloat(cleanImportNumber(row[priceCol]), 64)
-			if pVal <= 0 {
-				pVal = 10.0 // Default price
-			}
-			item.Price = pVal
-		} else {
-			item.Price = 10.0
+	if m.priceCol < len(row) {
+		pVal, _ := strconv.ParseFloat(cleanImportNumber(row[m.priceCol]), 64)
+		if pVal <= 0 {
+			pVal = 10.0 // Default price
 		}
+		item.Price = pVal
+	} else {
+		item.Price = 10.0
+	}
 
-		if costCol != -1 && costCol < len(row) {
-			cVal, _ := strconv.ParseFloat(cleanImportNumber(row[costCol]), 64)
-			item.CostPrice = cVal
-		}
+	if m.costCol != -1 && m.costCol < len(row) {
+		cVal, _ := strconv.ParseFloat(cleanImportNumber(row[m.costCol]), 64)
+		item.CostPrice = cVal
+	}
 
-		if compareCol != -1 && compareCol < len(row) {
-			cmpVal, _ := strconv.ParseFloat(cleanImportNumber(row[compareCol]), 64)
-			item.ComparePrice = cmpVal
-		}
+	if m.compareCol != -1 && m.compareCol < len(row) {
+		cmpVal, _ := strconv.ParseFloat(cleanImportNumber(row[m.compareCol]), 64)
+		item.ComparePrice = cmpVal
+	}
 
-		if stockCol != -1 && stockCol < len(row) {
-			sVal, _ := strconv.Atoi(cleanImportNumber(row[stockCol]))
-			item.StockQuantity = sVal
-		} else {
-			item.StockQuantity = 10
-		}
+	if m.stockCol != -1 && m.stockCol < len(row) {
+		sVal, _ := strconv.Atoi(cleanImportNumber(row[m.stockCol]))
+		item.StockQuantity = sVal
+	} else {
+		item.StockQuantity = 10
+	}
 
-		if minStockCol != -1 && minStockCol < len(row) {
-			mVal, _ := strconv.Atoi(cleanImportNumber(row[minStockCol]))
-			item.MinStock = mVal
-		} else {
-			item.MinStock = 5
-		}
+	if m.minStockCol != -1 && m.minStockCol < len(row) {
+		mVal, _ := strconv.Atoi(cleanImportNumber(row[m.minStockCol]))
+		item.MinStock = mVal
+	} else {
+		item.MinStock = 5
+	}
 
-		if catCol != -1 && catCol < len(row) {
-			item.CategoryName = strings.TrimSpace(row[catCol])
-		}
+	if m.catCol != -1 && m.catCol < len(row) {
+		item.CategoryName = strings.TrimSpace(row[m.catCol])
+	}
 
-		if unitCol != -1 && unitCol < len(row) {
-			unitVal := strings.TrimSpace(row[unitCol])
-			if unitVal != "" {
-				item.Unit = unitVal
-			} else {
-				item.Unit = "Piece"
-			}
+	if m.unitCol != -1 && m.unitCol < len(row) {
+		unitVal := strings.TrimSpace(row[m.unitCol])
+		if unitVal != "" {
+			item.Unit = unitVal
 		} else {
 			item.Unit = "Piece"
 		}
+	} else {
+		item.Unit = "Piece"
+	}
 
-		baseDesc := ""
-		if descCol != -1 && descCol < len(row) {
-			baseDesc = strings.TrimSpace(row[descCol])
-		}
+	baseDesc := ""
+	if m.descCol != -1 && m.descCol < len(row) {
+		baseDesc = strings.TrimSpace(row[m.descCol])
+	}
 
-		brandVal := ""
-		if brandCol != -1 && brandCol < len(row) {
-			brandVal = strings.TrimSpace(row[brandCol])
-		}
+	brandVal := ""
+	if m.brandCol != -1 && m.brandCol < len(row) {
+		brandVal = strings.TrimSpace(row[m.brandCol])
+	}
 
-		var extraParts []string
-		if brandVal != "" && !strings.Contains(strings.ToLower(baseDesc), strings.ToLower(brandVal)) {
-			extraParts = append(extraParts, fmt.Sprintf("Brand: %s", brandVal))
-		}
+	var extraParts []string
+	if brandVal != "" && !strings.Contains(strings.ToLower(baseDesc), strings.ToLower(brandVal)) {
+		extraParts = append(extraParts, fmt.Sprintf("Brand: %s", brandVal))
+	}
 
-		for _, ap := range attrPairs {
-			if ap.nameCol < len(row) && ap.valCol < len(row) {
-				an := strings.TrimSpace(row[ap.nameCol])
-				av := strings.TrimSpace(row[ap.valCol])
-				if an != "" && av != "" {
-					extraParts = append(extraParts, fmt.Sprintf("%s: %s", an, av))
-				}
+	for _, ap := range m.attrPairs {
+		if ap.nameCol < len(row) && ap.valCol < len(row) {
+			an := strings.TrimSpace(row[ap.nameCol])
+			av := strings.TrimSpace(row[ap.valCol])
+			if an != "" && av != "" {
+				extraParts = append(extraParts, fmt.Sprintf("%s: %s", an, av))
 			}
 		}
+	}
 
-		if len(extraParts) > 0 {
-			extras := strings.Join(extraParts, " | ")
-			if baseDesc != "" {
-				item.Description = fmt.Sprintf("%s | %s", baseDesc, extras)
-			} else {
-				item.Description = extras
-			}
+	if len(extraParts) > 0 {
+		extras := strings.Join(extraParts, " | ")
+		if baseDesc != "" {
+			item.Description = fmt.Sprintf("%s | %s", baseDesc, extras)
 		} else {
-			item.Description = baseDesc
+			item.Description = extras
 		}
+	} else {
+		item.Description = baseDesc
+	}
 
-		items = append(items, item)
+	return &item
+}
+
+// parseRecordsToImportItems extracts product items from a 2D grid of CSV/Excel cells (kept for backward compatibility).
+func parseRecordsToImportItems(records [][]string) []dto.BulkImportProductItem {
+	if len(records) <= 1 {
+		return nil
+	}
+
+	colMap := resolveImportColumnMap(records[0])
+	var items []dto.BulkImportProductItem
+
+	for _, row := range records[1:] {
+		if item := colMap.parseRow(row); item != nil {
+			items = append(items, *item)
+		}
 	}
 
 	return items
 }
 
-// BulkImportProductsFromCSV parses CSV bytes and bulk imports products into shop catalog in batch.
+// BulkImportProductsFromCSV parses CSV stream line-by-line and bulk imports products into shop catalog.
 func (s *ProductService) BulkImportProductsFromCSV(ctx context.Context, userID string, csvReader io.Reader, updateExisting bool) (*dto.BulkImportResponse, error) {
 	shop, err := s.shopRepo.FindByUserID(ctx, userID)
 	if err != nil {
 		return nil, ErrShopNotFound
 	}
 
-	rawBytes, err := io.ReadAll(csvReader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read CSV data: %w", err)
-	}
+	bufReader := bufio.NewReader(csvReader)
+
+	// Peek first 512 bytes for UTF-8 BOM and delimiter detection without loading whole file in RAM
+	peekBytes, _ := bufReader.Peek(512)
 
 	// Strip UTF-8 BOM if present
-	if len(rawBytes) >= 3 && rawBytes[0] == 0xEF && rawBytes[1] == 0xBB && rawBytes[2] == 0xBF {
-		rawBytes = rawBytes[3:]
+	if bytes.HasPrefix(peekBytes, []byte{0xEF, 0xBB, 0xBF}) {
+		_, _ = bufReader.Discard(3)
+		peekBytes = peekBytes[3:]
 	}
 
 	// Delimiter detection: check for semicolon or tab if comma isn't prominent
-	commaCount := bytes.Count(rawBytes, []byte(","))
-	semiCount := bytes.Count(rawBytes, []byte(";"))
-	tabCount := bytes.Count(rawBytes, []byte("	"))
+	commaCount := bytes.Count(peekBytes, []byte(","))
+	semiCount := bytes.Count(peekBytes, []byte(";"))
+	tabCount := bytes.Count(peekBytes, []byte("\t"))
 
 	var delimiter rune = ','
 	if semiCount > commaCount && semiCount > tabCount {
 		delimiter = ';'
 	} else if tabCount > commaCount && tabCount > semiCount {
-		delimiter = '	'
+		delimiter = '\t'
 	}
 
-	reader := csv.NewReader(bytes.NewReader(rawBytes))
+	reader := csv.NewReader(bufReader)
 	reader.Comma = delimiter
 	reader.TrimLeadingSpace = true
 	reader.FieldsPerRecord = -1 // flexible column count per row
 
-	records, err := reader.ReadAll()
+	// Read header row
+	header, err := reader.Read()
 	if err != nil {
-		return nil, fmt.Errorf("invalid CSV file format: %w", err)
-	}
-
-	if len(records) <= 1 {
 		return nil, errors.New("CSV file is empty or missing data rows")
 	}
 
-	items := parseRecordsToImportItems(records)
+	colMap := resolveImportColumnMap(header)
+
+	// Stream line-by-line without buffering entire dataset in memory
+	var items []dto.BulkImportProductItem
+	for {
+		row, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			// Skip malformed individual row and continue reading
+			continue
+		}
+		if item := colMap.parseRow(row); item != nil {
+			items = append(items, *item)
+		}
+	}
+
 	if len(items) == 0 {
 		return nil, errors.New("no valid product rows found in CSV")
 	}
@@ -1109,7 +1153,7 @@ func (s *ProductService) ListMerchantProducts(ctx context.Context, userID string
 }
 
 
-// BulkImportProductsFromExcel parses Excel (.xlsx) data and bulk imports products into shop catalog.
+// BulkImportProductsFromExcel parses Excel (.xlsx) data with streaming row iterator.
 func (s *ProductService) BulkImportProductsFromExcel(ctx context.Context, userID string, excelReader io.Reader, updateExisting bool) (*dto.BulkImportResponse, error) {
 	shop, err := s.shopRepo.FindByUserID(ctx, userID)
 	if err != nil {
@@ -1127,17 +1171,35 @@ func (s *ProductService) BulkImportProductsFromExcel(ctx context.Context, userID
 		return nil, errors.New("Excel workbook contains no sheets")
 	}
 
-	// Read rows from the first sheet
-	records, err := f.GetRows(sheets[0])
+	// Read rows streaming from the first sheet
+	rows, err := f.Rows(sheets[0])
 	if err != nil {
 		return nil, fmt.Errorf("failed to read Excel rows: %w", err)
 	}
+	defer rows.Close()
 
-	if len(records) <= 1 {
+	if !rows.Next() {
 		return nil, errors.New("Excel sheet is empty or contains no product rows")
 	}
 
-	items := parseRecordsToImportItems(records)
+	header, err := rows.Columns()
+	if err != nil || len(header) == 0 {
+		return nil, errors.New("Excel sheet missing header row")
+	}
+
+	colMap := resolveImportColumnMap(header)
+	var items []dto.BulkImportProductItem
+
+	for rows.Next() {
+		row, err := rows.Columns()
+		if err != nil || len(row) == 0 {
+			continue
+		}
+		if item := colMap.parseRow(row); item != nil {
+			items = append(items, *item)
+		}
+	}
+
 	if len(items) == 0 {
 		return nil, errors.New("no valid product rows found in Excel sheet")
 	}
@@ -1145,24 +1207,26 @@ func (s *ProductService) BulkImportProductsFromExcel(ctx context.Context, userID
 	return s.productRepo.BulkImportProducts(ctx, shop.ID, items, updateExisting)
 }
 
-// BulkImportProductsFromFile automatically detects CSV vs Excel format and imports products.
+// BulkImportProductsFromFile automatically detects CSV vs Excel format and imports products via streaming readers.
 func (s *ProductService) BulkImportProductsFromFile(ctx context.Context, userID string, filename string, fileReader io.Reader, updateExisting bool) (*dto.BulkImportResponse, error) {
-	rawBytes, err := io.ReadAll(fileReader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read uploaded file: %w", err)
-	}
+	bufReader := bufio.NewReader(fileReader)
+
+	// Peek first 512 bytes for magic bytes (e.g. PK\x03\x04 zip header) without consuming
+	peekBytes, _ := bufReader.Peek(512)
 
 	lowerName := strings.ToLower(filename)
 	isExcel := strings.HasSuffix(lowerName, ".xlsx") ||
 		strings.HasSuffix(lowerName, ".xlsm") ||
 		strings.HasSuffix(lowerName, ".xls") ||
-		bytes.HasPrefix(rawBytes, []byte("PK"))
+		bytes.HasPrefix(peekBytes, []byte("PK\x03\x04")) ||
+		bytes.HasPrefix(peekBytes, []byte("PK\x05\x06")) ||
+		bytes.HasPrefix(peekBytes, []byte("PK\x07\x08"))
 
 	if isExcel {
-		return s.BulkImportProductsFromExcel(ctx, userID, bytes.NewReader(rawBytes), updateExisting)
+		return s.BulkImportProductsFromExcel(ctx, userID, bufReader, updateExisting)
 	}
 
-	return s.BulkImportProductsFromCSV(ctx, userID, bytes.NewReader(rawBytes), updateExisting)
+	return s.BulkImportProductsFromCSV(ctx, userID, bufReader, updateExisting)
 }
 
 // BulkImportProductsFromJSON bulk imports products provided via JSON array.
