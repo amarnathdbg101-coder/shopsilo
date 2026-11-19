@@ -2227,27 +2227,30 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 		pRows.Close()
 	}
 
-	tx, err := r.db.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to begin bulk import transaction: %w", err)
+	// 3. Pre-validate and partition items into toInsert, toUpdate, and skipped
+	type sanitizedItem struct {
+		rowNumber    int
+		name         string
+		slug         string
+		description  string
+		sku          string
+		price        float64
+		costPrice    float64
+		comparePrice float64
+		categoryID   string
+		stock        int
+		minStock     int
+		weight       float64
+		existingID   string
 	}
-	defer tx.Rollback(ctx)
 
-	var importedCount int
-	var updatedCount int
+	var toInsert []sanitizedItem
+	var toUpdate []sanitizedItem
 	var skippedCount int
 	var errMsgs []string
 
 	rGenerator := rand.New(rand.NewSource(time.Now().UnixNano()))
-
-	insertQuery := `
-		INSERT INTO products (
-			shop_id, name, slug, description, sku, price, cost_price, compare_price,
-			category_id, images, weight, is_active, is_featured, tags, attributes, created_at, updated_at
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '[]'::jsonb, 0, true, false, '{}'::text[], '{}'::jsonb, NOW(), NOW())
-		RETURNING id
-	`
+	seenBatchSKUs := make(map[string]bool)
 
 	for idx, item := range items {
 		name := strings.TrimSpace(item.Name)
@@ -2268,6 +2271,19 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 			sku = strings.TrimSpace(strings.ToUpper(item.Barcode))
 		}
 
+		cleanSKULower := strings.ToLower(sku)
+		cleanNameLower := strings.ToLower(name)
+
+		// Intra-batch duplicate check
+		if cleanSKULower != "" && seenBatchSKUs[cleanSKULower] {
+			skippedCount++
+			errMsgs = append(errMsgs, fmt.Sprintf("Row %d ('%s'): Duplicate SKU '%s' found within the same import file (skipped)", idx+1, name, sku))
+			continue
+		}
+		if cleanSKULower != "" {
+			seenBatchSKUs[cleanSKULower] = true
+		}
+
 		// Resolve category
 		catID := defaultCategoryID
 		if item.CategoryID != "" {
@@ -2276,10 +2292,7 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 			catID = resolveCategory(item.CategoryName)
 		}
 
-		cleanSKULower := strings.ToLower(sku)
-		cleanNameLower := strings.ToLower(name)
-
-		// Check if product exists
+		// Check if product exists in database
 		var existingProductID string
 		if cleanSKULower != "" {
 			if pID, found := existingSKUs[cleanSKULower]; found {
@@ -2292,7 +2305,6 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 			}
 		}
 
-		// Stock & Min Stock normalization
 		stock := item.StockQuantity
 		if stock < 0 {
 			stock = 0
@@ -2302,10 +2314,118 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 			minStock = 5
 		}
 
-		// CASE 1: Product already exists
+		weight := 0.0
+
 		if existingProductID != "" {
 			if updateExisting {
-				// Update existing product price, cost, description, and inventory
+				toUpdate = append(toUpdate, sanitizedItem{
+					rowNumber:    idx + 1,
+					name:         name,
+					description:  strings.TrimSpace(item.Description),
+					sku:          sku,
+					price:        item.Price,
+					costPrice:    item.CostPrice,
+					comparePrice: item.ComparePrice,
+					categoryID:   catID,
+					stock:        stock,
+					minStock:     minStock,
+					weight:       weight,
+					existingID:   existingProductID,
+				})
+			} else {
+				skippedCount++
+				errMsgs = append(errMsgs, fmt.Sprintf("Row %d ('%s'): Product with SKU '%s' already exists (skipped)", idx+1, name, sku))
+			}
+			continue
+		}
+
+		// Prepare new product slug & SKU
+		if sku == "" {
+			sku = fmt.Sprintf("SKU-%d-%04d", time.Now().Unix()%100000, rGenerator.Intn(10000))
+			cleanSKULower = strings.ToLower(sku)
+			seenBatchSKUs[cleanSKULower] = true
+		}
+
+		slug := reuse.Slugify(name)
+		if slug == "" {
+			slug = fmt.Sprintf("prod-%d", rGenerator.Intn(900000)+10000)
+		}
+		slug = fmt.Sprintf("%s-%d", slug, rGenerator.Intn(900000)+10000)
+
+		toInsert = append(toInsert, sanitizedItem{
+			rowNumber:    idx + 1,
+			name:         name,
+			slug:         slug,
+			description:  strings.TrimSpace(item.Description),
+			sku:          sku,
+			price:        item.Price,
+			costPrice:    item.CostPrice,
+			comparePrice: item.ComparePrice,
+			categoryID:   catID,
+			stock:        stock,
+			minStock:     minStock,
+			weight:       weight,
+		})
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin bulk import transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	const batchChunkSize = 50
+	var importedCount int
+	var updatedCount int
+
+	// 4. Batch Updates (High-Speed Multi-Row Chunked Statement)
+	for i := 0; i < len(toUpdate); i += batchChunkSize {
+		end := i + batchChunkSize
+		if end > len(toUpdate) {
+			end = len(toUpdate)
+		}
+		chunk := toUpdate[i:end]
+
+		var updateValues []string
+		var updateArgs []interface{}
+		argIdx := 1
+
+		var invValues []string
+		var invArgs []interface{}
+		invArgIdx := 1
+
+		for _, it := range chunk {
+			updateValues = append(updateValues, fmt.Sprintf(
+				"($%d::uuid, $%d::numeric, $%d::numeric, $%d::numeric, $%d::uuid, $%d::text)",
+				argIdx, argIdx+1, argIdx+2, argIdx+3, argIdx+4, argIdx+5,
+			))
+			updateArgs = append(updateArgs, it.existingID, it.price, it.costPrice, it.comparePrice, it.categoryID, it.description)
+			argIdx += 6
+
+			invValues = append(invValues, fmt.Sprintf("($%d::uuid, $%d::int, 0, $%d::int, NOW())", invArgIdx, invArgIdx+1, invArgIdx+2))
+			invArgs = append(invArgs, it.existingID, it.stock, it.minStock)
+			invArgIdx += 3
+		}
+
+		updateArgs = append(updateArgs, shopID)
+		shopIDParam := fmt.Sprintf("$%d", argIdx)
+
+		bulkUpdateSQL := fmt.Sprintf(`
+			UPDATE products AS p
+			SET price = v.price,
+			    cost_price = CASE WHEN v.cost_price > 0 THEN v.cost_price ELSE p.cost_price END,
+			    compare_price = CASE WHEN v.compare_price > 0 THEN v.compare_price ELSE p.compare_price END,
+			    category_id = COALESCE(v.category_id, p.category_id),
+			    description = CASE WHEN v.description <> '' THEN v.description ELSE p.description END,
+			    updated_at = NOW()
+			FROM (VALUES %s) AS v(id, price, cost_price, compare_price, category_id, description)
+			WHERE p.id = v.id AND p.shop_id = %s
+		`, strings.Join(updateValues, ", "), shopIDParam)
+
+		_, updateErr := tx.Exec(ctx, bulkUpdateSQL, updateArgs...)
+		if updateErr != nil {
+			// Fallback to row-by-row for this chunk
+			for _, it := range chunk {
 				updateQuery := `
 					UPDATE products
 					SET price = $1,
@@ -2316,101 +2436,143 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 					    updated_at = NOW()
 					WHERE id = $6 AND shop_id = $7
 				`
-				_, updateErr := tx.Exec(ctx, updateQuery, item.Price, item.CostPrice, item.ComparePrice, catID, strings.TrimSpace(item.Description), existingProductID, shopID)
-				if updateErr != nil {
+				_, sErr := tx.Exec(ctx, updateQuery, it.price, it.costPrice, it.comparePrice, it.categoryID, it.description, it.existingID, shopID)
+				if sErr != nil {
 					skippedCount++
-					errMsgs = append(errMsgs, fmt.Sprintf("Row %d ('%s'): Update failed: %v", idx+1, name, updateErr))
+					errMsgs = append(errMsgs, fmt.Sprintf("Row %d ('%s'): Update failed: %v", it.rowNumber, it.name, sErr))
 					continue
 				}
-
-				// Update inventory stock
 				invQuery := `
 					INSERT INTO inventory (product_id, quantity, reserved_quantity, low_stock_threshold, updated_at)
 					VALUES ($1, $2, 0, $3, NOW())
 					ON CONFLICT (product_id) DO UPDATE
 					SET quantity = EXCLUDED.quantity, low_stock_threshold = EXCLUDED.low_stock_threshold, updated_at = NOW()
 				`
-				_, _ = tx.Exec(ctx, invQuery, existingProductID, stock, minStock)
-
+				_, _ = tx.Exec(ctx, invQuery, it.existingID, it.stock, it.minStock)
 				updatedCount++
-				continue
-			} else {
-				// Skip duplicate
-				skippedCount++
-				errMsgs = append(errMsgs, fmt.Sprintf("Row %d ('%s'): Product with SKU '%s' already exists (skipped)", idx+1, name, sku))
-				continue
+			}
+			continue
+		}
+
+		// Update inventory in bulk for this chunk
+		if len(invValues) > 0 {
+			bulkInvSQL := fmt.Sprintf(`
+				INSERT INTO inventory (product_id, quantity, reserved_quantity, low_stock_threshold, updated_at)
+				VALUES %s
+				ON CONFLICT (product_id) DO UPDATE
+				SET quantity = EXCLUDED.quantity, low_stock_threshold = EXCLUDED.low_stock_threshold, updated_at = NOW()
+			`, strings.Join(invValues, ", "))
+			_, _ = tx.Exec(ctx, bulkInvSQL, invArgs...)
+		}
+		updatedCount += len(chunk)
+	}
+
+	// 5. Batch Inserts (High-Speed Multi-Row INSERT ... VALUES (...), (...) RETURNING id, sku)
+	for i := 0; i < len(toInsert); i += batchChunkSize {
+		end := i + batchChunkSize
+		if end > len(toInsert) {
+			end = len(toInsert)
+		}
+		chunk := toInsert[i:end]
+
+		var valueStrings []string
+		var valueArgs []interface{}
+		argIdx := 1
+
+		for _, it := range chunk {
+			valueStrings = append(valueStrings, fmt.Sprintf(
+				"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, '[]'::jsonb, $%d, true, false, '{}'::text[], '{}'::jsonb, NOW(), NOW())",
+				argIdx, argIdx+1, argIdx+2, argIdx+3, argIdx+4, argIdx+5, argIdx+6, argIdx+7, argIdx+8, argIdx+9,
+			))
+			valueArgs = append(valueArgs,
+				shopID,
+				it.name,
+				it.slug,
+				it.description,
+				it.sku,
+				it.price,
+				it.costPrice,
+				it.comparePrice,
+				it.categoryID,
+				it.weight,
+			)
+			argIdx += 10
+		}
+
+		insertSQL := fmt.Sprintf(`
+			INSERT INTO products (
+				shop_id, name, slug, description, sku, price, cost_price, compare_price,
+				category_id, images, weight, is_active, is_featured, tags, attributes, created_at, updated_at
+			) VALUES %s
+			RETURNING id, sku
+		`, strings.Join(valueStrings, ", "))
+
+		pRows, pErr := tx.Query(ctx, insertSQL, valueArgs...)
+		if pErr != nil {
+			// Fallback: If multi-row chunk encountered unexpected constraint conflict, fallback to row-by-row
+			for _, it := range chunk {
+				var productID string
+				singleInsert := `
+					INSERT INTO products (
+						shop_id, name, slug, description, sku, price, cost_price, compare_price,
+						category_id, images, weight, is_active, is_featured, tags, attributes, created_at, updated_at
+					) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '[]'::jsonb, $10, true, false, '{}'::text[], '{}'::jsonb, NOW(), NOW())
+					RETURNING id
+				`
+				sErr := tx.QueryRow(ctx, singleInsert, shopID, it.name, it.slug, it.description, it.sku, it.price, it.costPrice, it.comparePrice, it.categoryID, it.weight).Scan(&productID)
+				if sErr != nil {
+					skippedCount++
+					errMsgs = append(errMsgs, fmt.Sprintf("Row %d ('%s'): Insert failed: %v", it.rowNumber, it.name, sErr))
+					continue
+				}
+				invQuery := `
+					INSERT INTO inventory (product_id, quantity, reserved_quantity, low_stock_threshold, updated_at)
+					VALUES ($1, $2, 0, $3, NOW())
+					ON CONFLICT (product_id) DO UPDATE
+					SET quantity = EXCLUDED.quantity, low_stock_threshold = EXCLUDED.low_stock_threshold, updated_at = NOW()
+				`
+				_, _ = tx.Exec(ctx, invQuery, productID, it.stock, it.minStock)
+				importedCount++
+			}
+			continue
+		}
+
+		// Multi-row insert succeeded! Map returned IDs to inventory
+		returnedIDs := make(map[string]string) // lower(sku) -> productID
+		for pRows.Next() {
+			var rID, rSKU string
+			if err := pRows.Scan(&rID, &rSKU); err == nil {
+				returnedIDs[strings.ToLower(strings.TrimSpace(rSKU))] = rID
 			}
 		}
+		pRows.Close()
 
-		// CASE 2: Insert new product
-		if sku == "" {
-			sku = fmt.Sprintf("SKU-%d-%04d", time.Now().Unix()%100000, rGenerator.Intn(10000))
-			cleanSKULower = strings.ToLower(sku)
-		}
+		// Prepare Multi-Row Inventory Insert for this chunk
+		var invValueStrings []string
+		var invValueArgs []interface{}
+		invArgIdx := 1
 
-		slug := reuse.Slugify(name)
-		if slug == "" {
-			slug = fmt.Sprintf("prod-%d", rGenerator.Intn(900000)+10000)
-		}
-		slug = fmt.Sprintf("%s-%d", slug, rGenerator.Intn(900000)+10000)
-
-		var productID string
-		err := tx.QueryRow(
-			ctx,
-			insertQuery,
-			shopID,
-			name,
-			slug,
-			strings.TrimSpace(item.Description),
-			sku,
-			item.Price,
-			item.CostPrice,
-			item.ComparePrice,
-			catID,
-		).Scan(&productID)
-
-		if err != nil {
-			var pgErr *pgconn.PgError
-			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-				altSKU := fmt.Sprintf("%s-%d", sku, rGenerator.Intn(900)+100)
-				altSlug := fmt.Sprintf("%s-alt-%d", slug, rGenerator.Intn(900)+100)
-				err = tx.QueryRow(
-					ctx,
-					insertQuery,
-					shopID,
-					name,
-					altSlug,
-					strings.TrimSpace(item.Description),
-					altSKU,
-					item.Price,
-					item.CostPrice,
-					item.ComparePrice,
-					catID,
-				).Scan(&productID)
-				sku = altSKU
-				cleanSKULower = strings.ToLower(altSKU)
-			}
-			if err != nil {
-				skippedCount++
-				errMsgs = append(errMsgs, fmt.Sprintf("Row %d ('%s'): Insert failed: %v", idx+1, name, err))
+		for _, it := range chunk {
+			pID, exists := returnedIDs[strings.ToLower(strings.TrimSpace(it.sku))]
+			if !exists || pID == "" {
 				continue
 			}
+			invValueStrings = append(invValueStrings, fmt.Sprintf("($%d, $%d, 0, $%d, NOW())", invArgIdx, invArgIdx+1, invArgIdx+2))
+			invValueArgs = append(invValueArgs, pID, it.stock, it.minStock)
+			invArgIdx += 3
+			importedCount++
 		}
 
-		// Insert inventory for new product
-		invQuery := `
-			INSERT INTO inventory (product_id, quantity, reserved_quantity, low_stock_threshold, updated_at)
-			VALUES ($1, $2, 0, $3, NOW())
-			ON CONFLICT (product_id) DO UPDATE
-			SET quantity = EXCLUDED.quantity, low_stock_threshold = EXCLUDED.low_stock_threshold, updated_at = NOW()
-		`
-		_, _ = tx.Exec(ctx, invQuery, productID, stock, minStock)
+		if len(invValueStrings) > 0 {
+			invBulkSQL := fmt.Sprintf(`
+				INSERT INTO inventory (product_id, quantity, reserved_quantity, low_stock_threshold, updated_at)
+				VALUES %s
+				ON CONFLICT (product_id) DO UPDATE
+				SET quantity = EXCLUDED.quantity, low_stock_threshold = EXCLUDED.low_stock_threshold, updated_at = NOW()
+			`, strings.Join(invValueStrings, ", "))
 
-		// Cache in lookup maps for subsequent rows in the same batch
-		existingSKUs[cleanSKULower] = productID
-		existingNames[cleanNameLower] = productID
-
-		importedCount++
+			_, _ = tx.Exec(ctx, invBulkSQL, invValueArgs...)
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
