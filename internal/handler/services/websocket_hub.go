@@ -15,10 +15,11 @@ type WSEvent struct {
 	Timestamp string      `json:"timestamp"`
 }
 
-// SafeConn wraps a gorilla websocket.Conn with a dedicated write mutex to eliminate concurrent write panics
+// SafeConn wraps a gorilla websocket.Conn with a dedicated write mutex to eliminate concurrent write panics.
 type SafeConn struct {
 	Conn    *websocket.Conn
 	writeMu sync.Mutex
+	closed  bool
 }
 
 func NewSafeConn(conn *websocket.Conn) *SafeConn {
@@ -28,20 +29,55 @@ func NewSafeConn(conn *websocket.Conn) *SafeConn {
 func (s *SafeConn) WriteMessage(messageType int, data []byte) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	_ = s.Conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	if s.closed {
+		return websocket.ErrCloseSent
+	}
+	_ = s.Conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
 	return s.Conn.WriteMessage(messageType, data)
 }
 
 func (s *SafeConn) WriteControl(messageType int, data []byte, deadline time.Time) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if s.closed {
+		return websocket.ErrCloseSent
+	}
 	return s.Conn.WriteControl(messageType, data, deadline)
 }
 
 func (s *SafeConn) Close() error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return s.Conn.Close()
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	if s.Conn != nil {
+		return s.Conn.Close()
+	}
+	return nil
+}
+
+func (s *SafeConn) IsClosed() bool {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.closed
+}
+
+const (
+	// DefaultBroadcastWorkerCount defines the number of concurrent goroutines reading the broadcast queue.
+	// 16 workers can effortlessly handle thousands of events per second with fixed memory footprint.
+	DefaultBroadcastWorkerCount = 16
+
+	// BroadcastQueueCapacity is the buffer limit of messages pending broadcast before backpressure drops slow events.
+	BroadcastQueueCapacity = 2048
+)
+
+// broadcastJob represents a single asynchronous message delivery to a connected client.
+type broadcastJob struct {
+	conn       *SafeConn
+	eventBytes []byte
+	onFailure  func()
 }
 
 type WebSocketHub struct {
@@ -50,6 +86,11 @@ type WebSocketHub struct {
 	storefrontConns     map[string][]*SafeConn // map[shopSlug][]*SafeConn (customers viewing storefront)
 	customerConnections map[string][]*SafeConn // map[customerID][]*SafeConn (customers tracking personal orders)
 	logger              *zap.Logger
+
+	// Bounded worker pool: prevents unbounded goroutine explosion under high-traffic broadcast events
+	jobQueue    chan broadcastJob
+	workerCount int
+	startOnce   sync.Once
 }
 
 var (
@@ -57,16 +98,70 @@ var (
 	wsHubOnce   sync.Once
 )
 
+// NewWebSocketHub initializes a new WebSocketHub with custom worker pool parameters (ideal for testing).
+func NewWebSocketHub(logger *zap.Logger, workerCount int, queueCap int) *WebSocketHub {
+	if workerCount <= 0 {
+		workerCount = DefaultBroadcastWorkerCount
+	}
+	if queueCap <= 0 {
+		queueCap = BroadcastQueueCapacity
+	}
+
+	hub := &WebSocketHub{
+		shopConnections:     make(map[string][]*SafeConn),
+		storefrontConns:     make(map[string][]*SafeConn),
+		customerConnections: make(map[string][]*SafeConn),
+		logger:              logger,
+		jobQueue:            make(chan broadcastJob, queueCap),
+		workerCount:         workerCount,
+	}
+	hub.startWorkers()
+	return hub
+}
+
 func GetWebSocketHub(logger *zap.Logger) *WebSocketHub {
 	wsHubOnce.Do(func() {
-		globalWSHub = &WebSocketHub{
-			shopConnections:     make(map[string][]*SafeConn),
-			storefrontConns:     make(map[string][]*SafeConn),
-			customerConnections: make(map[string][]*SafeConn),
-			logger:              logger,
+		globalWSHub = NewWebSocketHub(logger, DefaultBroadcastWorkerCount, BroadcastQueueCapacity)
+	})
+	if logger != nil && globalWSHub.logger == nil {
+		globalWSHub.logger = logger
+	}
+	return globalWSHub
+}
+
+// startWorkers launches the bounded worker goroutines pool to process broadcast tasks.
+func (h *WebSocketHub) startWorkers() {
+	h.startOnce.Do(func() {
+		for i := 0; i < h.workerCount; i++ {
+			go func(workerID int) {
+				for job := range h.jobQueue {
+					if job.conn == nil || job.conn.IsClosed() {
+						continue
+					}
+					if err := job.conn.WriteMessage(websocket.TextMessage, job.eventBytes); err != nil {
+						if job.onFailure != nil {
+							job.onFailure()
+						}
+					}
+				}
+			}(i)
 		}
 	})
-	return globalWSHub
+}
+
+// enqueueBroadcast safely submits a job to the bounded channel with non-blocking backpressure drop.
+func (h *WebSocketHub) enqueueBroadcast(job broadcastJob) {
+	if job.conn == nil || job.conn.IsClosed() {
+		return
+	}
+	select {
+	case h.jobQueue <- job:
+	default:
+		// Queue full under extreme traffic surge: drop slow event to prevent memory accumulation and GC pauses
+		if h.logger != nil {
+			h.logger.Warn("websocket broadcast queue full, dropping event for slow client")
+		}
+	}
 }
 
 // Register connects a merchant shop counter device to shopID channel
@@ -174,11 +269,14 @@ func (h *WebSocketHub) BroadcastToShop(shopID string, eventType string, payload 
 	}
 
 	for _, safe := range activeConns {
-		go func(sc *SafeConn) {
-			if err := sc.WriteMessage(websocket.TextMessage, eventBytes); err != nil {
+		sc := safe
+		h.enqueueBroadcast(broadcastJob{
+			conn:       sc,
+			eventBytes: eventBytes,
+			onFailure: func() {
 				h.Unregister(shopID, sc)
-			}
-		}(safe)
+			},
+		})
 	}
 }
 
@@ -200,11 +298,14 @@ func (h *WebSocketHub) BroadcastToStorefront(shopSlug string, eventType string, 
 	}
 
 	for _, safe := range activeConns {
-		go func(sc *SafeConn) {
-			if err := sc.WriteMessage(websocket.TextMessage, eventBytes); err != nil {
+		sc := safe
+		h.enqueueBroadcast(broadcastJob{
+			conn:       sc,
+			eventBytes: eventBytes,
+			onFailure: func() {
 				h.UnregisterStorefront(shopSlug, sc)
-			}
-		}(safe)
+			},
+		})
 	}
 }
 
@@ -226,11 +327,14 @@ func (h *WebSocketHub) BroadcastToCustomer(customerID string, eventType string, 
 	}
 
 	for _, safe := range activeConns {
-		go func(sc *SafeConn) {
-			if err := sc.WriteMessage(websocket.TextMessage, eventBytes); err != nil {
+		sc := safe
+		h.enqueueBroadcast(broadcastJob{
+			conn:       sc,
+			eventBytes: eventBytes,
+			onFailure: func() {
 				h.UnregisterCustomer(customerID, sc)
-			}
-		}(safe)
+			},
+		})
 	}
 }
 
