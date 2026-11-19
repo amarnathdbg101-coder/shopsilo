@@ -93,6 +93,7 @@ func (s *InventoryService) DismissStockAlert(ctx context.Context, shopOwnerUserI
 }
 
 // GenerateReorderSheetPDF creates a printable wholesale re-order sheet in PDF combining low stock & customer demand.
+// Employs bounded concurrency limit and in-memory TTL caching for 0ms repeated downloads.
 func (s *InventoryService) GenerateReorderSheetPDF(ctx context.Context, shopOwnerUserID string) ([]byte, error) {
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
@@ -100,6 +101,11 @@ func (s *InventoryService) GenerateReorderSheetPDF(ctx context.Context, shopOwne
 			return nil, ErrShopNotFound
 		}
 		return nil, err
+	}
+
+	cacheKey := fmt.Sprintf("reorder_pdf:%s", shop.ID)
+	if cachedBytes, found := utils.GetCachedPDF(cacheKey); found {
+		return cachedBytes, nil
 	}
 
 	items, err := s.productRepo.GetLowStockProducts(ctx, shop.ID)
@@ -119,9 +125,15 @@ func (s *InventoryService) GenerateReorderSheetPDF(ctx context.Context, shopOwne
 		})
 	}
 
-	return utils.RenderPDFWithConcurrencyLimit(ctx, func() ([]byte, error) {
+	pdfBytes, err := utils.RenderPDFWithConcurrencyLimit(ctx, func() ([]byte, error) {
 		return utils.GenerateWholesaleReorderPDF(shop, items)
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	utils.SetCachedPDF(cacheKey, pdfBytes, 5*time.Minute)
+	return pdfBytes, nil
 }
 
 // GenerateCustomProcurementPDF generates Base64 PDF payload for custom Mandi Khareed items

@@ -3,6 +3,7 @@ package utils
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -29,6 +30,24 @@ func GetCachedPDF(key string) ([]byte, bool) {
 		return nil, false
 	}
 	return item.data, true
+}
+
+// InvalidateCachedPDF removes a specific cached PDF key from memory.
+func InvalidateCachedPDF(key string) {
+	pdfCacheMu.Lock()
+	defer pdfCacheMu.Unlock()
+	delete(pdfCache, key)
+}
+
+// InvalidateCachedPDFByPrefix removes any cached PDF whose key begins with a prefix (e.g. "khata_stmt:shopID:").
+func InvalidateCachedPDFByPrefix(prefix string) {
+	pdfCacheMu.Lock()
+	defer pdfCacheMu.Unlock()
+	for k := range pdfCache {
+		if strings.HasPrefix(k, prefix) {
+			delete(pdfCache, k)
+		}
+	}
 }
 
 // SetCachedPDF stores rendered PDF bytes with a given TTL to avoid re-rendering under traffic surges.

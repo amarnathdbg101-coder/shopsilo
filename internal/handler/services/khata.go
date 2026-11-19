@@ -70,6 +70,7 @@ func (s *KhataService) RecordCredit(ctx context.Context, shopOwnerUserID string,
 		return nil, err
 	}
 
+	utils.InvalidateCachedPDF(fmt.Sprintf("khata_stmt:%s:%s", shop.ID, mobile))
 	return tx, nil
 }
 
@@ -103,6 +104,7 @@ func (s *KhataService) RecordPayment(ctx context.Context, shopOwnerUserID, custo
 		return nil, err
 	}
 
+	utils.InvalidateCachedPDF(fmt.Sprintf("khata_stmt:%s:%s", shop.ID, mobile))
 	return tx, nil
 }
 
@@ -311,6 +313,11 @@ func (s *KhataService) GenerateStatementPDF(ctx context.Context, shopOwnerUserID
 	}
 
 	mobile := strings.TrimSpace(customerMobile)
+	cacheKey := fmt.Sprintf("khata_stmt:%s:%s", shop.ID, mobile)
+	if cachedBytes, found := utils.GetCachedPDF(cacheKey); found {
+		return cachedBytes, nil
+	}
+
 	customer, transactions, err := s.khataRepo.GetCustomerHistory(ctx, shop.ID, mobile)
 	if err != nil {
 		if errors.Is(err, repository.ErrKhataNotFound) {
@@ -319,9 +326,14 @@ func (s *KhataService) GenerateStatementPDF(ctx context.Context, shopOwnerUserID
 		return nil, err
 	}
 
-	return utils.RenderPDFWithConcurrencyLimit(ctx, func() ([]byte, error) {
+	pdfBytes, err := utils.RenderPDFWithConcurrencyLimit(ctx, func() ([]byte, error) {
 		return utils.GenerateKhataStatementPDF(customer, transactions, shop)
 	})
+	if err != nil {
+		return nil, err
+	}
+	utils.SetCachedPDF(cacheKey, pdfBytes, 5*time.Minute)
+	return pdfBytes, nil
 }
 
 // GetStatementShareLink generates a WhatsApp message with an itemized statement summary and PDF link.
@@ -479,7 +491,12 @@ func (s *KhataService) SubmitUPIPayment(ctx context.Context, customerUserID, kha
 		return nil, err
 	}
 
-	return s.khataRepo.SubmitUPIPayment(ctx, khataID, input.Amount, input.UPIRefNo, input.Notes)
+	tx, err := s.khataRepo.SubmitUPIPayment(ctx, khataID, input.Amount, input.UPIRefNo, input.Notes)
+	if err != nil {
+		return nil, err
+	}
+	utils.InvalidateCachedPDFByPrefix("khata_stmt:")
+	return tx, nil
 }
 
 // GenerateCustomerStatementPDF generates an official statement PDF for an authenticated customer.
@@ -502,6 +519,13 @@ func (s *KhataService) GenerateCustomerStatementPDF(ctx context.Context, custome
 		return nil, err
 	}
 
+	cacheKey := fmt.Sprintf("khata_stmt:%s:%s", shopItem.ShopID, phone)
+	if phone != "" {
+		if cachedBytes, found := utils.GetCachedPDF(cacheKey); found {
+			return cachedBytes, nil
+		}
+	}
+
 	shop, err := s.shopRepo.FindByID(ctx, shopItem.ShopID)
 	if err != nil {
 		return nil, err
@@ -516,9 +540,16 @@ func (s *KhataService) GenerateCustomerStatementPDF(ctx context.Context, custome
 		CreditLimit:    shopItem.CreditLimit,
 	}
 
-	return utils.RenderPDFWithConcurrencyLimit(ctx, func() ([]byte, error) {
+	pdfBytes, err := utils.RenderPDFWithConcurrencyLimit(ctx, func() ([]byte, error) {
 		return utils.GenerateKhataStatementPDF(customer, transactions, shop)
 	})
+	if err != nil {
+		return nil, err
+	}
+	if phone != "" {
+		utils.SetCachedPDF(cacheKey, pdfBytes, 5*time.Minute)
+	}
+	return pdfBytes, nil
 }
 
 // RequestKhataClosureByMerchant initiates closure from the merchant side.
@@ -618,7 +649,12 @@ func (s *KhataService) ReverseTransaction(ctx context.Context, shopOwnerUserID, 
 		return nil, err
 	}
 
-	return s.khataRepo.ReverseTransaction(ctx, shop.ID, khataID, txID, reason)
+	tx, err := s.khataRepo.ReverseTransaction(ctx, shop.ID, khataID, txID, reason)
+	if err != nil {
+		return nil, err
+	}
+	utils.InvalidateCachedPDFByPrefix(fmt.Sprintf("khata_stmt:%s:", shop.ID))
+	return tx, nil
 }
 
 // ResolveDispute resolves a customer's dispute by either accepting (reversing) or rejecting (keeping) it (Protected - Shop).
@@ -631,7 +667,11 @@ func (s *KhataService) ResolveDispute(ctx context.Context, shopOwnerUserID, khat
 		return err
 	}
 
-	return s.khataRepo.ResolveDispute(ctx, shop.ID, khataID, txID, action, notes)
+	err = s.khataRepo.ResolveDispute(ctx, shop.ID, khataID, txID, action, notes)
+	if err == nil {
+		utils.InvalidateCachedPDFByPrefix(fmt.Sprintf("khata_stmt:%s:", shop.ID))
+	}
+	return err
 }
 
 // SetCreditOTPProtection configures customer OTP requirement for high-value credit (Protected - Customer).
@@ -787,7 +827,12 @@ func (s *KhataService) UpdateTransaction(ctx context.Context, shopOwnerUserID, k
 		modifierName = "Merchant"
 	}
 
-	return s.khataRepo.UpdateTransaction(ctx, shop.ID, khataID, txID, input.Amount, input.Notes, input.BillNumber, input.Reason, modifierName)
+	tx, err := s.khataRepo.UpdateTransaction(ctx, shop.ID, khataID, txID, input.Amount, input.Notes, input.BillNumber, input.Reason, modifierName)
+	if err != nil {
+		return nil, err
+	}
+	utils.InvalidateCachedPDFByPrefix(fmt.Sprintf("khata_stmt:%s:", shop.ID))
+	return tx, nil
 }
 
 // DeleteTransaction soft-deletes a credit or payment entry after verifying merchant security PIN or password.
@@ -827,5 +872,10 @@ func (s *KhataService) DeleteTransaction(ctx context.Context, shopOwnerUserID, k
 		modifierName = "Merchant"
 	}
 
-	return s.khataRepo.DeleteTransaction(ctx, shop.ID, khataID, txID, input.Reason, modifierName)
+	tx, err := s.khataRepo.DeleteTransaction(ctx, shop.ID, khataID, txID, input.Reason, modifierName)
+	if err != nil {
+		return nil, err
+	}
+	utils.InvalidateCachedPDFByPrefix(fmt.Sprintf("khata_stmt:%s:", shop.ID))
+	return tx, nil
 }

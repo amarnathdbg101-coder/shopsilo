@@ -53,6 +53,7 @@ func NewChromedpPDFService(
 }
 
 // GenerateEndOfDayPLPDF generates an executive End-of-Day P&L statement PDF for the merchant.
+// Leverages bounded semaphore concurrency and sub-millisecond in-memory PDF caching.
 func (s *EODPDFService) GenerateEndOfDayPLPDF(ctx context.Context, shopOwnerUserID string, targetDate time.Time, days int) ([]byte, error) {
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
@@ -60,6 +61,11 @@ func (s *EODPDFService) GenerateEndOfDayPLPDF(ctx context.Context, shopOwnerUser
 	}
 
 	dateStr := targetDate.Format("2006-01-02")
+	cacheKey := fmt.Sprintf("eod_pdf:%s:%s:%d", shop.ID, dateStr, days)
+	if cachedBytes, found := utils.GetCachedPDF(cacheKey); found {
+		return cachedBytes, nil
+	}
+
 	var summary *dto.DailyCloseReport
 
 	if days == 10 {
@@ -92,7 +98,9 @@ func (s *EODPDFService) GenerateEndOfDayPLPDF(ctx context.Context, shopOwnerUser
 	}
 
 	start := time.Now()
-	pdfBytes, err := RenderEODReportPDF(shop.Name, shopAddress, shopPhone, targetDate, summary)
+	pdfBytes, err := utils.RenderPDFWithConcurrencyLimit(ctx, func() ([]byte, error) {
+		return RenderEODReportPDF(shop.Name, shopAddress, shopPhone, targetDate, summary)
+	})
 	if err != nil {
 		s.logger.Error("Failed to render native EOD PDF", zap.Error(err))
 		return nil, err
@@ -104,6 +112,7 @@ func (s *EODPDFService) GenerateEndOfDayPLPDF(ctx context.Context, shopOwnerUser
 		zap.Duration("duration_ms", duration),
 	)
 
+	utils.SetCachedPDF(cacheKey, pdfBytes, 5*time.Minute)
 	return pdfBytes, nil
 }
 
