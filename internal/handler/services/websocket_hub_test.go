@@ -27,14 +27,15 @@ func TestWebSocketHub_BoundedConcurrencyAndBroadcast(t *testing.T) {
 	// 2. Setup an HTTP test server that upgrades connections to WebSockets
 	var serverConns []*websocket.Conn
 	var sMu sync.Mutex
-	serverConnChan := make(chan *websocket.Conn, 50)
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ws, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
-		serverConnChan <- ws
+		sMu.Lock()
+		serverConns = append(serverConns, ws)
+		sMu.Unlock()
 
 		// Read incoming messages continuously until closed
 		for {
@@ -62,10 +63,9 @@ func TestWebSocketHub_BoundedConcurrencyAndBroadcast(t *testing.T) {
 		}
 		clients = append(clients, ws)
 
-		// Wait for exact server-side connection matched 1:1
-		serverSideConn := <-serverConnChan
+		// Register server-side connection to hub
 		sMu.Lock()
-		serverConns = append(serverConns, serverSideConn)
+		serverSideConn := serverConns[len(serverConns)-1]
 		sMu.Unlock()
 
 		safe := NewSafeConn(serverSideConn)
