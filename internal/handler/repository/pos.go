@@ -176,7 +176,7 @@ func (r *POSRepo) GetDailySummary(ctx context.Context, shopID string, date time.
 			COALESCE(SUM(CASE WHEN payment_method = 'upi' THEN total_amount ELSE 0 END), 0.0) AS upi_total,
 			COALESCE(SUM(CASE WHEN payment_method = 'card' THEN total_amount ELSE 0 END), 0.0) AS card_total
 		FROM pos_bills
-		WHERE shop_id = $1 AND created_at >= $2 AND created_at < $3
+		WHERE shop_id = $1 AND COALESCE(status, 'completed') != 'cancelled' AND created_at >= $2 AND created_at < $3
 	`
 	summary := &model.DailySalesSummary{
 		Date: date.Format("02-Jan-2006"),
@@ -1180,7 +1180,7 @@ func (r *POSRepo) ListBills(ctx context.Context, shopID string, page, limit int,
 	todayQuery := `
 		SELECT COUNT(*), COALESCE(SUM(total_amount), 0)
 		FROM pos_bills
-		WHERE shop_id = $1 AND created_at >= $2 AND created_at < $3
+		WHERE shop_id = $1 AND COALESCE(status, 'completed') != 'cancelled' AND created_at >= $2 AND created_at < $3
 	`
 	_ = r.db.QueryRow(ctx, todayQuery, shopID, startOfToday, endOfToday).Scan(&todayBills, &todaySales)
 

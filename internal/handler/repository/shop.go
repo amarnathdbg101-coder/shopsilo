@@ -1048,10 +1048,12 @@ func (r *ShopRepo) RestoreWithTx(ctx context.Context, tx pgx.Tx, userID string) 
 
 // GetShopDailyDigest computes today's key retail metrics in a single optimized query.
 func (r *ShopRepo) GetShopDailyDigest(ctx context.Context, shopID string) (*model.ShopDailyDigest, error) {
+	startOfDay, endOfDay := utils.IndianDayBounds(time.Now())
+
 	query := `
 		SELECT
-			COALESCE((SELECT SUM(total_amount) FROM pos_bills WHERE shop_id = $1 AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date), 0) AS today_sales_amount,
-			COALESCE((SELECT COUNT(*) FROM pos_bills WHERE shop_id = $1 AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date), 0) AS today_sales_count,
+			COALESCE((SELECT SUM(total_amount) FROM pos_bills WHERE shop_id = $1 AND COALESCE(status, 'completed') != 'cancelled' AND created_at >= $2 AND created_at < $3), 0) AS today_sales_amount,
+			COALESCE((SELECT COUNT(*) FROM pos_bills WHERE shop_id = $1 AND COALESCE(status, 'completed') != 'cancelled' AND created_at >= $2 AND created_at < $3), 0) AS today_sales_count,
 			COALESCE((SELECT COUNT(*) FROM reservations WHERE shop_id = $1 AND status = 'active' AND expires_at >= NOW()), 0) AS active_reservations,
 			COALESCE((SELECT COUNT(*) FROM products p JOIN inventory i ON p.id = i.product_id WHERE p.shop_id = $1 AND p.is_active = true AND i.quantity <= i.low_stock_threshold), 0) AS low_stock_count,
 			COALESCE((SELECT SUM(current_balance) FROM customer_khata WHERE shop_id = $1 AND current_balance > 0), 0) AS total_khata_udhar,
@@ -1060,7 +1062,7 @@ func (r *ShopRepo) GetShopDailyDigest(ctx context.Context, shopID string) (*mode
 	digest := &model.ShopDailyDigest{
 		Date: time.Now().Format("2006-01-02"),
 	}
-	err := r.db.QueryRow(ctx, query, shopID).Scan(
+	err := r.db.QueryRow(ctx, query, shopID, startOfDay, endOfDay).Scan(
 		&digest.TodaySalesAmount,
 		&digest.TodaySalesCount,
 		&digest.ActiveReservations,
