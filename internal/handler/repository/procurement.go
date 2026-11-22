@@ -148,3 +148,74 @@ func (r *ProcurementRepo) ClearCompleted(ctx context.Context, shopID string) err
 	}
 	return nil
 }
+
+// ListWholesalers retrieves all registered wholesalers for a shop sorted alphabetically by name.
+func (r *ProcurementRepo) ListWholesalers(ctx context.Context, shopID string) ([]*model.Wholesaler, error) {
+	query := `
+		SELECT id, shop_id, name, phone, address, gstin, notes, created_at, updated_at
+		FROM wholesalers
+		WHERE shop_id = $1
+		ORDER BY name ASC
+	`
+	rows, err := r.db.Query(ctx, query, shopID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query wholesalers: %w", err)
+	}
+	defer rows.Close()
+
+	var list []*model.Wholesaler
+	for rows.Next() {
+		var w model.Wholesaler
+		err := rows.Scan(
+			&w.ID, &w.ShopID, &w.Name, &w.Phone, &w.Address,
+			&w.GSTIN, &w.Notes, &w.CreatedAt, &w.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan wholesaler row: %w", err)
+		}
+		list = append(list, &w)
+	}
+	return list, nil
+}
+
+// CreateWholesaler inserts a new permanent wholesaler for the shop.
+func (r *ProcurementRepo) CreateWholesaler(ctx context.Context, w *model.Wholesaler) error {
+	query := `
+		INSERT INTO wholesalers (shop_id, name, phone, address, gstin, notes, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+		RETURNING id, created_at, updated_at
+	`
+	return r.db.QueryRow(ctx, query,
+		w.ShopID, w.Name, w.Phone, w.Address, w.GSTIN, w.Notes,
+	).Scan(&w.ID, &w.CreatedAt, &w.UpdatedAt)
+}
+
+// UpdateWholesaler modifies an existing wholesaler record.
+func (r *ProcurementRepo) UpdateWholesaler(ctx context.Context, w *model.Wholesaler) error {
+	query := `
+		UPDATE wholesalers
+		SET name = $1, phone = $2, address = $3, gstin = $4, notes = $5, updated_at = NOW()
+		WHERE id = $6 AND shop_id = $7
+		RETURNING updated_at
+	`
+	res, err := r.db.Exec(ctx, query, w.Name, w.Phone, w.Address, w.GSTIN, w.Notes, w.ID, w.ShopID)
+	if err != nil {
+		return fmt.Errorf("failed to update wholesaler: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return errors.New("wholesaler not found")
+	}
+	return nil
+}
+
+// DeleteWholesaler removes a wholesaler from the shop directory.
+func (r *ProcurementRepo) DeleteWholesaler(ctx context.Context, shopID, id string) error {
+	res, err := r.db.Exec(ctx, "DELETE FROM wholesalers WHERE id = $1 AND shop_id = $2", id, shopID)
+	if err != nil {
+		return fmt.Errorf("failed to delete wholesaler: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return errors.New("wholesaler not found")
+	}
+	return nil
+}

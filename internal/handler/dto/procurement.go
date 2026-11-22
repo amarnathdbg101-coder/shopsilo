@@ -26,3 +26,21 @@ type UpdateProcurementItemRequest struct {
 	Notes          *string  `json:"notes,omitempty"`
 	IsCompleted    *bool    `json:"is_completed,omitempty"`
 }
+
+// CreateWholesalerRequest defines the input required to add a permanent wholesaler.
+type CreateWholesalerRequest struct {
+	Name    string `json:"name" validate:"required,min=1,max=255"`
+	Phone   string `json:"phone"`
+	Address string `json:"address"`
+	GSTIN   string `json:"gstin"`
+	Notes   string `json:"notes"`
+}
+
+// UpdateWholesalerRequest defines the input to modify an existing wholesaler.
+type UpdateWholesalerRequest struct {
+	Name    *string `json:"name,omitempty"`
+	Phone   *string `json:"phone,omitempty"`
+	Address *string `json:"address,omitempty"`
+	GSTIN   *string `json:"gstin,omitempty"`
+	Notes   *string `json:"notes,omitempty"`
+}

@@ -215,6 +215,12 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Delete("/procurement/{id}", procurementc.Delete)
 		r.Post("/procurement/clear-completed", procurementc.ClearCompleted)
 
+		// Merchant Wholesalers / Suppliers Directory
+		r.Get("/wholesalers", procurementc.ListWholesalers)
+		r.Post("/wholesalers", procurementc.CreateWholesaler)
+		r.Put("/wholesalers/{id}", procurementc.UpdateWholesaler)
+		r.Delete("/wholesalers/{id}", procurementc.DeleteWholesaler)
+
 		r.Get("/shop/dashboard", sc.GetMerchantDashboard)
 		r.Get("/shop/digest", sc.GetDailyDigest)
 		r.Patch("/shop/status", sc.ToggleStatus)
@@ -480,6 +486,12 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Post("/shops/me/procurement/toggle/{id}", procurementc.Toggle)
 		r.Delete("/shops/me/procurement/{id}", procurementc.Delete)
 		r.Post("/shops/me/procurement/clear-completed", procurementc.ClearCompleted)
+
+		// Shop Wholesalers Directory
+		r.Get("/shops/me/wholesalers", procurementc.ListWholesalers)
+		r.Post("/shops/me/wholesalers", procurementc.CreateWholesaler)
+		r.Put("/shops/me/wholesalers/{id}", procurementc.UpdateWholesaler)
+		r.Delete("/shops/me/wholesalers/{id}", procurementc.DeleteWholesaler)
 
 		// Shop Customer Khata (Udhar & settlement passbook)
 		r.Get("/shops/me/khata/summary", khatac.GetSummary)                      // Shop

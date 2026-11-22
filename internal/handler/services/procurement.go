@@ -178,3 +178,82 @@ func (s *ProcurementService) ClearCompleted(ctx context.Context, userID string) 
 	wsHub.BroadcastToShop(shop.ID, "PROCUREMENT_MUTATED", map[string]interface{}{"cleared_completed": true})
 	return nil
 }
+
+// ListWholesalers retrieves all registered permanent wholesalers for a shop.
+func (s *ProcurementService) ListWholesalers(ctx context.Context, userID string) ([]*model.Wholesaler, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, userID)
+	if err != nil {
+		return nil, ErrShopRequired
+	}
+	return s.repo.ListWholesalers(ctx, shop.ID)
+}
+
+// CreateWholesaler adds a new permanent wholesaler to the shop's supplier directory.
+func (s *ProcurementService) CreateWholesaler(ctx context.Context, userID string, input dto.CreateWholesalerRequest) (*model.Wholesaler, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, userID)
+	if err != nil {
+		return nil, ErrShopRequired
+	}
+
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return nil, errors.New("wholesaler name is required")
+	}
+
+	w := &model.Wholesaler{
+		ShopID:  shop.ID,
+		Name:    name,
+		Phone:   strings.TrimSpace(input.Phone),
+		Address: strings.TrimSpace(input.Address),
+		GSTIN:   strings.TrimSpace(input.GSTIN),
+		Notes:   strings.TrimSpace(input.Notes),
+	}
+
+	if err := s.repo.CreateWholesaler(ctx, w); err != nil {
+		return nil, err
+	}
+	return w, nil
+}
+
+// UpdateWholesaler modifies an existing wholesaler in the shop directory.
+func (s *ProcurementService) UpdateWholesaler(ctx context.Context, userID, id string, input dto.UpdateWholesalerRequest) (*model.Wholesaler, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, userID)
+	if err != nil {
+		return nil, ErrShopRequired
+	}
+
+	w := &model.Wholesaler{
+		ID:     id,
+		ShopID: shop.ID,
+	}
+
+	if input.Name != nil {
+		w.Name = strings.TrimSpace(*input.Name)
+	}
+	if input.Phone != nil {
+		w.Phone = strings.TrimSpace(*input.Phone)
+	}
+	if input.Address != nil {
+		w.Address = strings.TrimSpace(*input.Address)
+	}
+	if input.GSTIN != nil {
+		w.GSTIN = strings.TrimSpace(*input.GSTIN)
+	}
+	if input.Notes != nil {
+		w.Notes = strings.TrimSpace(*input.Notes)
+	}
+
+	if err := s.repo.UpdateWholesaler(ctx, w); err != nil {
+		return nil, err
+	}
+	return w, nil
+}
+
+// DeleteWholesaler removes a wholesaler from the shop directory.
+func (s *ProcurementService) DeleteWholesaler(ctx context.Context, userID, id string) error {
+	shop, err := s.shopRepo.FindByUserID(ctx, userID)
+	if err != nil {
+		return ErrShopRequired
+	}
+	return s.repo.DeleteWholesaler(ctx, shop.ID, id)
+}

@@ -19,3 +19,16 @@ type ProcurementItem struct {
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
+
+// Wholesaler represents a registered permanent wholesale supplier/dealer for the merchant shop.
+type Wholesaler struct {
+	ID        string    `json:"id"`
+	ShopID    string    `json:"shop_id"`
+	Name      string    `json:"name"`
+	Phone     string    `json:"phone"`
+	Address   string    `json:"address"`
+	GSTIN     string    `json:"gstin"`
+	Notes     string    `json:"notes"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
