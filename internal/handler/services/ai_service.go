@@ -232,21 +232,22 @@ Extract and infer comprehensive, professional product catalog data in pure JSON 
   "estimated_cost": 199.0,
   "profit_margin_percent": 20.1,
   "unit": "Appropriate unit: 'piece', 'packet', 'bottle', 'pouch', 'box', 'pack', 'kg', 'gm', 'litre', 'ml', 'meter', 'pair'",
-  "description": "Engaging, professional 2-3 line commercial marketing overview highlighting material/formulation, quality benefits, and consumer usage.",
+  "description": "Short, punchy 1-line essential product summary or critical note (strictly under 80 characters, e.g. '100% शुद्ध कच्ची घानी सरसों तेल, दैनिक उपयोग के लिए।'). DO NOT write long paragraphs or marketing essays here because retail merchants ignore long descriptions.",
   "key_features": [
-    "Core feature with customer benefit",
-    "Key formulation, fabric weave, or build specification",
-    "Usage, storage, or certification highlight"
+    "Key Benefit 1",
+    "Key Benefit 2"
   ],
   "ingredients": "Key ingredients, composition, or fabric blend if visible or standard for this item",
   "tags": [
     "8 to 12 high-intent search keywords in English and Hinglish (e.g. 'sarson tel', 'mustard oil', 'kachi ghani', 'cooking oil')"
   ],
   "attributes": {
-    "Dietary Preference": "Vegetarian",
+    "Pack Size": "1 Litre",
     "Packaging Type": "Pouch",
     "Item Form": "Liquid",
-    "Flavor": "Mustard"
+    "Dietary Preference": "Vegetarian",
+    "Flavor": "Mustard",
+    "Shelf Life": "9 Months"
   },
   "suggested_sku": "Smart structured uppercase SKU identifier (e.g. 'FORT-MUST-1L-POUCH')",
   "barcode": "Barcode digits if clearly visible on packaging, otherwise empty string",
@@ -255,7 +256,7 @@ Extract and infer comprehensive, professional product catalog data in pure JSON 
 }
 
 CRITICAL CATALOGING SPECIALIST RULES:
-1. COMMERCIAL PRODUCT TITLE:
+1. COMMERCIAL PRODUCT TITLE & SHORT DESCRIPTION:
    - Construct a rich, professional, complete title in Title Case: [Brand] + [Product Line / Sub-brand] + [Key Flavor / Scent / Variant / Material] + [Pack Size or Volume with Unit].
    - Examples:
      * FMCG: "Dove Daily Shine Shampoo with Nutritive Serum - 340ml Bottle"
@@ -265,6 +266,7 @@ CRITICAL CATALOGING SPECIALIST RULES:
      * Electronics: "boAt Bassheads 225 Heavy Bass in-Ear Wired Earphones with Mic - Metallic Black"
    - NEVER use vague or generic titles like "Blue Shirt" or "Oil Packet". Be precise and specific to the image.
    - For apparel, ethnic wear, matching center items (blouse pieces, petticoats, sarees, dupattas), ALWAYS include the exact trade color shade name at the end of the title.
+   - DESCRIPTION FIELD: Retail shopkeepers and customers IGNORE long walls of text. Keep 'description' strictly to 1 short, essential line (under 80 characters). Do NOT dump specifications into 'description'; all specifications MUST go into 'attributes'!
 
 2. COMMERCIAL PRICING & MARGIN INTELLIGENCE:
    - If an MRP (Maximum Retail Price) stamp or printed text is visible on the package (e.g. 'MRP ₹140.00 incl. of all taxes'), use that EXACT numeric value for 'mrp'.
@@ -273,20 +275,24 @@ CRITICAL CATALOGING SPECIALIST RULES:
    - 'estimated_cost': Calculate the retailer's wholesale procurement cost (typically 12% to 20% margin for grocery/FMCG; 30% to 45% for fashion/cosmetics).
    - 'profit_margin_percent': Compute exact margin percentage: round(((selling_price - estimated_cost) / selling_price) * 100, 1).
 
-3. SPECIALIZED ATTRIBUTES (HIGH-VALUE PRODUCT SPECS ONLY — NO USELESS BOILERPLATE):
-   - Provide 3 to 6 strictly relevant, concise, high-value key-value pairs in 'attributes' dictionary with Title Case keys.
-   - ONLY include physical, technical, or customer-differentiating specs:
-     * For Food / Grocery: 'Dietary Preference' (Vegetarian/Non-Vegetarian), 'Packaging Type' (Pouch/Bottle/Jar/Tin), 'Item Form' (Liquid/Powder/Paste/Grain), 'Flavor'.
-     * For Personal Care / Beauty: 'Item Form', 'Skin/Hair Type', 'Fragrance', 'Target Gender', 'Key Benefits'.
-     * For Clothing / Fashion: 'Fabric', 'Pattern', 'Color', 'Fit Type', 'Occasion'.
-     * For Electronics / Hardware: 'Connectivity', 'Color', 'Material', 'Warranty'.
-     * For Home & Cleaning: 'Item Form', 'Fragrance', 'Surface Recommendation'.
-   - STRICTLY FORBIDDEN IN ATTRIBUTES (DO NOT OUTPUT THESE):
+3. COMPREHENSIVE PRODUCT DETAILS & PACKAGING SPECIFICATIONS (PRIMARY MERCHANDISING SECTION):
+   - CRITICAL RETAIL DIRECTIVE: Merchants and buyers pay close attention to the PRODUCT DETAILS section. You MUST visually inspect the package and extract 6 to 10 rich, structured, concrete key-value pairs into the 'attributes' dictionary with Title Case keys.
+   - PRIORITIZE EXTRACTING FROM PACKAGING:
+     * 'Pack Size / Volume': exact visible volume/weight (e.g. '1 Litre', '500g', '340ml', '5kg', '750ml', 'Pack of 2')
+     * 'Packaging Type': (e.g. 'Pouch', 'Plastic Bottle', 'Glass Bottle', 'Carton Box', 'Tin / Can', 'Jar', 'Packet')
+     * 'Item Form': (e.g. 'Liquid', 'Powder', 'Granules', 'Bar / Cake', 'Cream / Lotion', 'Woven Fabric', 'Grain / Seed')
+     * 'Key Ingredients / Fabric': (e.g. 'Mustard Seed Oil, Vit A & D', 'Pure Banarasi Silk & Zari', '100% Combed Cotton', 'Whole Wheat Atta')
+     * 'Dietary Preference': (e.g. '100% Vegetarian (हरा डॉट)', 'Non-Vegetarian')
+     * 'Flavor / Scent / Variant': (e.g. 'Kachi Ghani', 'Daily Shine', 'Masala', 'Mint Fresh', 'Rose')
+     * 'Shelf Life / Best Before': (e.g. '9 Months from PKG', '12 Months', '24 Months', 'Best Before 6 Months')
+     * 'Suitable For / Target': (e.g. 'All Hair Types', 'All Skin Types', 'Unisex', 'Daily Cooking', 'Kids & Adults')
+     * 'Pattern / Occasion / Fit': (for apparel: 'Banarasi Zari Border', 'Festive / Wedding', 'Regular Fit', 'Casual Wear')
+     * 'Special Highlights': (e.g. 'Cold Pressed', 'Sulfate Free', 'No Added Preservatives', 'Rich In Antioxidants')
+   - FORBIDDEN IN ATTRIBUTES (DO NOT OUTPUT THESE):
      * NEVER include generic storage instructions (e.g. 'Store in a cool and dry place').
      * NEVER include usage directions, care instructions, or generic warnings.
-     * NEVER repeat basic fields already present in schema (do NOT add 'Name', 'Brand', 'Category', 'MRP', 'Price', 'Weight', 'Unit', 'Barcode').
      * NEVER use placeholder values like 'N/A', 'None', 'Unknown', 'Standard', 'Generic', '-', 'Null'.
-     * Keep all attribute values ultra-concise (under 35 characters, e.g. 'Vegetarian', 'Cotton Blend', '1 Year', 'Pouch').
+     * Keep all attribute values crisp and concise (under 35 characters).
 
 4. BILINGUAL HINGLISH SEARCH TAGS:
    - Provide 8 to 12 high-intent search keywords including common Hindi/Hinglish terms used by Indian shoppers (e.g., 'sarson tel', 'mustard oil', 'gehu aata', 'doodh', 'chai patti', 'nahane ka sabun').
