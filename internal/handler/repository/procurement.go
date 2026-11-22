@@ -178,11 +178,17 @@ func (r *ProcurementRepo) ListWholesalers(ctx context.Context, shopID string) ([
 	return list, nil
 }
 
-// CreateWholesaler inserts a new permanent wholesaler for the shop.
+// CreateWholesaler inserts a new permanent wholesaler for the shop or updates contact info if already present.
 func (r *ProcurementRepo) CreateWholesaler(ctx context.Context, w *model.Wholesaler) error {
 	query := `
 		INSERT INTO wholesalers (shop_id, name, phone, address, gstin, notes, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+		ON CONFLICT (shop_id, LOWER(name)) DO UPDATE
+		SET phone = CASE WHEN EXCLUDED.phone <> '' THEN EXCLUDED.phone ELSE wholesalers.phone END,
+		    address = CASE WHEN EXCLUDED.address <> '' THEN EXCLUDED.address ELSE wholesalers.address END,
+		    gstin = CASE WHEN EXCLUDED.gstin <> '' THEN EXCLUDED.gstin ELSE wholesalers.gstin END,
+		    notes = CASE WHEN EXCLUDED.notes <> '' THEN EXCLUDED.notes ELSE wholesalers.notes END,
+		    updated_at = NOW()
 		RETURNING id, created_at, updated_at
 	`
 	return r.db.QueryRow(ctx, query,
@@ -196,7 +202,6 @@ func (r *ProcurementRepo) UpdateWholesaler(ctx context.Context, w *model.Wholesa
 		UPDATE wholesalers
 		SET name = $1, phone = $2, address = $3, gstin = $4, notes = $5, updated_at = NOW()
 		WHERE id = $6 AND shop_id = $7
-		RETURNING updated_at
 	`
 	res, err := r.db.Exec(ctx, query, w.Name, w.Phone, w.Address, w.GSTIN, w.Notes, w.ID, w.ShopID)
 	if err != nil {

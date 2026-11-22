@@ -774,6 +774,7 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		);`,
 		"CREATE INDEX IF NOT EXISTS idx_wholesalers_shop_id ON wholesalers(shop_id);",
 		"CREATE INDEX IF NOT EXISTS idx_wholesalers_name ON wholesalers(shop_id, name);",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_wholesalers_shop_name_unique ON wholesalers(shop_id, LOWER(name));",
 	}
 
 	for _, q := range queries {
