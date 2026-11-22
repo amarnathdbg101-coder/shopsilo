@@ -124,3 +124,41 @@ func (s *BatchService) RunMarkdownScan(ctx context.Context, shopOwnerUserID stri
 	}, nil
 }
 
+// GetExpirySummary fetches aggregate financial risk metrics across the merchant's batch inventory.
+func (s *BatchService) GetExpirySummary(ctx context.Context, shopOwnerUserID string) (*dto.ExpiryRadarSummaryResponse, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.batchRepo.GetExpirySummary(ctx, shop.ID)
+}
+
+// ApplyBatchMarkdown applies a targeted clearance markdown to a specific batch lot.
+func (s *BatchService) ApplyBatchMarkdown(ctx context.Context, shopOwnerUserID string, batchID string, req dto.ApplyBatchMarkdownRequest) (*model.ProductBatch, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		return nil, err
+	}
+
+	if req.MarkdownPercent <= 0 && (req.CustomPrice == nil || *req.CustomPrice <= 0) {
+		return nil, errors.New("must specify either valid markdown_percent or custom_price")
+	}
+
+	return s.batchRepo.ApplyBatchMarkdown(ctx, shop.ID, batchID, req.MarkdownPercent, req.CustomPrice)
+}
+
+// WriteOffBatch records physical disposal or vendor return for an expired batch.
+func (s *BatchService) WriteOffBatch(ctx context.Context, shopOwnerUserID string, batchID string, req dto.BatchWriteOffRequest) (*model.ProductBatch, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		return nil, err
+	}
+
+	if req.Quantity <= 0 {
+		return nil, errors.New("write-off quantity must be greater than zero")
+	}
+
+	return s.batchRepo.WriteOff(ctx, shop.ID, batchID, req.Quantity, req.Reason)
+}
+

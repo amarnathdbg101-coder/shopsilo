@@ -30,6 +30,7 @@ type ProductBatch struct {
 	MarkdownPercent      float64     `json:"markdown_percent"`
 	IsMarkdownApplied    bool        `json:"is_markdown_applied"`
 	Status               BatchStatus `json:"status"`
+	DaysToExpiry         int         `json:"days_to_expiry"`
 	CreatedAt            time.Time   `json:"created_at"`
 	UpdatedAt            time.Time   `json:"updated_at"`
 }

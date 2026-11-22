@@ -10,6 +10,8 @@ import (
 	"shopMe/internal/handler/services"
 	"shopMe/internal/middleware"
 	"shopMe/internal/reuse"
+
+	"github.com/go-chi/chi/v5"
 )
 
 // BatchController handles endpoints for batch procurement and expiry radar.
@@ -94,3 +96,77 @@ func (c *BatchController) RunMarkdownScan(w http.ResponseWriter, r *http.Request
 	reuse.Success(w, "Auto-markdown engine completed successfully", res)
 }
 
+// GetExpirySummary returns aggregate financial capital at risk and lot counts.
+func (c *BatchController) GetExpirySummary(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	res, err := c.service.GetExpirySummary(r.Context(), claims.UserID)
+	if err != nil {
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Expiry radar summary retrieved", res)
+}
+
+// ApplyMarkdown sets an explicit clearance markdown percentage or price on a single batch.
+func (c *BatchController) ApplyMarkdown(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	batchID := chi.URLParam(r, "id")
+	if batchID == "" {
+		reuse.Error(w, http.StatusBadRequest, "batch id is required")
+		return
+	}
+
+	var input dto.ApplyBatchMarkdownRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	res, err := c.service.ApplyBatchMarkdown(r.Context(), claims.UserID, batchID, input)
+	if err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Batch markdown applied successfully", res)
+}
+
+// WriteOffBatch records physical disposal or vendor return for an expired batch lot.
+func (c *BatchController) WriteOffBatch(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	batchID := chi.URLParam(r, "id")
+	if batchID == "" {
+		reuse.Error(w, http.StatusBadRequest, "batch id is required")
+		return
+	}
+
+	var input dto.BatchWriteOffRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	res, err := c.service.WriteOffBatch(r.Context(), claims.UserID, batchID, input)
+	if err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Batch written off successfully", res)
+}

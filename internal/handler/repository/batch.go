@@ -7,6 +7,7 @@ import (
 	"math"
 	"time"
 
+	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
 
 	"github.com/jackc/pgx/v5"
@@ -87,6 +88,8 @@ func (r *BatchRepo) GetByID(ctx context.Context, batchID string) (*model.Product
 		}
 		return nil, err
 	}
+	today := time.Now().Truncate(24 * time.Hour)
+	b.DaysToExpiry = int(b.ExpiryDate.Truncate(24 * time.Hour).Sub(today).Hours() / 24)
 	return b, nil
 }
 
@@ -126,6 +129,8 @@ func (r *BatchRepo) ListNearExpiry(ctx context.Context, shopID string, daysWindo
 		if err != nil {
 			return nil, err
 		}
+		today := time.Now().Truncate(24 * time.Hour)
+		b.DaysToExpiry = int(b.ExpiryDate.Truncate(24 * time.Hour).Sub(today).Hours() / 24)
 		batches = append(batches, b)
 	}
 	return batches, nil
@@ -247,5 +252,140 @@ func (r *BatchRepo) RunAutoMarkdownEngine(ctx context.Context, shopID string, da
 		return 0, 0, 0, 0, nil, err
 	}
 	return scanned, markdownsApplied, expiredCount, capitalProtected, updated, nil
+}
+
+// GetExpirySummary computes shop-wide batch inventory risk metrics.
+func (r *BatchRepo) GetExpirySummary(ctx context.Context, shopID string) (*dto.ExpiryRadarSummaryResponse, error) {
+	query := `
+		SELECT 
+			COUNT(*),
+			COALESCE(SUM(CASE WHEN expiry_date <= CURRENT_DATE + INTERVAL '30 days' THEN quantity * cost_price ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN expiry_date < CURRENT_DATE THEN quantity * cost_price ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN expiry_date >= CURRENT_DATE AND expiry_date <= CURRENT_DATE + INTERVAL '7 days' THEN quantity * cost_price ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN expiry_date > CURRENT_DATE + INTERVAL '7 days' AND expiry_date <= CURRENT_DATE + INTERVAL '30 days' THEN quantity * cost_price ELSE 0 END), 0),
+			COUNT(CASE WHEN expiry_date < CURRENT_DATE THEN 1 END),
+			COUNT(CASE WHEN expiry_date >= CURRENT_DATE AND expiry_date <= CURRENT_DATE + INTERVAL '7 days' THEN 1 END),
+			COUNT(CASE WHEN expiry_date > CURRENT_DATE + INTERVAL '7 days' AND expiry_date <= CURRENT_DATE + INTERVAL '30 days' THEN 1 END),
+			COUNT(CASE WHEN expiry_date > CURRENT_DATE + INTERVAL '30 days' THEN 1 END)
+		FROM product_batches
+		WHERE shop_id = $1 AND quantity > 0;
+	`
+	res := &dto.ExpiryRadarSummaryResponse{}
+	err := r.db.QueryRow(ctx, query, shopID).Scan(
+		&res.TotalLotsTracked,
+		&res.CapitalAtRisk30D,
+		&res.ExpiredCapitalLost,
+		&res.CriticalCapitalAtRisk,
+		&res.WarningCapitalAtRisk,
+		&res.ExpiredCount,
+		&res.CriticalCount,
+		&res.WarningCount,
+		&res.UpcomingCount,
+	)
+	if err != nil {
+		r.logger.Error("failed to query expiry summary", zap.Error(err), zap.String("shop_id", shopID))
+		return nil, err
+	}
+	return res, nil
+}
+
+// ApplyBatchMarkdown sets a targeted clearance markdown for a single batch.
+func (r *BatchRepo) ApplyBatchMarkdown(ctx context.Context, shopID string, batchID string, markdownPercent float64, customPrice *float64) (*model.ProductBatch, error) {
+	b, err := r.GetByID(ctx, batchID)
+	if err != nil {
+		return nil, err
+	}
+	if b.ShopID != shopID {
+		return nil, errors.New("unauthorized access to batch")
+	}
+
+	sellingPrice := b.OriginalSellingPrice
+	if customPrice != nil && *customPrice > 0 {
+		sellingPrice = *customPrice
+	} else if markdownPercent > 0 {
+		discMultiplier := (100.0 - markdownPercent) / 100.0
+		sellingPrice = math.Round(b.OriginalSellingPrice*discMultiplier*100) / 100
+	}
+
+	query := `
+		UPDATE product_batches
+		SET current_selling_price = $1,
+		    markdown_percent = $2,
+		    is_markdown_applied = true,
+		    status = 'NEAR_EXPIRY',
+		    updated_at = NOW()
+		WHERE id = $3 AND shop_id = $4
+		RETURNING updated_at;
+	`
+	err = r.db.QueryRow(ctx, query, sellingPrice, markdownPercent, batchID, shopID).Scan(&b.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	b.CurrentSellingPrice = sellingPrice
+	b.MarkdownPercent = markdownPercent
+	b.IsMarkdownApplied = true
+	b.Status = model.BatchStatusNearExpiry
+	today := time.Now().Truncate(24 * time.Hour)
+	b.DaysToExpiry = int(b.ExpiryDate.Truncate(24 * time.Hour).Sub(today).Hours() / 24)
+	return b, nil
+}
+
+// WriteOff removes stock from an expired batch and updates store inventory.
+func (r *BatchRepo) WriteOff(ctx context.Context, shopID string, batchID string, qty int, reason string) (*model.ProductBatch, error) {
+	b, err := r.GetByID(ctx, batchID)
+	if err != nil {
+		return nil, err
+	}
+	if b.ShopID != shopID {
+		return nil, errors.New("unauthorized access to batch")
+	}
+	if qty > b.Quantity {
+		qty = b.Quantity
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	newQty := b.Quantity - qty
+	newStatus := b.Status
+	if newQty <= 0 {
+		newQty = 0
+		newStatus = model.BatchStatusExpired
+	}
+
+	_, err = tx.Exec(ctx, `
+		UPDATE product_batches
+		SET quantity = $1,
+		    status = $2,
+		    updated_at = NOW()
+		WHERE id = $3 AND shop_id = $4;
+	`, newQty, newStatus, batchID, shopID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update inventory available quantity for the parent product
+	_, err = tx.Exec(ctx, `
+		UPDATE inventory
+		SET quantity = GREATEST(0, quantity - $1),
+		    updated_at = NOW()
+		WHERE product_id = $2;
+	`, qty, b.ProductID)
+	if err != nil {
+		r.logger.Warn("could not adjust inventory table during write-off", zap.Error(err), zap.String("product_id", b.ProductID))
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	b.Quantity = newQty
+	b.Status = newStatus
+	today := time.Now().Truncate(24 * time.Hour)
+	b.DaysToExpiry = int(b.ExpiryDate.Truncate(24 * time.Hour).Sub(today).Hours() / 24)
+	return b, nil
 }
 

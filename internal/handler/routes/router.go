@@ -307,7 +307,18 @@ func RouteSetup(c *app.Container) chi.Router {
 		// Batch Expiry Radar & Near-Expiry Auto-Markdown Engine
 		r.Post("/batches", batchc.CreateBatch)
 		r.Get("/batches/near-expiry", batchc.ListNearExpiry)
+		r.Get("/batches/summary", batchc.GetExpirySummary)
 		r.Post("/batches/markdown-scan", batchc.RunMarkdownScan)
+		r.Put("/batches/{id}/markdown", batchc.ApplyMarkdown)
+		r.Post("/batches/{id}/write-off", batchc.WriteOffBatch)
+
+		// Batch routes aliases under /shops/me
+		r.Post("/shops/me/batches", batchc.CreateBatch)
+		r.Get("/shops/me/batches/near-expiry", batchc.ListNearExpiry)
+		r.Get("/shops/me/batches/summary", batchc.GetExpirySummary)
+		r.Post("/shops/me/batches/markdown-scan", batchc.RunMarkdownScan)
+		r.Put("/shops/me/batches/{id}/markdown", batchc.ApplyMarkdown)
+		r.Post("/shops/me/batches/{id}/write-off", batchc.WriteOffBatch)
 
 		// Khata Micro-Installments / Daily Chillar Settle
 		r.Post("/khata/micro-plans", microPlanc.CreatePlan)
@@ -368,7 +379,10 @@ func RouteSetup(c *app.Container) chi.Router {
 		// 5. Batch Expiry Radar & Near-Expiry Auto-Markdown Engine
 		r.Post("/batches", batchc.CreateBatch)
 		r.Get("/batches/near-expiry", batchc.ListNearExpiry)
+		r.Get("/batches/summary", batchc.GetExpirySummary)
 		r.Post("/batches/markdown-scan", batchc.RunMarkdownScan)
+		r.Put("/batches/{id}/markdown", batchc.ApplyMarkdown)
+		r.Post("/batches/{id}/write-off", batchc.WriteOffBatch)
 
 		// 6. Khata Daily Micro-Installments
 		r.Post("/khata/micro-plans", microPlanc.CreatePlan)

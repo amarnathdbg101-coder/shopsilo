@@ -168,6 +168,40 @@ func TestMilestone4CoreEngines(t *testing.T) {
 			t.Errorf("Expected status NEAR_EXPIRY, got %s", reloadedBatch.Status)
 		}
 		t.Logf("Batch markdown verified! CurrentSellingPrice=₹%.2f, Status=%s", reloadedBatch.CurrentSellingPrice, reloadedBatch.Status)
+
+		// E: Expiry Summary Risk Analytics
+		summary, err := h.batchService.GetExpirySummary(ctx, ownerUserID)
+		if err != nil {
+			t.Fatalf("GetExpirySummary failed: %v", err)
+		}
+		if summary.TotalLotsTracked == 0 {
+			t.Errorf("Expected at least 1 tracked lot in summary, got %d", summary.TotalLotsTracked)
+		}
+		t.Logf("Summary verified! CapitalAtRisk30D=₹%.2f, TotalLots=%d", summary.CapitalAtRisk30D, summary.TotalLotsTracked)
+
+		// F: Custom Targeted Batch Markdown (e.g. 35% clearance)
+		customMarkdown, err := h.batchService.ApplyBatchMarkdown(ctx, ownerUserID, batch.ID, dto.ApplyBatchMarkdownRequest{
+			MarkdownPercent: 35.0,
+		})
+		if err != nil {
+			t.Fatalf("ApplyBatchMarkdown failed: %v", err)
+		}
+		if customMarkdown.MarkdownPercent != 35.0 {
+			t.Errorf("Expected markdown 35%%, got %.2f%%", customMarkdown.MarkdownPercent)
+		}
+
+		// G: Batch Write-Off / RTV
+		writtenOff, err := h.batchService.WriteOffBatch(ctx, ownerUserID, batch.ID, dto.BatchWriteOffRequest{
+			Reason:   "EXPIRED_DISPOSAL",
+			Quantity: 5,
+		})
+		if err != nil {
+			t.Fatalf("WriteOffBatch failed: %v", err)
+		}
+		if writtenOff.Quantity != 15 {
+			t.Errorf("Expected remaining quantity 15, got %d", writtenOff.Quantity)
+		}
+		t.Logf("WriteOff verified! RemainingQty=%d", writtenOff.Quantity)
 	})
 
 	// =========================================================================
