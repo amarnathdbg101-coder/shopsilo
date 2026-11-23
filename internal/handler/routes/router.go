@@ -47,6 +47,7 @@ func RouteSetup(c *app.Container) chi.Router {
 	microPlanc := c.Controllers.MicroPlan
 	eodc := c.Controllers.EODReport
 	appvc := c.Controllers.AppVersion
+	copilotc := c.Controllers.Copilot
 
 	r := chi.NewRouter()
 
@@ -220,6 +221,22 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Post("/wholesalers", procurementc.CreateWholesaler)
 		r.Put("/wholesalers/{id}", procurementc.UpdateWholesaler)
 		r.Delete("/wholesalers/{id}", procurementc.DeleteWholesaler)
+
+		// AI Retail Merchant Co-Pilot & Autonomous Merchandising Engine
+		r.Get("/copilot/daily-prescriptions", copilotc.GetDailyPrescriptions)
+		r.Post("/copilot/prescriptions/{id}/execute", copilotc.ExecutePrescription)
+		r.Get("/copilot/dead-capital", copilotc.GetDeadCapitalSummary)
+		r.Post("/copilot/evaluate-bargain", copilotc.EvaluateBargain)
+		r.Post("/copilot/search-substitute", copilotc.SearchSubstitutes)
+		r.Post("/copilot/recalculate", copilotc.Recalculate)
+
+		// Shop-scoped aliases
+		r.Get("/shops/me/copilot/daily-prescriptions", copilotc.GetDailyPrescriptions)
+		r.Post("/shops/me/copilot/prescriptions/{id}/execute", copilotc.ExecutePrescription)
+		r.Get("/shops/me/copilot/dead-capital", copilotc.GetDeadCapitalSummary)
+		r.Post("/shops/me/copilot/evaluate-bargain", copilotc.EvaluateBargain)
+		r.Post("/shops/me/copilot/search-substitute", copilotc.SearchSubstitutes)
+		r.Post("/shops/me/copilot/recalculate", copilotc.Recalculate)
 
 		r.Get("/shop/dashboard", sc.GetMerchantDashboard)
 		r.Get("/shop/digest", sc.GetDailyDigest)

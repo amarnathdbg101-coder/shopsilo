@@ -37,6 +37,7 @@ type Repositories struct {
 	MicroPlan    *repository.MicroPlanRepo
 	AIAssistant  *repository.AIAssistantRepo
 	AppVersion   *repository.AppVersionRepo
+	Copilot      *repository.CopilotRepo
 }
 
 // Services holds all centralized business logic service instances.
@@ -70,6 +71,7 @@ type Services struct {
 	EODPDF       *services.EODPDFService
 	Assistant    *services.MerchantAssistantService
 	AppVersion   *services.AppVersionService
+	Copilot      *services.CopilotService
 }
 
 // Controllers holds all centralized HTTP controller instances.
@@ -105,6 +107,7 @@ type Controllers struct {
 	EODReport     *controller.EODReportController
 	Assistant     *controller.MerchantAssistantController
 	AppVersion    *controller.AppVersionController
+	Copilot       *controller.CopilotController
 }
 
 // Container is the single source of truth application registry holding all centralized components.
@@ -146,6 +149,7 @@ func NewContainer(db *pgxpool.Pool, logger *zap.Logger) *Container {
 		MicroPlan:    repository.NewMicroPlanRepo(db, logger),
 		AIAssistant:  repository.NewAIAssistantRepo(db, logger),
 		AppVersion:   repository.NewAppVersionRepo(db, logger),
+		Copilot:      repository.NewCopilotRepo(db, logger),
 	}
 
 	// 2. Initialize Services (Domain Business Logic Layer)
@@ -181,6 +185,7 @@ func NewContainer(db *pgxpool.Pool, logger *zap.Logger) *Container {
 		MicroPlan:    services.NewMicroPlanService(repos.MicroPlan, repos.Shop, repos.User, repos.Khata, logger),
 		EODPDF:       services.NewEODPDFService(repos.Shop, repos.POS, repos.CashDrawer, logger),
 		AppVersion:   services.NewAppVersionService(repos.AppVersion, logger),
+		Copilot:      services.NewCopilotService(repos.Copilot, repos.Shop, logger),
 	}
 
 	// 3. Centralized Inter-Service Wiring
@@ -231,6 +236,7 @@ func NewContainer(db *pgxpool.Pool, logger *zap.Logger) *Container {
 		EODReport:     controller.NewEODReportController(svcs.EODPDF),
 		Assistant:     controller.NewMerchantAssistantController(svcs.Assistant),
 		AppVersion:    controller.NewAppVersionController(svcs.AppVersion, "./downloads", logger),
+		Copilot:       controller.NewCopilotController(svcs.Copilot),
 	}
 
 	return &Container{
