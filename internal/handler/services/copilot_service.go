@@ -3,6 +3,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -62,6 +63,10 @@ func (s *CopilotService) EvaluateBargain(ctx context.Context, userID string, req
 		return nil, ErrShopRequired
 	}
 
+	if math.IsNaN(req.CustomerOfferedPrice) || math.IsInf(req.CustomerOfferedPrice, 0) || req.CustomerOfferedPrice <= 0 || req.CustomerOfferedPrice > 1e8 {
+		return nil, errors.New("invalid customer offered price: must be a positive realistic number")
+	}
+
 	intel, err := s.repo.GetProductIntelligence(ctx, shop.ID, req.ProductID)
 	if err != nil {
 		return nil, err
@@ -76,6 +81,11 @@ func (s *CopilotService) EvaluateBargain(ctx context.Context, userID string, req
 
 	costPrice := intel.CostPrice
 	originalPrice := intel.ProductPrice
+	if costPrice <= 0 && originalPrice > 0 {
+		// Conservative safety fallback: If cost was unrecorded by merchant, assume 70% cost basis to prevent margin bleed
+		costPrice = math.Round(originalPrice * 0.70)
+	}
+
 	hardFloorPrice := intel.FloorPrice
 	if hardFloorPrice <= costPrice {
 		// Absolute safety rule: Never sell below Cost + 12%

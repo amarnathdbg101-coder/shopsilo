@@ -370,6 +370,9 @@ func (r *CopilotRepo) inferCustomerFromBills(ctx context.Context, shopID, phone 
 // SearchSubstitutes finds exact in-stock items or the best substitutes based on domain attributes.
 func (r *CopilotRepo) SearchSubstitutes(ctx context.Context, shopID string, req dto.SearchSubstituteRequest) ([]*model.SubstituteRecommendation, error) {
 	q := strings.TrimSpace(req.Query)
+	if len(q) > 300 {
+		q = q[:300]
+	}
 	terms := strings.Fields(strings.ToLower(q))
 	limit := req.Limit
 	if limit <= 0 || limit > 10 {
@@ -543,7 +546,10 @@ func (r *CopilotRepo) RecalculateABCXYZ(ctx context.Context, shopID string) erro
 	// 2. Perform ABC-XYZ scoring
 	now := time.Now()
 	for _, m := range metrics {
-		revShare := m.rev / m.grandRev
+		revShare := 0.0
+		if m.grandRev > 0 && !math.IsNaN(m.grandRev) && !math.IsInf(m.grandRev, 0) {
+			revShare = m.rev / m.grandRev
+		}
 		abcTier := "C"
 		if revShare >= 0.05 {
 			abcTier = "A" // Top revenue
@@ -552,9 +558,16 @@ func (r *CopilotRepo) RecalculateABCXYZ(ctx context.Context, shopID string) erro
 		}
 
 		dailyVel := float64(m.qtySold) / 30.0
+		if math.IsNaN(dailyVel) || math.IsInf(dailyVel, 0) || dailyVel < 0 {
+			dailyVel = 0.0
+		}
+
 		cv := 1.5 // Default high variance
-		if dailyVel > 0 {
+		if dailyVel > 0 && !math.IsNaN(m.stddev) && !math.IsInf(m.stddev, 0) {
 			cv = m.stddev / dailyVel
+		}
+		if math.IsNaN(cv) || math.IsInf(cv, 0) {
+			cv = 1.5
 		}
 
 		xyzTier := "Z"
@@ -566,7 +579,10 @@ func (r *CopilotRepo) RecalculateABCXYZ(ctx context.Context, shopID string) erro
 
 		daysSupply := 999
 		if dailyVel > 0 {
-			daysSupply = int(float64(m.stock) / dailyVel)
+			rawSupply := float64(m.stock) / dailyVel
+			if !math.IsNaN(rawSupply) && !math.IsInf(rawSupply, 0) && rawSupply >= 0 {
+				daysSupply = int(math.Min(999, rawSupply))
+			}
 		}
 
 		isDeadStock := false
