@@ -49,6 +49,7 @@ func RouteSetup(c *app.Container) chi.Router {
 	appvc := c.Controllers.AppVersion
 	copilotc := c.Controllers.Copilot
 	mcc := c.Controllers.MasterCatalog
+	backupc := c.Controllers.Backup
 
 	r := chi.NewRouter()
 
@@ -647,6 +648,10 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/products/soft-deleted", mcc.ListSoftDeletedProducts) // Admin
 		r.Post("/products/{id}/restore", mcc.RestoreProduct)         // Admin
 		r.Delete("/products/{id}", mcc.AdminHardDeleteProduct)       // Admin
+
+		// Database Backups & Snapshots (Admin Only)
+		r.Post("/backup/trigger", backupc.TriggerOnDemandBackup)     // Admin
+		r.Get("/backups", backupc.ListCloudBackups)                  // Admin
 	})
 
 	return r

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -152,6 +153,13 @@ func (r *MasterCatalogRepo) FindShopProductByBarcode(ctx context.Context, shopID
 		return nil, err
 	}
 
+	if len(rawImages) > 0 {
+		_ = json.Unmarshal(rawImages, &p.Images)
+	}
+	if len(rawAttrs) > 0 {
+		_ = json.Unmarshal(rawAttrs, &p.Attributes)
+	}
+
 	p.StockQuantity = invQuantity
 	p.LowStockThreshold = invLowStock
 	p.UnitProfit = p.Price - p.CostPrice
@@ -187,7 +195,11 @@ func (r *MasterCatalogRepo) FindAnyShopProductByBarcode(ctx context.Context, bar
 			COALESCE(p.description, ''),
 			COALESCE(p.images->>0, ''),
 			COALESCE(p.attributes->>'hsn_code', ''),
-			COALESCE((p.attributes->>'gst_rate')::numeric, 5),
+			CASE 
+				WHEN p.attributes->>'gst_rate' ~ '^[0-9]+(\.[0-9]+)?$' 
+				THEN (p.attributes->>'gst_rate')::numeric 
+				ELSE 5.0 
+			END,
 			p.created_at
 		FROM products p
 		LEFT JOIN categories c ON p.category_id = c.id

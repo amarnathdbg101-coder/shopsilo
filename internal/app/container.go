@@ -111,6 +111,7 @@ type Controllers struct {
 	AppVersion    *controller.AppVersionController
 	Copilot       *controller.CopilotController
 	MasterCatalog *controller.MasterCatalogController
+	Backup        *controller.BackupController
 }
 
 // Container is the single source of truth application registry holding all centralized components.
@@ -243,6 +244,7 @@ func NewContainer(db *pgxpool.Pool, logger *zap.Logger) *Container {
 		AppVersion:    controller.NewAppVersionController(svcs.AppVersion, "./downloads", logger),
 		Copilot:       controller.NewCopilotController(svcs.Copilot),
 		MasterCatalog: controller.NewMasterCatalogController(svcs.MasterCatalog, logger),
+		Backup:        controller.NewBackupController(db, logger),
 	}
 
 	return &Container{

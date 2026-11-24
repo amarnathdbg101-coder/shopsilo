@@ -50,22 +50,22 @@ func (s *MasterCatalogService) LookupByBarcode(ctx context.Context, userID, barc
 		IsValidChecksum:  isValidChecksum,
 	}
 
-	// 1. Resolve merchant's shop ID (cached in RAM for 0ms repeat lookups)
+	// 1. Resolve merchant's shop ID directly
 	var merchantShopID string
 	cleanUID := strings.TrimSpace(userID)
 	if cleanUID != "" {
-		if cached, ok := s.userShopCache.Load(cleanUID); ok {
+		if cached, ok := s.userShopCache.Load(cleanUID); ok && cached.(string) != "" {
 			merchantShopID = cached.(string)
 		} else {
 			shop, err := s.shopRepo.FindByUserID(ctx, cleanUID)
 			if err == nil && shop != nil {
 				merchantShopID = shop.ID
+				s.userShopCache.Store(cleanUID, merchantShopID)
 			}
-			s.userShopCache.Store(cleanUID, merchantShopID) // Cache even if empty to prevent repeated DB roundtrips
 		}
 	}
 
-	// 2. Check if product already exists in merchant's own active inventory (Prevents duplicate product rows!)
+	// 2. Check if product already exists in merchant's own active inventory
 	if merchantShopID != "" {
 		shopProduct, err := s.repo.FindShopProductByBarcode(ctx, merchantShopID, cleanBarcode)
 		if err != nil {
@@ -74,6 +74,57 @@ func (s *MasterCatalogService) LookupByBarcode(ctx context.Context, userID, barc
 		if shopProduct != nil {
 			resp.ExistsInShop = true
 			resp.ShopProduct = shopProduct
+
+			// Also populate MasterProduct from the shop's live product so the Add Product modal
+			// can auto-fill all fields (name, price, images, brand, etc.) without leaving the form blank!
+			var imgURL string
+			if len(shopProduct.Images) > 0 {
+				imgURL = shopProduct.Images[0]
+			}
+			brand := ""
+			unit := "piece"
+			hsnCode := ""
+			gstRate := 5.0
+			if shopProduct.Attributes != nil {
+				if b, ok := shopProduct.Attributes["brand"].(string); ok && b != "" {
+					brand = b
+				}
+				if u, ok := shopProduct.Attributes["unit"].(string); ok && u != "" {
+					unit = u
+				}
+				if h, ok := shopProduct.Attributes["hsn_code"].(string); ok && h != "" {
+					hsnCode = h
+				}
+				if g, ok := shopProduct.Attributes["gst_rate"].(float64); ok && g > 0 {
+					gstRate = g
+				}
+			}
+			mrp := shopProduct.ComparePrice
+			if mrp <= 0 {
+				mrp = shopProduct.MRP
+			}
+			if mrp <= 0 {
+				mrp = shopProduct.Price
+			}
+
+			resp.MasterFound = true
+			resp.MasterProduct = &model.MasterCatalogProduct{
+				ID:           shopProduct.ID,
+				Barcode:      cleanBarcode,
+				Name:         shopProduct.Name,
+				Brand:        brand,
+				Category:     shopProduct.CategoryName,
+				Unit:         unit,
+				MRP:          mrp,
+				SellingPrice: shopProduct.Price,
+				Description:  shopProduct.Description,
+				ImageURL:     imgURL,
+				HSNCode:      hsnCode,
+				GSTRate:      gstRate,
+				Source:       "shop_inventory",
+				TrustScore:   100,
+				IsVerified:   true,
+			}
 			return resp, nil
 		}
 	}
@@ -84,6 +135,13 @@ func (s *MasterCatalogService) LookupByBarcode(ctx context.Context, userID, barc
 		return nil, err
 	}
 	if masterProduct != nil {
+		// If master product is missing an image, fallback to check any crowdsourced shop product
+		if strings.TrimSpace(masterProduct.ImageURL) == "" {
+			if crowdsourced, _ := s.repo.FindAnyShopProductByBarcode(ctx, cleanBarcode); crowdsourced != nil && strings.TrimSpace(crowdsourced.ImageURL) != "" {
+				masterProduct.ImageURL = crowdsourced.ImageURL
+			}
+		}
+
 		resp.MasterFound = true
 		resp.MasterProduct = masterProduct
 
