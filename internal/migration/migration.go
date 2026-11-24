@@ -857,6 +857,43 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		// 000042: Global B-Tree Expression Indexes for High-Speed Cross-Shop & Crowdsourced SKU/Barcode Auto-Fill
 		"CREATE INDEX IF NOT EXISTS idx_products_global_sku_active ON products (TRIM(LOWER(sku))) WHERE is_active = true AND deleted_at IS NULL;",
 		"CREATE INDEX IF NOT EXISTS idx_products_global_barcode_active ON products (TRIM(LOWER(attributes->>'barcode'))) WHERE attributes ? 'barcode' AND is_active = true AND deleted_at IS NULL;",
+
+		// 000043: IT Rules 2021 Grievance & Content Reports Table
+		`CREATE TABLE IF NOT EXISTS content_reports (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			reporter_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+			target_type VARCHAR(50) NOT NULL,
+			target_id VARCHAR(100) NOT NULL,
+			reason VARCHAR(100) NOT NULL,
+			details TEXT,
+			status VARCHAR(50) NOT NULL DEFAULT 'pending',
+			reporter_ip VARCHAR(100),
+			reporter_user_agent TEXT,
+			action_taken TEXT,
+			reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+			reviewed_at TIMESTAMPTZ,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		"CREATE INDEX IF NOT EXISTS idx_content_reports_status ON content_reports(status);",
+		"CREATE INDEX IF NOT EXISTS idx_content_reports_target ON content_reports(target_type, target_id);",
+		"CREATE INDEX IF NOT EXISTS idx_content_reports_created_at ON content_reports(created_at DESC);",
+
+		// Seed Default Super Admin Account (admin@shopsilo.in / Admin@ShopSilo101)
+		`INSERT INTO users (id, email, password_hash, full_name, role, is_active, created_at, updated_at)
+		VALUES (
+			'b9330944-2002-41ac-9473-d0dc627c8503',
+			'admin@shopsilo.in',
+			'$2a$12$FOAsw0UUL5.wlaRiemErF.PalpeW6.raYAIZZKbxAk1826SBWWC8O',
+			'ShopSilo Super Admin',
+			'admin',
+			true,
+			NOW(),
+			NOW()
+		)
+		ON CONFLICT (email) DO UPDATE SET password_hash = '$2a$12$FOAsw0UUL5.wlaRiemErF.PalpeW6.raYAIZZKbxAk1826SBWWC8O', role = 'admin', is_active = true;`,
+
+		// Ensure Founder account has admin role
+		"UPDATE users SET role = 'admin' WHERE email = 'mrprofessordbg101@gmail.com';",
 	}
 
 	for _, q := range queries {
