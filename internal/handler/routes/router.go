@@ -48,6 +48,7 @@ func RouteSetup(c *app.Container) chi.Router {
 	eodc := c.Controllers.EODReport
 	appvc := c.Controllers.AppVersion
 	copilotc := c.Controllers.Copilot
+	mcc := c.Controllers.MasterCatalog
 
 	r := chi.NewRouter()
 
@@ -457,6 +458,7 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Delete("/shops/me/categories/{id}", catc.DeleteShopCategory)                                     // Shop
 		r.Get("/shops/me/products", pc.ListMyShopProducts)                                                 // Shop
 		r.Get("/shops/me/products/barcode/{barcode}", pc.GetByBarcode)                                     // Shop
+		r.Get("/shops/me/catalog/lookup/{barcode}", mcc.Lookup)                                             // Master Catalog 1-Tap Lookup
 		r.With(middleware.MutationRateLimiter.Middleware()).Post("/products", pc.Create)                  // Shop
 		r.With(middleware.MutationRateLimiter.Middleware()).Post("/shops/me/products", pc.Create)         // Shop Alias
 		r.Put("/products/{id}", pc.Update)                                                                 // Shop
@@ -631,6 +633,10 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/errors", telc.GetAdminErrors)                    // Admin
 		r.Delete("/errors/clear", telc.ClearAdminErrors)          // Admin
 		r.Get("/performance-metrics", telc.GetLivePerformanceMetrics) // Admin
+
+		// Master Catalog Curation & Hard Delete (Admin Only)
+		r.Post("/catalog/bulk-seed", mcc.BulkSeed)              // Admin
+		r.Delete("/products/{id}", mcc.AdminHardDeleteProduct)  // Admin
 	})
 
 	return r

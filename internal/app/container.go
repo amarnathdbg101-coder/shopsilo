@@ -38,6 +38,7 @@ type Repositories struct {
 	AIAssistant  *repository.AIAssistantRepo
 	AppVersion   *repository.AppVersionRepo
 	Copilot      *repository.CopilotRepo
+	MasterCatalog *repository.MasterCatalogRepo
 }
 
 // Services holds all centralized business logic service instances.
@@ -72,6 +73,7 @@ type Services struct {
 	Assistant    *services.MerchantAssistantService
 	AppVersion   *services.AppVersionService
 	Copilot      *services.CopilotService
+	MasterCatalog *services.MasterCatalogService
 }
 
 // Controllers holds all centralized HTTP controller instances.
@@ -108,6 +110,7 @@ type Controllers struct {
 	Assistant     *controller.MerchantAssistantController
 	AppVersion    *controller.AppVersionController
 	Copilot       *controller.CopilotController
+	MasterCatalog *controller.MasterCatalogController
 }
 
 // Container is the single source of truth application registry holding all centralized components.
@@ -150,6 +153,7 @@ func NewContainer(db *pgxpool.Pool, logger *zap.Logger) *Container {
 		AIAssistant:  repository.NewAIAssistantRepo(db, logger),
 		AppVersion:   repository.NewAppVersionRepo(db, logger),
 		Copilot:      repository.NewCopilotRepo(db, logger),
+		MasterCatalog: repository.NewMasterCatalogRepo(db, logger),
 	}
 
 	// 2. Initialize Services (Domain Business Logic Layer)
@@ -186,6 +190,7 @@ func NewContainer(db *pgxpool.Pool, logger *zap.Logger) *Container {
 		EODPDF:       services.NewEODPDFService(repos.Shop, repos.POS, repos.CashDrawer, logger),
 		AppVersion:   services.NewAppVersionService(repos.AppVersion, logger),
 		Copilot:      services.NewCopilotService(repos.Copilot, repos.Shop, logger),
+		MasterCatalog: services.NewMasterCatalogService(repos.MasterCatalog, repos.Shop, logger),
 	}
 
 	// 3. Centralized Inter-Service Wiring
@@ -237,6 +242,7 @@ func NewContainer(db *pgxpool.Pool, logger *zap.Logger) *Container {
 		Assistant:     controller.NewMerchantAssistantController(svcs.Assistant),
 		AppVersion:    controller.NewAppVersionController(svcs.AppVersion, "./downloads", logger),
 		Copilot:       controller.NewCopilotController(svcs.Copilot),
+		MasterCatalog: controller.NewMasterCatalogController(svcs.MasterCatalog, logger),
 	}
 
 	return &Container{

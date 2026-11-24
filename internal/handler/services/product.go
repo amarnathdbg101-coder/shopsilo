@@ -410,18 +410,9 @@ func (s *ProductService) DeleteProduct(ctx context.Context, userID, productID st
 		return errors.New("unauthorized: you do not own this product")
 	}
 
-	// 3. Delete from database
+	// 3. Soft delete from database (images are preserved for past bills and invoices)
 	if err := s.productRepo.Delete(ctx, productID, shop.ID); err != nil {
 		return err
-	}
-
-	// 4. Asynchronously clean up orphaned images from Cloudflare R2 storage
-	if len(existing.Images) > 0 {
-		go func(imgs []string) {
-			for _, img := range imgs {
-				_ = reuse.DeleteImage(img)
-			}
-		}(existing.Images)
 	}
 
 	wsHub := GetWebSocketHub(nil)

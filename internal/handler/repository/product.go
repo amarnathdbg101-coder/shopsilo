@@ -1266,7 +1266,7 @@ func (r *ProductRepo) Delete(ctx context.Context, id, shopID string) error {
 	// Soft delete product so past POS sales, receipts, and Khata bills remain intact!
 	query := `
 		UPDATE products
-		SET is_active = false, updated_at = NOW()
+		SET is_active = false, deleted_at = NOW(), updated_at = NOW()
 		WHERE id = $1 AND shop_id = $2
 	`
 	cmdTag, err := r.db.Exec(ctx, query, id, shopID)
@@ -1289,7 +1289,7 @@ func (r *ProductRepo) BatchDelete(ctx context.Context, shopID string, productIDs
 
 	query := `
 		UPDATE products
-		SET is_active = false, updated_at = NOW()
+		SET is_active = false, deleted_at = NOW(), updated_at = NOW()
 		WHERE shop_id = $1 AND id::text = ANY($2)
 	`
 	cmdTag, err := r.db.Exec(ctx, query, shopID, productIDs)
