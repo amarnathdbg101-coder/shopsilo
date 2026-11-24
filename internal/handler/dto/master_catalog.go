@@ -5,6 +5,8 @@ import "shopMe/internal/handler/model"
 // CatalogLookupResponse is returned when a merchant scans a barcode in their POS or Inventory.
 type CatalogLookupResponse struct {
 	Barcode            string                      `json:"barcode"`
+	CanonicalBarcode   string                      `json:"canonical_barcode,omitempty"`
+	IsValidChecksum    bool                        `json:"is_valid_checksum"`
 	ExistsInShop       bool                        `json:"exists_in_shop"`
 	ShopProduct        *model.Product              `json:"shop_product,omitempty"`
 	MasterFound        bool                        `json:"master_found"`

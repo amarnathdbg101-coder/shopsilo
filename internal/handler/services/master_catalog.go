@@ -4,19 +4,22 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 
 	"go.uber.org/zap"
 
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
 	"shopMe/internal/handler/repository"
+	"shopMe/internal/utils"
 )
 
 // MasterCatalogService provides business logic for catalog lookups and admin bulk seeding.
 type MasterCatalogService struct {
-	repo     *repository.MasterCatalogRepo
-	shopRepo *repository.ShopRepo
-	logger   *zap.Logger
+	repo          *repository.MasterCatalogRepo
+	shopRepo      *repository.ShopRepo
+	logger        *zap.Logger
+	userShopCache sync.Map // map[userID string]shopID string for 0ms repeat resolutions
 }
 
 func NewMasterCatalogService(
@@ -34,21 +37,31 @@ func NewMasterCatalogService(
 // LookupByBarcode searches the merchant's store first, then falls back to the universal Master Catalog,
 // and finally checks any other shop in the database for crowdsourced learning.
 func (s *MasterCatalogService) LookupByBarcode(ctx context.Context, userID, barcode string) (*dto.CatalogLookupResponse, error) {
-	cleanBarcode := strings.TrimSpace(barcode)
+	cleanBarcode := utils.CleanBarcode(barcode)
 	if cleanBarcode == "" {
 		return nil, errors.New("barcode cannot be empty")
 	}
 
+	isValidChecksum := utils.ValidateGS1Checksum(cleanBarcode)
+
 	resp := &dto.CatalogLookupResponse{
-		Barcode: cleanBarcode,
+		Barcode:          cleanBarcode,
+		CanonicalBarcode: cleanBarcode,
+		IsValidChecksum:  isValidChecksum,
 	}
 
-	// 1. Resolve merchant's shop ID (graceful - don't fail if user has no shop profile yet)
+	// 1. Resolve merchant's shop ID (cached in RAM for 0ms repeat lookups)
 	var merchantShopID string
-	if strings.TrimSpace(userID) != "" {
-		shop, err := s.shopRepo.FindByUserID(ctx, userID)
-		if err == nil && shop != nil {
-			merchantShopID = shop.ID
+	cleanUID := strings.TrimSpace(userID)
+	if cleanUID != "" {
+		if cached, ok := s.userShopCache.Load(cleanUID); ok {
+			merchantShopID = cached.(string)
+		} else {
+			shop, err := s.shopRepo.FindByUserID(ctx, cleanUID)
+			if err == nil && shop != nil {
+				merchantShopID = shop.ID
+			}
+			s.userShopCache.Store(cleanUID, merchantShopID) // Cache even if empty to prevent repeated DB roundtrips
 		}
 	}
 

@@ -853,6 +853,10 @@ func EnsureSchemaColumns(pool *pgxpool.Pool) {
 		"CREATE INDEX IF NOT EXISTS idx_products_shop_active_deleted ON products(shop_id, is_active) WHERE deleted_at IS NULL;",
 		"CREATE INDEX IF NOT EXISTS idx_products_shop_sku_active ON products(shop_id, TRIM(LOWER(sku))) WHERE is_active = true AND deleted_at IS NULL;",
 		"CREATE INDEX IF NOT EXISTS idx_products_shop_barcode_active ON products(shop_id, TRIM(LOWER(attributes->>'barcode'))) WHERE attributes ? 'barcode' AND is_active = true AND deleted_at IS NULL;",
+
+		// 000042: Global B-Tree Expression Indexes for High-Speed Cross-Shop & Crowdsourced SKU/Barcode Auto-Fill
+		"CREATE INDEX IF NOT EXISTS idx_products_global_sku_active ON products (TRIM(LOWER(sku))) WHERE is_active = true AND deleted_at IS NULL;",
+		"CREATE INDEX IF NOT EXISTS idx_products_global_barcode_active ON products (TRIM(LOWER(attributes->>'barcode'))) WHERE attributes ? 'barcode' AND is_active = true AND deleted_at IS NULL;",
 	}
 
 	for _, q := range queries {
