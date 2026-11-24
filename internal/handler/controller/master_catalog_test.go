@@ -93,4 +93,43 @@ func TestMasterCatalogController(t *testing.T) {
 			t.Fatalf("expected 400 Bad Request for missing id, got %d", w.Code)
 		}
 	})
+
+	t.Run("CreateMasterProduct rejects invalid JSON body", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/admin/catalog/products", bytes.NewBufferString("invalid json"))
+		w := httptest.NewRecorder()
+
+		mcc.CreateMasterProduct(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request for invalid JSON, got %d", w.Code)
+		}
+	})
+
+	t.Run("UpdateMasterProduct requires valid id parameter", func(t *testing.T) {
+		rctx := chi.NewRouteContext()
+		ctx := context.WithValue(context.Background(), chi.RouteCtxKey, rctx)
+
+		req := httptest.NewRequest(http.MethodPut, "/admin/catalog/products/", bytes.NewBufferString("{}")).WithContext(ctx)
+		w := httptest.NewRecorder()
+
+		mcc.UpdateMasterProduct(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request for missing id, got %d", w.Code)
+		}
+	})
+
+	t.Run("RestoreProduct requires valid id parameter", func(t *testing.T) {
+		rctx := chi.NewRouteContext()
+		ctx := context.WithValue(context.Background(), chi.RouteCtxKey, rctx)
+
+		req := httptest.NewRequest(http.MethodPost, "/admin/products//restore", nil).WithContext(ctx)
+		w := httptest.NewRecorder()
+
+		mcc.RestoreProduct(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request for missing id, got %d", w.Code)
+		}
+	})
 }

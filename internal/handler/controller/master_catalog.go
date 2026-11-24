@@ -3,12 +3,14 @@ package controller
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
 	"shopMe/internal/handler/dto"
+	"shopMe/internal/handler/model"
 	"shopMe/internal/middleware"
 	"shopMe/internal/reuse"
 	"shopMe/internal/handler/services"
@@ -102,4 +104,156 @@ func (c *MasterCatalogController) AdminHardDeleteProduct(w http.ResponseWriter, 
 	reuse.Success(w, "Product permanently deleted by admin", map[string]string{
 		"deleted_id": productID,
 	})
+}
+
+// ListMasterProducts handles GET /admin/catalog/products
+func (c *MasterCatalogController) ListMasterProducts(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	search := q.Get("search")
+	brand := q.Get("brand")
+	category := q.Get("category")
+
+	limit := 50
+	if l, err := strconv.Atoi(q.Get("limit")); err == nil && l > 0 && l <= 100 {
+		limit = l
+	}
+	offset := 0
+	if o, err := strconv.Atoi(q.Get("offset")); err == nil && o >= 0 {
+		offset = o
+	}
+
+	var isVerified *bool
+	if v := q.Get("is_verified"); v != "" {
+		parsed := v == "true" || v == "1"
+		isVerified = &parsed
+	}
+
+	products, total, err := c.catalogService.ListMasterProducts(r.Context(), search, brand, category, isVerified, limit, offset)
+	if err != nil {
+		c.logger.Error("list master products failed", zap.Error(err))
+		reuse.Error(w, http.StatusInternalServerError, "failed to list master products: "+err.Error())
+		return
+	}
+
+	reuse.Success(w, "Master products retrieved", map[string]interface{}{
+		"products": products,
+		"total":    total,
+		"limit":    limit,
+		"offset":   offset,
+	})
+}
+
+// CreateMasterProduct handles POST /admin/catalog/products
+func (c *MasterCatalogController) CreateMasterProduct(w http.ResponseWriter, r *http.Request) {
+	var p model.MasterCatalogProduct
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	created, err := c.catalogService.CreateMasterProduct(r.Context(), &p)
+	if err != nil {
+		c.logger.Error("create master product failed", zap.Error(err))
+		reuse.Error(w, http.StatusBadRequest, "failed to create master product: "+err.Error())
+		return
+	}
+
+	reuse.Success(w, "Master product created successfully", created)
+}
+
+// UpdateMasterProduct handles PUT /admin/catalog/products/{id}
+func (c *MasterCatalogController) UpdateMasterProduct(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if strings.TrimSpace(id) == "" {
+		reuse.Error(w, http.StatusBadRequest, "product id is required")
+		return
+	}
+
+	var p model.MasterCatalogProduct
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	updated, err := c.catalogService.UpdateMasterProduct(r.Context(), id, &p)
+	if err != nil {
+		c.logger.Error("update master product failed", zap.Error(err))
+		reuse.Error(w, http.StatusInternalServerError, "failed to update master product: "+err.Error())
+		return
+	}
+
+	reuse.Success(w, "Master product updated successfully", updated)
+}
+
+// DeleteMasterProduct handles DELETE /admin/catalog/products/{id}
+func (c *MasterCatalogController) DeleteMasterProduct(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if strings.TrimSpace(id) == "" {
+		reuse.Error(w, http.StatusBadRequest, "product id is required")
+		return
+	}
+
+	if err := c.catalogService.DeleteMasterProduct(r.Context(), id); err != nil {
+		c.logger.Error("delete master product failed", zap.Error(err))
+		reuse.Error(w, http.StatusInternalServerError, "failed to delete master product: "+err.Error())
+		return
+	}
+
+	reuse.Success(w, "Master product deleted successfully", map[string]string{"deleted_id": id})
+}
+
+// GetMasterStats handles GET /admin/catalog/stats
+func (c *MasterCatalogController) GetMasterStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := c.catalogService.GetMasterStats(r.Context())
+	if err != nil {
+		c.logger.Error("get master stats failed", zap.Error(err))
+		reuse.Error(w, http.StatusInternalServerError, "failed to get stats: "+err.Error())
+		return
+	}
+	reuse.Success(w, "Master catalog stats retrieved", stats)
+}
+
+// ListSoftDeletedProducts handles GET /admin/products/soft-deleted
+func (c *MasterCatalogController) ListSoftDeletedProducts(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	search := q.Get("search")
+	limit := 50
+	if l, err := strconv.Atoi(q.Get("limit")); err == nil && l > 0 && l <= 100 {
+		limit = l
+	}
+	offset := 0
+	if o, err := strconv.Atoi(q.Get("offset")); err == nil && o >= 0 {
+		offset = o
+	}
+
+	items, total, err := c.catalogService.ListSoftDeletedProducts(r.Context(), search, limit, offset)
+	if err != nil {
+		c.logger.Error("list soft deleted products failed", zap.Error(err))
+		reuse.Error(w, http.StatusInternalServerError, "failed to list soft deleted products: "+err.Error())
+		return
+	}
+
+	reuse.Success(w, "Soft-deleted products retrieved", map[string]interface{}{
+		"products": items,
+		"total":    total,
+		"limit":    limit,
+		"offset":   offset,
+	})
+}
+
+// RestoreProduct handles POST /admin/products/{id}/restore
+func (c *MasterCatalogController) RestoreProduct(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if strings.TrimSpace(id) == "" {
+		reuse.Error(w, http.StatusBadRequest, "product id is required")
+		return
+	}
+
+	if err := c.catalogService.RestoreProduct(r.Context(), id); err != nil {
+		c.logger.Error("restore product failed", zap.Error(err))
+		reuse.Error(w, http.StatusInternalServerError, "failed to restore product: "+err.Error())
+		return
+	}
+
+	reuse.Success(w, "Product restored to active store catalog", map[string]string{"restored_id": id})
 }

@@ -143,3 +143,56 @@ func (s *MasterCatalogService) AdminHardDeleteProduct(ctx context.Context, produ
 	}
 	return s.repo.HardDeleteProduct(ctx, cleanID)
 }
+
+// ListMasterProducts queries master products for admin catalog management.
+func (s *MasterCatalogService) ListMasterProducts(ctx context.Context, search, brand, category string, isVerified *bool, limit, offset int) ([]*model.MasterCatalogProduct, int64, error) {
+	return s.repo.ListMasterProducts(ctx, search, brand, category, isVerified, limit, offset)
+}
+
+// CreateMasterProduct adds or upserts a single master catalog product.
+func (s *MasterCatalogService) CreateMasterProduct(ctx context.Context, p *model.MasterCatalogProduct) (*model.MasterCatalogProduct, error) {
+	if strings.TrimSpace(p.Barcode) == "" {
+		return nil, errors.New("barcode is required")
+	}
+	if strings.TrimSpace(p.Name) == "" {
+		return nil, errors.New("product name is required")
+	}
+	return s.repo.CreateMasterProduct(ctx, p)
+}
+
+// UpdateMasterProduct modifies an existing master product.
+func (s *MasterCatalogService) UpdateMasterProduct(ctx context.Context, id string, p *model.MasterCatalogProduct) (*model.MasterCatalogProduct, error) {
+	cleanID := strings.TrimSpace(id)
+	if cleanID == "" {
+		return nil, errors.New("product id is required")
+	}
+	return s.repo.UpdateMasterProduct(ctx, cleanID, p)
+}
+
+// DeleteMasterProduct soft-deletes a product from the master catalog.
+func (s *MasterCatalogService) DeleteMasterProduct(ctx context.Context, id string) error {
+	cleanID := strings.TrimSpace(id)
+	if cleanID == "" {
+		return errors.New("product id is required")
+	}
+	return s.repo.DeleteMasterProduct(ctx, cleanID)
+}
+
+// GetMasterStats returns metrics for master catalog and soft-deleted items.
+func (s *MasterCatalogService) GetMasterStats(ctx context.Context) (map[string]interface{}, error) {
+	return s.repo.GetMasterCatalogStats(ctx)
+}
+
+// ListSoftDeletedProducts retrieves soft-deleted products across all merchant shops.
+func (s *MasterCatalogService) ListSoftDeletedProducts(ctx context.Context, search string, limit, offset int) ([]map[string]interface{}, int64, error) {
+	return s.repo.ListSoftDeletedProducts(ctx, search, limit, offset)
+}
+
+// RestoreProduct restores a soft-deleted product back to active store catalog.
+func (s *MasterCatalogService) RestoreProduct(ctx context.Context, productID string) error {
+	cleanID := strings.TrimSpace(productID)
+	if cleanID == "" {
+		return errors.New("product id is required")
+	}
+	return s.repo.RestoreProduct(ctx, cleanID)
+}

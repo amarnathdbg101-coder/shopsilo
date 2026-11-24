@@ -634,9 +634,18 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Delete("/errors/clear", telc.ClearAdminErrors)          // Admin
 		r.Get("/performance-metrics", telc.GetLivePerformanceMetrics) // Admin
 
-		// Master Catalog Curation & Hard Delete (Admin Only)
-		r.Post("/catalog/bulk-seed", mcc.BulkSeed)              // Admin
-		r.Delete("/products/{id}", mcc.AdminHardDeleteProduct)  // Admin
+		// Master Catalog Curation & Governance (Admin Only)
+		r.Get("/catalog/products", mcc.ListMasterProducts)          // Admin
+		r.Post("/catalog/products", mcc.CreateMasterProduct)        // Admin
+		r.Put("/catalog/products/{id}", mcc.UpdateMasterProduct)    // Admin
+		r.Delete("/catalog/products/{id}", mcc.DeleteMasterProduct) // Admin
+		r.Get("/catalog/stats", mcc.GetMasterStats)                 // Admin
+		r.Post("/catalog/bulk-seed", mcc.BulkSeed)                  // Admin
+
+		// Product Soft-Delete & Hard-Delete Governance
+		r.Get("/products/soft-deleted", mcc.ListSoftDeletedProducts) // Admin
+		r.Post("/products/{id}/restore", mcc.RestoreProduct)         // Admin
+		r.Delete("/products/{id}", mcc.AdminHardDeleteProduct)       // Admin
 	})
 
 	return r
