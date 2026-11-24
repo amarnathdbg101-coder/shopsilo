@@ -2231,7 +2231,7 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 		_ = r.db.QueryRow(ctx, `
 			INSERT INTO categories (name, slug, description, is_active, created_at, updated_at)
 			VALUES ('General Store', 'general-store', 'Default Kirana and General Category', true, NOW(), NOW())
-			ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
+			ON CONFLICT (slug) WHERE shop_id IS NULL DO UPDATE SET name = EXCLUDED.name
 			RETURNING id
 		`).Scan(&defaultCategoryID)
 		categoryMap["general store"] = defaultCategoryID
@@ -2259,7 +2259,7 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 		err := r.db.QueryRow(ctx, `
 			INSERT INTO categories (name, slug, description, is_active, created_at, updated_at)
 			VALUES ($1, $2, 'Auto-created from bulk import', true, NOW(), NOW())
-			ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
+			ON CONFLICT (slug) WHERE shop_id IS NULL DO UPDATE SET name = EXCLUDED.name
 			RETURNING id
 		`, strings.TrimSpace(catName), slug).Scan(&newID)
 		if err == nil && newID != "" {
@@ -2306,6 +2306,8 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 		minStock     int
 		weight       float64
 		existingID   string
+		imagesJSON   string
+		attrsJSON    string
 	}
 
 	var toInsert []sanitizedItem
@@ -2398,6 +2400,37 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 
 		weight := 0.0
 
+		// Prepare images and attributes JSONB
+		imagesJSON := "[]"
+		if item.ImageURL != "" {
+			b, _ := json.Marshal([]string{item.ImageURL})
+			imagesJSON = string(b)
+		}
+
+		attrs := make(map[string]interface{})
+		if item.Barcode != "" {
+			attrs["barcode"] = item.Barcode
+		} else if sku != "" {
+			attrs["barcode"] = sku
+		}
+		if item.Brand != "" {
+			attrs["brand"] = item.Brand
+		}
+		if item.Unit != "" {
+			attrs["unit"] = item.Unit
+		}
+		if item.HSNCode != "" {
+			attrs["hsn_code"] = item.HSNCode
+		}
+		if item.GSTRate > 0 {
+			attrs["gst_rate"] = item.GSTRate
+		}
+		attrsJSON := "{}"
+		if len(attrs) > 0 {
+			b, _ := json.Marshal(attrs)
+			attrsJSON = string(b)
+		}
+
 		if existingProductID != "" {
 			if updateExisting {
 				toUpdate = append(toUpdate, sanitizedItem{
@@ -2413,6 +2446,8 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 					minStock:     minStock,
 					weight:       weight,
 					existingID:   existingProductID,
+					imagesJSON:   imagesJSON,
+					attrsJSON:    attrsJSON,
 				})
 			} else {
 				skippedCount++
@@ -2453,10 +2488,12 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 			stock:        stock,
 			minStock:     minStock,
 			weight:       weight,
+			imagesJSON:   imagesJSON,
+			attrsJSON:    attrsJSON,
 		})
 	}
 
-	const batchChunkSize = 1000
+	const batchChunkSize = 250
 	var importedCount int
 	var updatedCount int
 
@@ -2589,8 +2626,8 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 
 		for _, it := range chunk {
 			valueStrings = append(valueStrings, fmt.Sprintf(
-				"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, '[]'::jsonb, $%d, true, false, '{}'::text[], '{}'::jsonb, NOW(), NOW())",
-				argIdx, argIdx+1, argIdx+2, argIdx+3, argIdx+4, argIdx+5, argIdx+6, argIdx+7, argIdx+8, argIdx+9, argIdx+10,
+				"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d::jsonb, $%d, true, false, '{}'::text[], $%d::jsonb, NOW(), NOW())",
+				argIdx, argIdx+1, argIdx+2, argIdx+3, argIdx+4, argIdx+5, argIdx+6, argIdx+7, argIdx+8, argIdx+9, argIdx+10, argIdx+11, argIdx+12,
 			))
 			valueArgs = append(valueArgs,
 				it.id,
@@ -2603,9 +2640,11 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 				it.costPrice,
 				it.comparePrice,
 				it.categoryID,
+				it.imagesJSON,
 				it.weight,
+				it.attrsJSON,
 			)
-			argIdx += 11
+			argIdx += 13
 
 			invValueStrings = append(invValueStrings, fmt.Sprintf("($%d, $%d, 0, $%d, NOW())", invArgIdx, invArgIdx+1, invArgIdx+2))
 			invValueArgs = append(invValueArgs, it.id, it.stock, it.minStock)
@@ -2628,9 +2667,9 @@ func (r *ProductRepo) BulkImportProducts(ctx context.Context, shopID string, ite
 					INSERT INTO products (
 						id, shop_id, name, slug, description, sku, price, cost_price, compare_price,
 						category_id, images, weight, is_active, is_featured, tags, attributes, created_at, updated_at
-					) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, '[]'::jsonb, $11, true, false, '{}'::text[], '{}'::jsonb, NOW(), NOW())
+					) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, true, false, '{}'::text[], $13::jsonb, NOW(), NOW())
 				`
-				_, sErr := r.db.Exec(ctx, singleInsert, it.id, shopID, it.name, it.slug, it.description, it.sku, it.price, it.costPrice, it.comparePrice, it.categoryID, it.weight)
+				_, sErr := r.db.Exec(ctx, singleInsert, it.id, shopID, it.name, it.slug, it.description, it.sku, it.price, it.costPrice, it.comparePrice, it.categoryID, it.imagesJSON, it.weight, it.attrsJSON)
 				if sErr != nil {
 					skippedCount++
 					addErrMsg(fmt.Sprintf("Row %d ('%s'): Insert failed: %v", it.rowNumber, it.name, sErr))

@@ -135,6 +135,10 @@ type BulkImportProductItem struct {
 	Name          string  `json:"name"`
 	SKU           string  `json:"sku"`
 	Barcode       string  `json:"barcode,omitempty"`
+	Brand         string  `json:"brand,omitempty"`
+	ImageURL      string  `json:"image_url,omitempty"`
+	HSNCode       string  `json:"hsn_code,omitempty"`
+	GSTRate       float64 `json:"gst_rate,omitempty"`
 	Price         float64 `json:"price"`
 	CostPrice     float64 `json:"cost_price,omitempty"`
 	ComparePrice  float64 `json:"compare_price,omitempty"`

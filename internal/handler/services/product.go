@@ -665,6 +665,9 @@ type importColumnMap struct {
 	unitCol     int
 	descCol     int
 	brandCol    int
+	imageCol    int
+	hsnCol      int
+	gstCol      int
 	attrPairs   []attrPair
 }
 
@@ -682,6 +685,9 @@ func resolveImportColumnMap(header []string) *importColumnMap {
 		unitCol:     -1,
 		descCol:     -1,
 		brandCol:    -1,
+		imageCol:    -1,
+		hsnCol:      -1,
+		gstCol:      -1,
 	}
 
 	for i, h := range header {
@@ -798,7 +804,28 @@ func resolveImportColumnMap(header []string) *importColumnMap {
 			}
 		}
 
-		// 12. Attribute pair detection (e.g. Attribute 1 Name, Attribute 1 Value)
+		// 12. Image URL
+		if strings.Contains(cleanH, "image") || strings.Contains(cleanH, "photo") || cleanH == "img" || cleanH == "pic" {
+			if m.imageCol == -1 {
+				m.imageCol = i
+			}
+		}
+
+		// 13. HSN Code
+		if strings.Contains(cleanH, "hsn") {
+			if m.hsnCol == -1 {
+				m.hsnCol = i
+			}
+		}
+
+		// 14. GST Rate
+		if strings.Contains(cleanH, "gst") || strings.Contains(cleanH, "tax") {
+			if m.gstCol == -1 {
+				m.gstCol = i
+			}
+		}
+
+		// 15. Attribute pair detection (e.g. Attribute 1 Name, Attribute 1 Value)
 		if isAttr && strings.Contains(cleanH, "name") {
 			if i+1 < len(header) && strings.Contains(strings.ToLower(header[i+1]), "val") {
 				m.attrPairs = append(m.attrPairs, attrPair{nameCol: i, valCol: i + 1})
@@ -921,6 +948,23 @@ func (m *importColumnMap) parseRow(row []string) *dto.BulkImportProductItem {
 		}
 	} else {
 		item.Description = baseDesc
+	}
+
+	if m.imageCol != -1 && m.imageCol < len(row) {
+		item.ImageURL = strings.TrimSpace(row[m.imageCol])
+	}
+	if m.hsnCol != -1 && m.hsnCol < len(row) {
+		item.HSNCode = strings.TrimSpace(row[m.hsnCol])
+	}
+	if m.gstCol != -1 && m.gstCol < len(row) {
+		gVal, _ := strconv.ParseFloat(cleanImportNumber(row[m.gstCol]), 64)
+		item.GSTRate = gVal
+	}
+	if brandVal != "" {
+		item.Brand = brandVal
+	}
+	if item.Barcode == "" && item.SKU != "" {
+		item.Barcode = item.SKU
 	}
 
 	return &item
