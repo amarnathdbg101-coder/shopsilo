@@ -358,6 +358,44 @@ func (r *ProductRepo) Create(ctx context.Context, p *model.Product, initialStock
 	return created, nil
 }
 
+// SyncToMasterCatalog ensures any newly added merchant product is learned by the universal Master Catalog.
+func (r *ProductRepo) SyncToMasterCatalog(ctx context.Context, p *model.Product, barcode, brand, unit, hsn, imgUrl string) error {
+	cleanBarcode := strings.TrimSpace(barcode)
+	if cleanBarcode == "" || p == nil {
+		return nil
+	}
+	if brand == "" {
+		brand = "General"
+	}
+	if unit == "" {
+		unit = "pcs"
+	}
+
+	query := `
+		INSERT INTO master_catalog_products (
+			barcode, name, brand, category, unit, mrp, selling_price,
+			description, image_url, hsn_code, gst_rate, source, trust_score, is_verified, created_at, updated_at
+		) VALUES (
+			$1, $2, $3, 'General Store', $4, $5, $6, $7, $8, $9, 5, 'merchant_organic', 90, true, NOW(), NOW()
+		)
+		ON CONFLICT (barcode) DO UPDATE SET
+			name = CASE WHEN master_catalog_products.name = '' THEN EXCLUDED.name ELSE master_catalog_products.name END,
+			image_url = CASE WHEN master_catalog_products.image_url = '' THEN EXCLUDED.image_url ELSE master_catalog_products.image_url END,
+			mrp = CASE WHEN master_catalog_products.mrp <= 0 THEN EXCLUDED.mrp ELSE master_catalog_products.mrp END,
+			updated_at = NOW();
+	`
+	mrp := p.ComparePrice
+	if mrp <= 0 {
+		mrp = p.Price
+	}
+
+	_, err := r.db.Exec(ctx, query,
+		cleanBarcode, p.Name, brand, unit, mrp, p.Price,
+		p.Description, imgUrl, hsn,
+	)
+	return err
+}
+
 func (r *ProductRepo) FindByID(ctx context.Context, id string) (*model.Product, error) {
 	query := `
 		SELECT p.id, p.shop_id, p.name, p.slug, COALESCE(p.description, ''), p.sku, p.price, COALESCE(p.cost_price, 0), COALESCE(p.compare_price, 0),

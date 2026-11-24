@@ -124,6 +124,87 @@ func (r *MasterCatalogRepo) FindShopProductByBarcode(ctx context.Context, shopID
 	return &p, nil
 }
 
+// FindAnyShopProductByBarcode searches across ALL shops in the products table
+// if a product was added by any merchant with this barcode/SKU.
+func (r *MasterCatalogRepo) FindAnyShopProductByBarcode(ctx context.Context, barcode string) (*model.MasterCatalogProduct, error) {
+	clean := strings.TrimSpace(strings.ToLower(barcode))
+	if clean == "" {
+		return nil, nil
+	}
+
+	query := `
+		SELECT 
+			p.id,
+			p.name,
+			COALESCE(NULLIF(TRIM(p.attributes->>'brand'), ''), 'General'),
+			COALESCE(NULLIF(TRIM(c.name), ''), 'General Store'),
+			COALESCE(NULLIF(TRIM(p.attributes->>'unit'), ''), 'pcs'),
+			COALESCE(p.compare_price, p.price, 0),
+			COALESCE(p.price, 0),
+			COALESCE(p.description, ''),
+			COALESCE(p.images->>0, ''),
+			COALESCE(p.attributes->>'hsn_code', ''),
+			COALESCE((p.attributes->>'gst_rate')::numeric, 5),
+			p.created_at
+		FROM products p
+		LEFT JOIN categories c ON p.category_id = c.id
+		WHERE (
+			TRIM(LOWER(COALESCE(p.sku, ''))) = $1
+			OR TRIM(LOWER(COALESCE(p.attributes->>'barcode', ''))) = $1
+		)
+		AND p.is_active = true
+		AND p.deleted_at IS NULL
+		ORDER BY p.created_at DESC
+		LIMIT 1;
+	`
+
+	var (
+		id, name, brand, category, unit, desc, img, hsn string
+		mrp, sp, gst                                    float64
+		createdAt                                       time.Time
+	)
+
+	err := r.db.QueryRow(ctx, query, clean).Scan(
+		&id, &name, &brand, &category, &unit, &mrp, &sp, &desc, &img, &hsn, &gst, &createdAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	mp := &model.MasterCatalogProduct{
+		ID:           id,
+		Barcode:      barcode,
+		Name:         name,
+		Brand:        brand,
+		Category:     category,
+		Unit:         unit,
+		MRP:          mrp,
+		SellingPrice: sp,
+		Description:  desc,
+		ImageURL:     img,
+		HSNCode:      hsn,
+		GSTRate:      gst,
+		Source:       "crowdsourced_shop",
+		TrustScore:   85,
+		IsVerified:   true,
+		ScanCount:    1,
+		CreatedAt:    createdAt,
+		UpdatedAt:    time.Now(),
+	}
+
+	// Auto-promote to master_catalog_products asynchronously so future lookups are O(1) indexed
+	go func(item *model.MasterCatalogProduct) {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = r.CreateMasterProduct(bgCtx, item)
+	}(mp)
+
+	return mp, nil
+}
+
 // BulkUpsert executes high-speed batch inserts using PostgreSQL COPY or unnested parameterized batching.
 func (r *MasterCatalogRepo) BulkUpsert(ctx context.Context, items []model.MasterCatalogProduct) (inserted int, updated int, err error) {
 	if len(items) == 0 {

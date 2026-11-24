@@ -31,32 +31,38 @@ func NewMasterCatalogService(
 	}
 }
 
-// LookupByBarcode searches the merchant's store first, then falls back to the universal Master Catalog.
+// LookupByBarcode searches the merchant's store first, then falls back to the universal Master Catalog,
+// and finally checks any other shop in the database for crowdsourced learning.
 func (s *MasterCatalogService) LookupByBarcode(ctx context.Context, userID, barcode string) (*dto.CatalogLookupResponse, error) {
 	cleanBarcode := strings.TrimSpace(barcode)
 	if cleanBarcode == "" {
 		return nil, errors.New("barcode cannot be empty")
 	}
 
-	// 1. Resolve merchant's shop ID
-	shop, err := s.shopRepo.FindByUserID(ctx, userID)
-	if err != nil {
-		return nil, errors.New("merchant shop not found")
-	}
-
 	resp := &dto.CatalogLookupResponse{
 		Barcode: cleanBarcode,
 	}
 
-	// 2. Check if product already exists in merchant's own active inventory (Prevents duplicate product rows!)
-	shopProduct, err := s.repo.FindShopProductByBarcode(ctx, shop.ID, cleanBarcode)
-	if err != nil {
-		s.logger.Warn("error checking shop product by barcode", zap.Error(err), zap.String("barcode", cleanBarcode))
+	// 1. Resolve merchant's shop ID (graceful - don't fail if user has no shop profile yet)
+	var merchantShopID string
+	if strings.TrimSpace(userID) != "" {
+		shop, err := s.shopRepo.FindByUserID(ctx, userID)
+		if err == nil && shop != nil {
+			merchantShopID = shop.ID
+		}
 	}
-	if shopProduct != nil {
-		resp.ExistsInShop = true
-		resp.ShopProduct = shopProduct
-		return resp, nil
+
+	// 2. Check if product already exists in merchant's own active inventory (Prevents duplicate product rows!)
+	if merchantShopID != "" {
+		shopProduct, err := s.repo.FindShopProductByBarcode(ctx, merchantShopID, cleanBarcode)
+		if err != nil {
+			s.logger.Warn("error checking shop product by barcode", zap.Error(err), zap.String("barcode", cleanBarcode))
+		}
+		if shopProduct != nil {
+			resp.ExistsInShop = true
+			resp.ShopProduct = shopProduct
+			return resp, nil
+		}
 	}
 
 	// 3. Search Universal Master Catalog
@@ -75,7 +81,22 @@ func (s *MasterCatalogService) LookupByBarcode(ctx context.Context, userID, barc
 		return resp, nil
 	}
 
-	// 4. Not found in shop and not found in Master Catalog
+	// 4. Crowdsourced Network Fallback: Check if ANY other shop in ShopSilo has this product SKU/barcode
+	crowdsourcedProduct, err := s.repo.FindAnyShopProductByBarcode(ctx, cleanBarcode)
+	if err != nil {
+		s.logger.Warn("error searching crowdsourced shop products", zap.Error(err), zap.String("barcode", cleanBarcode))
+	}
+	if crowdsourcedProduct != nil {
+		resp.MasterFound = true
+		resp.MasterProduct = crowdsourcedProduct
+
+		if crowdsourcedProduct.MRP > 0 {
+			resp.SuggestedMarginPct = 15.0
+		}
+		return resp, nil
+	}
+
+	// 5. Not found in shop and not found in Master Catalog
 	resp.MasterFound = false
 	return resp, nil
 }

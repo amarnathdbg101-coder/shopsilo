@@ -206,6 +206,26 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 	if err == nil && created != nil {
 		wsHub := GetWebSocketHub(nil)
 		wsHub.BroadcastToShopAndStorefront(shop.ID, shop.Slug, "PRODUCT_CREATED", created)
+
+		// Auto-sync newly created product into master catalog so any other shop can instantly scan & auto-fill it
+		code := strings.TrimSpace(created.SKU)
+		if bc, ok := created.Attributes["barcode"].(string); ok && strings.TrimSpace(bc) != "" {
+			code = strings.TrimSpace(bc)
+		}
+		if len(code) >= 2 {
+			brand, _ := created.Attributes["brand"].(string)
+			unit, _ := created.Attributes["unit"].(string)
+			hsn, _ := created.Attributes["hsn_code"].(string)
+			img := ""
+			if len(created.Images) > 0 {
+				img = created.Images[0]
+			}
+			go func(c *model.Product, barCode, bName, uName, hCode, iUrl string) {
+				bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = s.productRepo.SyncToMasterCatalog(bgCtx, c, barCode, bName, uName, hCode, iUrl)
+			}(created, code, brand, unit, hsn, img)
+		}
 	}
 
 	return created, err
