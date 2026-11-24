@@ -107,6 +107,22 @@ func (s *MasterCatalogService) LookupByBarcode(ctx context.Context, userID, barc
 				mrp = shopProduct.Price
 			}
 
+			// If shop product lacks image, brand, or HSN, enrich from Master Catalog
+			if masterItem, _ := s.repo.FindByBarcode(ctx, cleanBarcode); masterItem != nil {
+				if imgURL == "" && masterItem.ImageURL != "" {
+					imgURL = masterItem.ImageURL
+				}
+				if (brand == "" || brand == "General") && masterItem.Brand != "" {
+					brand = masterItem.Brand
+				}
+				if hsnCode == "" && masterItem.HSNCode != "" {
+					hsnCode = masterItem.HSNCode
+				}
+				if (mrp <= 0 || mrp == shopProduct.Price) && masterItem.MRP > 0 {
+					mrp = masterItem.MRP
+				}
+			}
+
 			resp.MasterFound = true
 			resp.MasterProduct = &model.MasterCatalogProduct{
 				ID:           shopProduct.ID,

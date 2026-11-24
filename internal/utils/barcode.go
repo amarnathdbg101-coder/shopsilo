@@ -94,6 +94,24 @@ func GenerateBarcodeVariants(raw string) []string {
 	add(strings.ToLower(clean))
 	add(strings.ToUpper(clean))
 
+	// 2b. Hyphen and Underscore permutations for alphanumeric SKUs (e.g. NIHAR-AMLA-200ML <-> NIHARAMLA200ML <-> NIHAR_AMLA_200ML)
+	if strings.Contains(clean, "-") || strings.Contains(clean, "_") {
+		stripped := strings.ReplaceAll(strings.ReplaceAll(clean, "-", ""), "_", "")
+		add(stripped)
+		add(strings.ToLower(stripped))
+		add(strings.ToUpper(stripped))
+
+		underscore := strings.ReplaceAll(clean, "-", "_")
+		add(underscore)
+		add(strings.ToLower(underscore))
+		add(strings.ToUpper(underscore))
+
+		hyphen := strings.ReplaceAll(clean, "_", "-")
+		add(hyphen)
+		add(strings.ToLower(hyphen))
+		add(strings.ToUpper(hyphen))
+	}
+
 	// 3. Numeric conversions: EAN-13 vs UPC-A
 	if IsNumericBarcode(clean) {
 		if len(clean) == 12 {

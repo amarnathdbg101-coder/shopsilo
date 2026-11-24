@@ -62,6 +62,10 @@ func (r *MasterCatalogRepo) FindByBarcode(ctx context.Context, barcode string) (
 	if len(variants) == 0 {
 		variants = []string{strings.ToLower(cleanBarcode)}
 	}
+	lowerVariants := make([]string, 0, len(variants))
+	for _, v := range variants {
+		lowerVariants = append(lowerVariants, strings.ToLower(strings.TrimSpace(v)))
+	}
 
 	query := `
 		SELECT 
@@ -70,13 +74,16 @@ func (r *MasterCatalogRepo) FindByBarcode(ctx context.Context, barcode string) (
 			COALESCE(hsn_code, ''), gst_rate, source, trust_score, is_verified,
 			scan_count, created_at, updated_at
 		FROM master_catalog_products
-		WHERE TRIM(LOWER(barcode)) = ANY($1) AND deleted_at IS NULL
+		WHERE (
+			TRIM(LOWER(barcode)) = ANY($1)
+			OR TRIM(LOWER(REPLACE(REPLACE(barcode, '-', ''), '_', ''))) = ANY($1)
+		) AND deleted_at IS NULL
 		ORDER BY scan_count DESC, is_verified DESC
 		LIMIT 1;
 	`
 
 	var p model.MasterCatalogProduct
-	err := r.db.QueryRow(ctx, query, variants).Scan(
+	err := r.db.QueryRow(ctx, query, lowerVariants).Scan(
 		&p.ID, &p.Barcode, &p.Name, &p.Brand, &p.Category, &p.Unit, &p.MRP, &p.SellingPrice,
 		&p.Description, &p.ImageURL, &p.HSNCode, &p.GSTRate, &p.Source, &p.TrustScore,
 		&p.IsVerified, &p.ScanCount, &p.CreatedAt, &p.UpdatedAt,
@@ -114,6 +121,10 @@ func (r *MasterCatalogRepo) FindShopProductByBarcode(ctx context.Context, shopID
 	if len(variants) == 0 {
 		variants = []string{strings.ToLower(cleanBarcode)}
 	}
+	lowerVariants := make([]string, 0, len(variants))
+	for _, v := range variants {
+		lowerVariants = append(lowerVariants, strings.ToLower(strings.TrimSpace(v)))
+	}
 
 	query := `
 		SELECT 
@@ -129,6 +140,8 @@ func (r *MasterCatalogRepo) FindShopProductByBarcode(ctx context.Context, shopID
 		  AND (
 		      TRIM(LOWER(COALESCE(p.sku, ''))) = ANY($2)
 		      OR TRIM(LOWER(COALESCE(p.attributes->>'barcode', ''))) = ANY($2)
+		      OR TRIM(LOWER(REPLACE(REPLACE(COALESCE(p.sku, ''), '-', ''), '_', ''))) = ANY($2)
+		      OR TRIM(LOWER(REPLACE(REPLACE(COALESCE(p.attributes->>'barcode', ''), '-', ''), '_', ''))) = ANY($2)
 		  )
 		  AND p.is_active = true
 		  AND p.deleted_at IS NULL
@@ -140,7 +153,7 @@ func (r *MasterCatalogRepo) FindShopProductByBarcode(ctx context.Context, shopID
 	var rawAttrs []byte
 	var invQuantity, invLowStock int
 
-	err := r.db.QueryRow(ctx, query, shopID, variants).Scan(
+	err := r.db.QueryRow(ctx, query, shopID, lowerVariants).Scan(
 		&p.ID, &p.ShopID, &p.Name, &p.Slug, &p.Description, &p.SKU,
 		&p.Price, &p.CostPrice, &p.ComparePrice, &p.Weight,
 		&rawImages, &p.Tags, &rawAttrs, &p.IsActive, &p.IsFeatured,
@@ -182,6 +195,10 @@ func (r *MasterCatalogRepo) FindAnyShopProductByBarcode(ctx context.Context, bar
 	if len(variants) == 0 {
 		variants = []string{strings.ToLower(clean)}
 	}
+	lowerVariants := make([]string, 0, len(variants))
+	for _, v := range variants {
+		lowerVariants = append(lowerVariants, strings.ToLower(strings.TrimSpace(v)))
+	}
 
 	query := `
 		SELECT 
@@ -206,6 +223,8 @@ func (r *MasterCatalogRepo) FindAnyShopProductByBarcode(ctx context.Context, bar
 		WHERE (
 			TRIM(LOWER(COALESCE(p.sku, ''))) = ANY($1)
 			OR TRIM(LOWER(COALESCE(p.attributes->>'barcode', ''))) = ANY($1)
+			OR TRIM(LOWER(REPLACE(REPLACE(COALESCE(p.sku, ''), '-', ''), '_', ''))) = ANY($1)
+			OR TRIM(LOWER(REPLACE(REPLACE(COALESCE(p.attributes->>'barcode', ''), '-', ''), '_', ''))) = ANY($1)
 		)
 		AND p.is_active = true
 		AND p.deleted_at IS NULL
@@ -219,7 +238,7 @@ func (r *MasterCatalogRepo) FindAnyShopProductByBarcode(ctx context.Context, bar
 		createdAt                                       time.Time
 	)
 
-	err := r.db.QueryRow(ctx, query, variants).Scan(
+	err := r.db.QueryRow(ctx, query, lowerVariants).Scan(
 		&id, &name, &brand, &category, &unit, &mrp, &sp, &desc, &img, &hsn, &gst, &createdAt,
 	)
 	if err != nil {
