@@ -459,6 +459,7 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/shops/me/products", pc.ListMyShopProducts)                                                 // Shop
 		r.Get("/shops/me/products/barcode/{barcode}", pc.GetByBarcode)                                     // Shop
 		r.Get("/shops/me/catalog/lookup/{barcode}", mcc.Lookup)                                             // Master Catalog 1-Tap Lookup
+		r.Get("/catalog/barcode/{barcode}", mcc.Lookup)                                                     // Master Catalog 1-Tap Lookup Alias
 		r.With(middleware.MutationRateLimiter.Middleware()).Post("/products", pc.Create)                  // Shop
 		r.With(middleware.MutationRateLimiter.Middleware()).Post("/shops/me/products", pc.Create)         // Shop Alias
 		r.Put("/products/{id}", pc.Update)                                                                 // Shop
