@@ -229,6 +229,10 @@ func main() {
 			if len(record) > 9 {
 				gst, _ = strconv.ParseFloat(strings.TrimSpace(record[9]), 64)
 			}
+			desc := ""
+			if len(record) > 10 {
+				desc = strings.TrimSpace(record[10])
+			}
 
 			productsToSeed = append(productsToSeed, model.MasterCatalogProduct{
 				Barcode:      barcode,
@@ -241,6 +245,7 @@ func main() {
 				ImageURL:     img,
 				HSNCode:      hsn,
 				GSTRate:      gst,
+				Description:  desc,
 				Source:       "admin_csv",
 				TrustScore:   100,
 				IsVerified:   true,

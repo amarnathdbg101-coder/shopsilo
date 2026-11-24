@@ -668,7 +668,7 @@ func (c *ProductController) BulkImport(w http.ResponseWriter, r *http.Request) {
 
 	// 1. Handle multipart CSV file upload
 	if strings.Contains(contentType, "multipart/form-data") {
-		if err := r.ParseMultipartForm(15 * 1024 * 1024); err != nil { // 15MB limit
+		if err := r.ParseMultipartForm(100 * 1024 * 1024); err != nil { // 100MB limit for lakhs of products
 			reuse.Error(w, http.StatusBadRequest, "failed to parse multipart form")
 			return
 		}

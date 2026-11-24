@@ -19,10 +19,10 @@ func NewServer(port string, handler http.Handler) *http.Server {
     return &http.Server{
         Addr:              fmt.Sprintf("0.0.0.0:%s", port),
         Handler:           handler,
-        ReadHeaderTimeout: 5 * time.Second,
-        ReadTimeout:       30 * time.Second,
-        WriteTimeout:      60 * time.Second,
-        IdleTimeout:       120 * time.Second,
+        ReadHeaderTimeout: 10 * time.Second,
+        ReadTimeout:       300 * time.Second, // 5 minutes for large CSV/Excel uploads (100k+ rows)
+        WriteTimeout:      600 * time.Second, // 10 minutes for ingesting lakhs of products in DB
+        IdleTimeout:       300 * time.Second,
         MaxHeaderBytes:    1 << 20,
     }
 }

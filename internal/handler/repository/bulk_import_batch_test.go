@@ -133,3 +133,81 @@ func TestBulkImportProducts_HighSpeedBatch(t *testing.T) {
 
 	t.Logf("SUCCESS: Bulk updated %d items in %v", updateRes.UpdatedCount, updateDuration)
 }
+
+func TestBulkImportProducts_MultiChunkScale(t *testing.T) {
+	for _, envPath := range []string{"../../../.env", "../../.env", "../.env", ".env"} {
+		if data, err := os.ReadFile(envPath); err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "DATABASE_URL=") {
+					_ = os.Setenv("DATABASE_URL", strings.TrimPrefix(line, "DATABASE_URL="))
+				}
+			}
+			break
+		}
+	}
+
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("Skipping live database test: DATABASE_URL not set")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pool, err := utils.ConnectDB(dbURL)
+	if err != nil {
+		t.Skipf("Skipping live database test: unable to connect to db: %v", err)
+	}
+	defer pool.Close()
+
+	logger := zap.NewNop()
+	repo := repository.NewProductRepo(pool, logger)
+
+	var shopID string
+	err = pool.QueryRow(ctx, "SELECT id FROM shops LIMIT 1").Scan(&shopID)
+	if err != nil || shopID == "" {
+		t.Skip("No shop found in database to run scale test")
+	}
+
+	testBatchID := fmt.Sprintf("SCALE%d", time.Now().UnixNano()%100000)
+
+	// 2,500 items to cross multiple 1,000-item micro-batches (1,000 + 1,000 + 500)
+	totalScaleItems := 2500
+	var scaleItems []dto.BulkImportProductItem
+	for i := 1; i <= totalScaleItems; i++ {
+		sku := fmt.Sprintf("%s-SKU-%04d", testBatchID, i)
+		scaleItems = append(scaleItems, dto.BulkImportProductItem{
+			Name:          fmt.Sprintf("Scale Test Product %s %d", testBatchID, i),
+			SKU:           sku,
+			Price:         50.0 + float64(i%500),
+			CostPrice:     40.0 + float64(i%500),
+			ComparePrice:  60.0 + float64(i%500),
+			StockQuantity: 100,
+			MinStock:      10,
+			CategoryName:  "General Store",
+			Description:   fmt.Sprintf("Multi-chunk stress item %d", i),
+		})
+	}
+
+	defer func() {
+		cleanupCtx, cCancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cCancel()
+		_, _ = pool.Exec(cleanupCtx, "DELETE FROM products WHERE shop_id = $1 AND sku LIKE $2", shopID, testBatchID+"%")
+	}()
+
+	start := time.Now()
+	res, err := repo.BulkImportProducts(ctx, shopID, scaleItems, false)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("Multi-chunk bulk import failed: %v", err)
+	}
+
+	if res.ImportedCount != totalScaleItems {
+		t.Fatalf("Expected %d imported products, got %d (Errors: %v)", totalScaleItems, res.ImportedCount, res.Errors)
+	}
+
+	throughput := float64(res.ImportedCount) / elapsed.Seconds()
+	t.Logf("SCALE PASS: Bulk imported %d items in %v (Throughput: %.1f products/sec)", res.ImportedCount, elapsed, throughput)
+}
