@@ -33,7 +33,10 @@ func CORS(next http.Handler) http.Handler {
 		if allowedOriginsEnv == "" || allowedOriginsEnv == "*" || isLocalhost {
 			if origin != "" {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				// Only allow credentials on explicit whitelist or localhost, never wildcard
+				if isLocalhost {
+					w.Header().Set("Access-Control-Allow-Credentials", "true")
+				}
 				w.Header().Set("Vary", "Origin")
 			} else {
 				w.Header().Set("Access-Control-Allow-Origin", "*")

@@ -126,8 +126,6 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/sitemap.xml", sc.GenerateDynamicSitemapXML)                // Search Engine Crawlers Dynamic XML Sitemap
 		r.Get("/catalog/home-feed", sc.GetHomeFeed)                        // Customer
 		r.Get("/home-feed", sc.GetHomeFeed)                                // Customer
-		r.Post("/ai/scan-product", aic.ScanProduct)                        // Both - Product Vision Autofill
-		r.Post("/ai/mandi-scan", aic.ScanMandiItem)                        // Shop - Mandi Sourcing Wholesale Vision
 		r.Get("/categories", catc.List)                                    // Both
 		r.Get("/shops", sc.List)                                           // Customer
 		r.Get("/shops/{id}", sc.GetByID)                                   // Customer
