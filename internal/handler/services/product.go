@@ -133,22 +133,55 @@ func (s *ProductService) CreateProduct(ctx context.Context, userID string, input
 		return nil, ErrShopRequired
 	}
 
-	// 2. Validate category
+	// 2. Server-side input sanitization & pricing integrity checks
+	cleanName := strings.TrimSpace(input.Name)
+	if len(cleanName) < 2 || len(cleanName) > 200 {
+		return nil, errors.New("product name must be between 2 and 200 characters")
+	}
+	if input.Price <= 0 {
+		return nil, errors.New("selling price must be greater than zero")
+	}
+	if input.CostPrice < 0 || input.ComparePrice < 0 {
+		return nil, errors.New("cost price and MRP cannot be negative")
+	}
+	if input.ComparePrice > 0 && input.ComparePrice < input.Price {
+		return nil, errors.New("MRP cannot be less than selling price")
+	}
+
+	// 3. Validate category
 	categoryID, err := s.resolveCategoryID(ctx, shop.ID, input.CategoryID)
 	if err != nil {
 		return nil, err
 	}
 
 	sku := strings.TrimSpace(strings.ToUpper(input.SKU))
-	images := input.Images
+	if sku == "" {
+		sku = fmt.Sprintf("SK-%X", time.Now().UnixNano()%0xFFFFFFFF)
+	}
 
-	// 3. Enforce max 10 images (Cost & Storage efficiency rule)
+	// Sanitize image URLs to prevent XSS / malformed protocols
+	var images []string
+	for _, img := range input.Images {
+		trimmedImg := strings.TrimSpace(img)
+		if trimmedImg == "" {
+			continue
+		}
+		lowerImg := strings.ToLower(trimmedImg)
+		if strings.HasPrefix(lowerImg, "http://") ||
+			strings.HasPrefix(lowerImg, "https://") ||
+			strings.HasPrefix(lowerImg, "/images") ||
+			strings.HasPrefix(lowerImg, "data:image/") {
+			images = append(images, trimmedImg)
+		}
+	}
+
+	// 4. Enforce max 10 images (Cost & Storage efficiency rule)
 	if len(images) > 10 {
 		return nil, ErrTooManyProductImages
 	}
 
 	// 5. Generate unique slug
-	slug := reuse.Slugify(input.Name)
+	slug := reuse.Slugify(cleanName)
 	if _, err := s.productRepo.FindBySlug(ctx, slug); err == nil {
 		r := rand.New(rand.NewSource(time.Now().UnixNano()))
 		slug = fmt.Sprintf("%s-%d", slug, r.Intn(9000)+1000)
