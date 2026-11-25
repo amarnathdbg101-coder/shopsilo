@@ -771,8 +771,10 @@ func (r *ProductRepo) FindAll(ctx context.Context, filter dto.ProductFilter) ([]
 		page = 1
 	}
 	limit := filter.Limit
-	if limit < 1 || limit > 100 {
+	if limit < 1 {
 		limit = 10
+	} else if limit > 2000 {
+		limit = 2000
 	}
 	offset := (page - 1) * limit
 

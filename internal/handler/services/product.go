@@ -262,8 +262,10 @@ func (s *ProductService) ListProducts(ctx context.Context, filter dto.ProductFil
 	if filter.Page < 1 {
 		filter.Page = 1
 	}
-	if filter.Limit < 1 || filter.Limit > 100 {
+	if filter.Limit < 1 {
 		filter.Limit = 12
+	} else if filter.Limit > 2000 {
+		filter.Limit = 2000
 	}
 
 	products, totalCount, err := s.productRepo.FindAll(ctx, filter)
