@@ -124,38 +124,6 @@ func (c *CopilotController) EvaluateBargain(w http.ResponseWriter, r *http.Reque
 	reuse.Success(w, "Bargain evaluated successfully", eval)
 }
 
-// SearchSubstitutes finds exact in-stock items or the best substitutes based on domain attributes.
-func (c *CopilotController) SearchSubstitutes(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetUserFromContext(r.Context())
-	if claims == nil || claims.UserID == "" {
-		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-
-	var req dto.SearchSubstituteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		reuse.Error(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-
-	if strings.TrimSpace(req.Query) == "" {
-		reuse.Error(w, http.StatusBadRequest, "query cannot be empty")
-		return
-	}
-
-	results, err := c.service.SearchSubstitutes(r.Context(), claims.UserID, req)
-	if err != nil {
-		if errors.Is(err, services.ErrShopRequired) {
-			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
-			return
-		}
-		reuse.Error(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	reuse.Success(w, "Substitutes found successfully", results)
-}
-
 // Recalculate triggers an on-demand recalculation of ABC-XYZ demand matrix and fresh prescriptions.
 func (c *CopilotController) Recalculate(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())

@@ -4,7 +4,6 @@ import (
 	"math"
 	"testing"
 
-	"shopMe/internal/handler/dto"
 	"go.uber.org/zap"
 )
 
@@ -63,23 +62,6 @@ func TestCopilotService_EvaluateBargain_HardFloorProtection(t *testing.T) {
 
 	_ = logger
 	_ = originalPrice
-}
-
-func TestCopilotService_SubstituteMatchingLogic(t *testing.T) {
-	req := dto.SearchSubstituteRequest{
-		Query:    "pure cotton yellow kurti",
-		Category: "Clothing",
-		MaxPrice: 800.0,
-		Fabric:   "pure_cotton",
-		Occasion: "festive",
-	}
-
-	if req.Query == "" {
-		t.Fatalf("Expected query to not be empty")
-	}
-	if req.MaxPrice != 800.0 {
-		t.Fatalf("Expected max price 800.0, got %f", req.MaxPrice)
-	}
 }
 
 func TestCopilotService_EvaluateBargain_WorstCaseZeroCostAndExtremeNumbers(t *testing.T) {

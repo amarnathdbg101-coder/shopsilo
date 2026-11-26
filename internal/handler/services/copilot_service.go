@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"strings"
 
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
@@ -160,16 +159,6 @@ func (s *CopilotService) EvaluateBargain(ctx context.Context, userID string, req
 	}
 
 	return eval, nil
-}
-
-// SearchSubstitutes finds exact in-stock items or the best substitutes based on domain attributes.
-func (s *CopilotService) SearchSubstitutes(ctx context.Context, userID string, req dto.SearchSubstituteRequest) ([]*model.SubstituteRecommendation, error) {
-	shop, err := s.shopRepo.FindByUserID(ctx, userID)
-	if err != nil {
-		return nil, ErrShopRequired
-	}
-	req.Query = strings.TrimSpace(req.Query)
-	return s.repo.SearchSubstitutes(ctx, shop.ID, req)
 }
 
 // RecalculateIntelligence runs on-demand or nightly ABC-XYZ demand recalculation.

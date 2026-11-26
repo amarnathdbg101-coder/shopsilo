@@ -81,21 +81,6 @@ type DeadCapitalSummary struct {
 	DeadStockItems            []*ProductIntelligence `json:"dead_stock_items"`
 }
 
-// SubstituteRecommendation holds top alternative suggestions with sales scripts.
-type SubstituteRecommendation struct {
-	ProductID          string   `json:"product_id"`
-	ProductName        string   `json:"product_name"`
-	CategoryName       string   `json:"category_name"`
-	CurrentStock       int      `json:"current_stock"`
-	MRP                float64  `json:"mrp"`
-	OfferPrice         float64  `json:"offer_price"`
-	ShopProfitMargin   float64  `json:"shop_profit_margin"` // In percentage, e.g. 42.5%
-	MatchScore         float64  `json:"match_score"`        // 0.00 to 1.00
-	IsExactMatch       bool     `json:"is_exact_match"`
-	MatchedAttributes  []string `json:"matched_attributes"`
-	SalesPitchScript   string   `json:"sales_pitch_script"` // 1-sentence script for shopkeeper
-}
-
 // BargainEvaluation holds the confidential decision and winning counter-offer for a cashier.
 type BargainEvaluation struct {
 	ProductID            string  `json:"product_id"`

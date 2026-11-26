@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
 
 	"github.com/jackc/pgx/v5"
@@ -365,114 +364,6 @@ func (r *CopilotRepo) inferCustomerFromBills(ctx context.Context, shopID, phone 
 		BargainTendencyScore: bargainScore,
 		LastPurchaseDate:     lastOrder,
 	}, nil
-}
-
-// SearchSubstitutes finds exact in-stock items or the best substitutes based on domain attributes.
-func (r *CopilotRepo) SearchSubstitutes(ctx context.Context, shopID string, req dto.SearchSubstituteRequest) ([]*model.SubstituteRecommendation, error) {
-	q := strings.TrimSpace(req.Query)
-	if len(q) > 300 {
-		q = q[:300]
-	}
-	terms := strings.Fields(strings.ToLower(q))
-	limit := req.Limit
-	if limit <= 0 || limit > 10 {
-		limit = 5
-	}
-
-	// SQL query combining Full-Text search, attribute matching, and in-stock priority
-	query := `
-		SELECT 
-			p.id, p.name, COALESCE(c.name, 'General') AS cat_name,
-			inv.quantity, p.price, p.cost_price,
-			GREATEST(0.0, ROUND(((p.price - p.cost_price) / NULLIF(p.price, 0)) * 100, 1)) AS margin_pct
-		FROM products p
-		JOIN inventory inv ON p.id = inv.product_id
-		LEFT JOIN categories c ON p.category_id = c.id
-		WHERE p.shop_id = $1 AND p.is_active = true
-	`
-	var args []any
-	args = append(args, shopID)
-	argIdx := 2
-
-	if req.MaxPrice > 0 {
-		query += fmt.Sprintf(" AND p.price <= $%d", argIdx)
-		args = append(args, req.MaxPrice*1.15) // Allow small 15% window for substitute discounting
-		argIdx++
-	}
-
-	if req.Category != "" {
-		query += fmt.Sprintf(" AND (LOWER(c.name) ILIKE $%d OR LOWER(p.name) ILIKE $%d)", argIdx, argIdx)
-		args = append(args, "%"+strings.ToLower(req.Category)+"%")
-		argIdx++
-	}
-
-	query += fmt.Sprintf(" ORDER BY inv.quantity > 0 DESC, margin_pct DESC LIMIT $%d", argIdx)
-	args = append(args, limit*3)
-
-	rows, err := r.db.Query(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to search products for substitutes: %w", err)
-	}
-	defer rows.Close()
-
-	var candidates []*model.SubstituteRecommendation
-	for rows.Next() {
-		var rec model.SubstituteRecommendation
-		var costPrice float64
-		err := rows.Scan(
-			&rec.ProductID, &rec.ProductName, &rec.CategoryName,
-			&rec.CurrentStock, &rec.MRP, &costPrice, &rec.ShopProfitMargin,
-		)
-		if err != nil {
-			continue
-		}
-		rec.OfferPrice = rec.MRP
-
-		// Match scoring based on query terms
-		pNameLower := strings.ToLower(rec.ProductName)
-		matchCount := 0
-		var matchedAttrs []string
-
-		for _, term := range terms {
-			if strings.Contains(pNameLower, term) {
-				matchCount++
-				matchedAttrs = append(matchedAttrs, term)
-			}
-		}
-
-		if req.SkinType != "" && strings.Contains(pNameLower, strings.ToLower(req.SkinType)) {
-			matchedAttrs = append(matchedAttrs, req.SkinType)
-			matchCount += 2
-		}
-		if req.Fabric != "" && strings.Contains(pNameLower, strings.ToLower(req.Fabric)) {
-			matchedAttrs = append(matchedAttrs, req.Fabric)
-			matchCount += 2
-		}
-		if req.Occasion != "" && strings.Contains(pNameLower, strings.ToLower(req.Occasion)) {
-			matchedAttrs = append(matchedAttrs, req.Occasion)
-			matchCount++
-		}
-
-		rec.MatchedAttributes = matchedAttrs
-		rec.MatchScore = math.Min(1.0, float64(matchCount+1)/float64(len(terms)+2))
-		if rec.MatchScore >= 0.8 && rec.CurrentStock > 0 {
-			rec.IsExactMatch = true
-			rec.SalesPitchScript = fmt.Sprintf("Exact match in stock! Premium %s with high customer ratings.", rec.ProductName)
-		} else {
-			rec.IsExactMatch = false
-			// Construct a persuasive retail sales script
-			rec.SalesPitchScript = fmt.Sprintf("Isme bhi %s quality formula hai, bilkul comfortable rahega aur price sirf ₹%.0f hai.", rec.CategoryName, rec.OfferPrice)
-		}
-
-		candidates = append(candidates, &rec)
-	}
-
-	// Sort candidates: In-stock first, then higher margin, then match score
-	if len(candidates) > limit {
-		candidates = candidates[:limit]
-	}
-
-	return candidates, nil
 }
 
 // RecalculateABCXYZ runs the nightly or on-demand ABC-XYZ demand matrix calculation.

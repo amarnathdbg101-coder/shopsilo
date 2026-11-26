@@ -227,7 +227,6 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Post("/copilot/prescriptions/{id}/execute", copilotc.ExecutePrescription)
 		r.Get("/copilot/dead-capital", copilotc.GetDeadCapitalSummary)
 		r.Post("/copilot/evaluate-bargain", copilotc.EvaluateBargain)
-		r.Post("/copilot/search-substitute", copilotc.SearchSubstitutes)
 		r.Post("/copilot/recalculate", copilotc.Recalculate)
 
 		// Shop-scoped aliases
@@ -235,7 +234,6 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Post("/shops/me/copilot/prescriptions/{id}/execute", copilotc.ExecutePrescription)
 		r.Get("/shops/me/copilot/dead-capital", copilotc.GetDeadCapitalSummary)
 		r.Post("/shops/me/copilot/evaluate-bargain", copilotc.EvaluateBargain)
-		r.Post("/shops/me/copilot/search-substitute", copilotc.SearchSubstitutes)
 		r.Post("/shops/me/copilot/recalculate", copilotc.Recalculate)
 
 		r.Get("/shop/dashboard", sc.GetMerchantDashboard)
@@ -531,7 +529,6 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Post("/shops/me/copilot/prescriptions/{id}/execute", copilotc.ExecutePrescription)
 		r.Get("/shops/me/copilot/dead-capital", copilotc.GetDeadCapitalSummary)
 		r.Post("/shops/me/copilot/evaluate-bargain", copilotc.EvaluateBargain)
-		r.Post("/shops/me/copilot/search-substitute", copilotc.SearchSubstitutes)
 		r.Post("/shops/me/copilot/recalculate", copilotc.Recalculate)
 
 		// Root aliases for copilot
@@ -539,7 +536,6 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Post("/copilot/prescriptions/{id}/execute", copilotc.ExecutePrescription)
 		r.Get("/copilot/dead-capital", copilotc.GetDeadCapitalSummary)
 		r.Post("/copilot/evaluate-bargain", copilotc.EvaluateBargain)
-		r.Post("/copilot/search-substitute", copilotc.SearchSubstitutes)
 		r.Post("/copilot/recalculate", copilotc.Recalculate)
 
 		// Shop Customer Khata (Udhar & settlement passbook)
