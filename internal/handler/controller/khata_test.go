@@ -289,4 +289,37 @@ func TestKhataControllerValidation(t *testing.T) {
 			t.Fatalf("expected 400 Bad Request on missing delete reason, got %d", w.Code)
 		}
 	})
+
+	t.Run("VerifyUPIPayment Unauthorized without claims", func(t *testing.T) {
+		body, _ := json.Marshal(dto.VerifyUPIPaymentRequest{
+			Action: "APPROVE",
+		})
+		req := httptest.NewRequest(http.MethodPost, "/shops/me/khata/khata-1/transactions/tx-1/verify-upi", bytes.NewBuffer(body))
+		w := httptest.NewRecorder()
+
+		kc.VerifyUPIPayment(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401 Unauthorized, got %d", w.Code)
+		}
+	})
+
+	t.Run("VerifyUPIPayment Invalid Action", func(t *testing.T) {
+		claims := &middleware.Claims{
+			UserID: "shop-owner-123",
+			Role:   "shop",
+		}
+		body, _ := json.Marshal(dto.VerifyUPIPaymentRequest{
+			Action: "INVALID_ACTION",
+		})
+		req := httptest.NewRequest(http.MethodPost, "/shops/me/khata/khata-1/transactions/tx-1/verify-upi", bytes.NewBuffer(body))
+		req = req.WithContext(context.WithValue(req.Context(), middleware.ContextKeyUser, claims))
+		w := httptest.NewRecorder()
+
+		kc.VerifyUPIPayment(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request on invalid action, got %d", w.Code)
+		}
+	})
 }

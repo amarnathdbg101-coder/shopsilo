@@ -50,7 +50,7 @@ func (s *KhataService) RecordCredit(ctx context.Context, shopOwnerUserID string,
 		name = fmt.Sprintf("Customer %s", mobile)
 	}
 
-	tx, err := s.khataRepo.RecordTransaction(
+	tx, err := s.khataRepo.RecordTransactionWithIdempotency(
 		ctx,
 		shop.ID,
 		mobile,
@@ -62,6 +62,7 @@ func (s *KhataService) RecordCredit(ctx context.Context, shopOwnerUserID string,
 		"",
 		strings.TrimSpace(input.ParchiImageURL),
 		strings.TrimSpace(input.ItemsSummary),
+		strings.TrimSpace(input.ClientTxID),
 	)
 	if err != nil {
 		if errors.Is(err, repository.ErrCreditLimitExceeded) {
@@ -87,7 +88,7 @@ func (s *KhataService) RecordPayment(ctx context.Context, shopOwnerUserID, custo
 	mobile := strings.TrimSpace(customerMobile)
 	name := strings.TrimSpace(input.CustomerName)
 
-	tx, err := s.khataRepo.RecordTransaction(
+	tx, err := s.khataRepo.RecordTransactionWithIdempotency(
 		ctx,
 		shop.ID,
 		mobile,
@@ -99,6 +100,7 @@ func (s *KhataService) RecordPayment(ctx context.Context, shopOwnerUserID, custo
 		strings.ToLower(strings.TrimSpace(input.PaymentMode)),
 		"",
 		"",
+		strings.TrimSpace(input.ClientTxID),
 	)
 	if err != nil {
 		return nil, err
@@ -141,8 +143,8 @@ func (s *KhataService) GetAgingReport(ctx context.Context, shopOwnerUserID strin
 	return s.khataRepo.GetAgingReport(ctx, shop.ID)
 }
 
-// ListCustomers returns all customers with their balances.
-func (s *KhataService) ListCustomers(ctx context.Context, shopOwnerUserID, search string, onlyWithBalance bool) ([]dto.KhataCustomerResponse, error) {
+// ListCustomers returns all customers with their balances (supports optional limit/offset pagination).
+func (s *KhataService) ListCustomers(ctx context.Context, shopOwnerUserID, search string, onlyWithBalance bool, pagination ...int) ([]dto.KhataCustomerResponse, error) {
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
 		if errors.Is(err, repository.ErrShopNotFound) {
@@ -151,7 +153,7 @@ func (s *KhataService) ListCustomers(ctx context.Context, shopOwnerUserID, searc
 		return nil, err
 	}
 
-	customers, err := s.khataRepo.ListCustomers(ctx, shop.ID, search, onlyWithBalance)
+	customers, err := s.khataRepo.ListCustomers(ctx, shop.ID, search, onlyWithBalance, pagination...)
 	if err != nil {
 		return nil, err
 	}
@@ -184,8 +186,8 @@ func (s *KhataService) ListCustomers(ctx context.Context, shopOwnerUserID, searc
 	return res, nil
 }
 
-// GetCustomerHistory returns customer details and full transaction passbook.
-func (s *KhataService) GetCustomerHistory(ctx context.Context, shopOwnerUserID, customerMobile string) (*dto.KhataDetailResponse, error) {
+// GetCustomerHistory returns customer details and full transaction passbook (supports optional limit/offset pagination).
+func (s *KhataService) GetCustomerHistory(ctx context.Context, shopOwnerUserID, customerMobile string, pagination ...int) (*dto.KhataDetailResponse, error) {
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
 		if errors.Is(err, repository.ErrShopNotFound) {
@@ -194,7 +196,7 @@ func (s *KhataService) GetCustomerHistory(ctx context.Context, shopOwnerUserID, 
 		return nil, err
 	}
 
-	customer, transactions, err := s.khataRepo.GetCustomerHistory(ctx, shop.ID, strings.TrimSpace(customerMobile))
+	customer, transactions, err := s.khataRepo.GetCustomerHistory(ctx, shop.ID, strings.TrimSpace(customerMobile), pagination...)
 	if err != nil {
 		if errors.Is(err, repository.ErrKhataNotFound) {
 			return nil, ErrKhataCustomerNotFound
@@ -672,6 +674,23 @@ func (s *KhataService) ResolveDispute(ctx context.Context, shopOwnerUserID, khat
 		utils.InvalidateCachedPDFByPrefix(fmt.Sprintf("khata_stmt:%s:", shop.ID))
 	}
 	return err
+}
+
+// VerifyUPIPayment approves or rejects a customer's pending UPI payment proof (Protected - Shop).
+func (s *KhataService) VerifyUPIPayment(ctx context.Context, shopOwnerUserID, khataID, txID, action, notes string) (*model.KhataTransaction, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, ErrShopNotFound
+		}
+		return nil, err
+	}
+
+	tx, err := s.khataRepo.VerifyUPIPayment(ctx, shop.ID, khataID, txID, action, notes)
+	if err == nil {
+		utils.InvalidateCachedPDFByPrefix(fmt.Sprintf("khata_stmt:%s:", shop.ID))
+	}
+	return tx, err
 }
 
 // SetCreditOTPProtection configures customer OTP requirement for high-value credit (Protected - Customer).

@@ -10,6 +10,7 @@ import (
 	"shopMe/internal/handler/services"
 	"shopMe/internal/middleware"
 	"shopMe/internal/reuse"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -42,6 +43,9 @@ func (c *KhataController) RecordCredit(w http.ResponseWriter, r *http.Request) {
 	if err := reuse.ValidateStruct(&input); err != nil {
 		reuse.Error(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if strings.TrimSpace(input.ClientTxID) == "" {
+		input.ClientTxID = strings.TrimSpace(r.Header.Get("X-Idempotency-Key"))
 	}
 
 	tx, err := c.service.RecordCredit(r.Context(), claims.UserID, input)
@@ -81,6 +85,9 @@ func (c *KhataController) RecordPayment(w http.ResponseWriter, r *http.Request) 
 		reuse.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if strings.TrimSpace(input.ClientTxID) == "" {
+		input.ClientTxID = strings.TrimSpace(r.Header.Get("X-Idempotency-Key"))
+	}
 
 	tx, err := c.service.RecordPayment(r.Context(), claims.UserID, customerMobile, input)
 	if err != nil {
@@ -105,8 +112,10 @@ func (c *KhataController) ListCustomers(w http.ResponseWriter, r *http.Request) 
 
 	search := r.URL.Query().Get("search")
 	onlyWithBalance := r.URL.Query().Get("only_balance") == "true"
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 
-	customers, err := c.service.ListCustomers(r.Context(), claims.UserID, search, onlyWithBalance)
+	customers, err := c.service.ListCustomers(r.Context(), claims.UserID, search, onlyWithBalance, limit, offset)
 	if err != nil {
 		if errors.Is(err, services.ErrShopNotFound) {
 			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
@@ -133,7 +142,10 @@ func (c *KhataController) GetCustomerHistory(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	history, err := c.service.GetCustomerHistory(r.Context(), claims.UserID, customerMobile)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+
+	history, err := c.service.GetCustomerHistory(r.Context(), claims.UserID, customerMobile, limit, offset)
 	if err != nil {
 		if errors.Is(err, services.ErrShopNotFound) {
 			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
@@ -677,4 +689,43 @@ func (c *KhataController) DeleteTransaction(w http.ResponseWriter, r *http.Reque
 	}
 
 	reuse.Success(w, "Transaction entry cancelled/deleted and balance recalculated successfully", tx)
+}
+
+// VerifyUPIPayment approves or rejects a customer-submitted UPI payment proof (Protected - Shop)
+func (c *KhataController) VerifyUPIPayment(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	khataID := strings.TrimSpace(chi.URLParam(r, "id"))
+	txID := strings.TrimSpace(chi.URLParam(r, "txId"))
+	if khataID == "" || txID == "" {
+		reuse.Error(w, http.StatusBadRequest, "khata ID and transaction ID are required")
+		return
+	}
+
+	var input dto.VerifyUPIPaymentRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := reuse.ValidateStruct(&input); err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	tx, err := c.service.VerifyUPIPayment(r.Context(), claims.UserID, khataID, txID, input.Action, input.Notes)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "shop not found")
+			return
+		}
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reuse.Success(w, "UPI payment verification processed successfully", tx)
 }

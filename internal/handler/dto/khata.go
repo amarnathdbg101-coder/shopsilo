@@ -12,6 +12,7 @@ type RecordCreditTransactionRequest struct {
 	BillNumber     string  `json:"bill_number,omitempty"`
 	ParchiImageURL string  `json:"parchi_image_url,omitempty"`
 	ItemsSummary   string  `json:"items_summary,omitempty"`
+	ClientTxID     string  `json:"client_tx_id,omitempty" validate:"omitempty,max=100"`
 }
 
 // RecordPaymentRequest is used when a customer pays their dues (jama).
@@ -20,6 +21,7 @@ type RecordPaymentRequest struct {
 	Amount         float64 `json:"amount" validate:"required,gt=0"`
 	PaymentMode    string  `json:"payment_mode" validate:"required,oneof=cash upi card cheque bank_transfer online other CASH UPI CARD CHEQUE BANK_TRANSFER ONLINE OTHER"`
 	Notes          string  `json:"notes,omitempty" validate:"omitempty,max=255"`
+	ClientTxID     string  `json:"client_tx_id,omitempty" validate:"omitempty,max=100"`
 }
 
 // UpdateKhataTransactionRequest is used to safely update an existing credit or payment entry.
@@ -160,6 +162,12 @@ type SubmitUPIPaymentRequest struct {
 	Amount   float64 `json:"amount" validate:"required,gt=0"`
 	UPIRefNo string  `json:"upi_ref_no" validate:"required,min=4,max=50"`
 	Notes    string  `json:"notes,omitempty" validate:"omitempty,max=255"`
+}
+
+// VerifyUPIPaymentRequest allows merchant to approve or reject a customer-submitted UPI payment.
+type VerifyUPIPaymentRequest struct {
+	Action string `json:"action" validate:"required,oneof=APPROVE REJECT"`
+	Notes  string `json:"notes,omitempty" validate:"omitempty,max=300"`
 }
 
 // RequestKhataClosureResponse is returned when a closure request is initiated.

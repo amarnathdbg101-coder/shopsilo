@@ -123,13 +123,18 @@ func (r *KhataRepo) GetOrCreateCustomer(ctx context.Context, shopID, customerNam
 
 // RecordTransaction atomically records a credit or payment transaction and updates the customer balance.
 func (r *KhataRepo) RecordTransaction(ctx context.Context, shopID, customerMobile, customerName, txType string, amount float64, notes, billNumber, paymentMode, parchiImageURL, itemsSummary string) (*model.KhataTransaction, error) {
+	return r.RecordTransactionWithIdempotency(ctx, shopID, customerMobile, customerName, txType, amount, notes, billNumber, paymentMode, parchiImageURL, itemsSummary, "")
+}
+
+// RecordTransactionWithIdempotency atomically records a credit or payment transaction with optional client_tx_id idempotency.
+func (r *KhataRepo) RecordTransactionWithIdempotency(ctx context.Context, shopID, customerMobile, customerName, txType string, amount float64, notes, billNumber, paymentMode, parchiImageURL, itemsSummary, clientTxID string) (*model.KhataTransaction, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
-	kTx, err := r.RecordTransactionWithTx(ctx, tx, shopID, customerMobile, customerName, txType, amount, notes, billNumber, paymentMode, parchiImageURL, itemsSummary)
+	kTx, err := r.RecordTransactionWithTxIdempotency(ctx, tx, shopID, customerMobile, customerName, txType, amount, notes, billNumber, paymentMode, parchiImageURL, itemsSummary, clientTxID)
 	if err != nil {
 		return nil, err
 	}
@@ -143,6 +148,38 @@ func (r *KhataRepo) RecordTransaction(ctx context.Context, shopID, customerMobil
 
 // RecordTransactionWithTx executes a customer khata credit/payment transaction within an existing database transaction (ACID).
 func (r *KhataRepo) RecordTransactionWithTx(ctx context.Context, tx pgx.Tx, shopID, customerMobile, customerName, txType string, amount float64, notes, billNumber, paymentMode, parchiImageURL, itemsSummary string) (*model.KhataTransaction, error) {
+	return r.RecordTransactionWithTxIdempotency(ctx, tx, shopID, customerMobile, customerName, txType, amount, notes, billNumber, paymentMode, parchiImageURL, itemsSummary, "")
+}
+
+// RecordTransactionWithTxIdempotency executes a customer khata transaction within an existing tx with DB-level client_tx_id idempotency.
+func (r *KhataRepo) RecordTransactionWithTxIdempotency(ctx context.Context, tx pgx.Tx, shopID, customerMobile, customerName, txType string, amount float64, notes, billNumber, paymentMode, parchiImageURL, itemsSummary, clientTxID string) (*model.KhataTransaction, error) {
+	cleanClientTxID := strings.TrimSpace(clientTxID)
+	if cleanClientTxID != "" {
+		var existingTx model.KhataTransaction
+		var pImg, itmSum string
+		idemQuery := `
+			SELECT id, khata_id, shop_id, type, amount, balance_after, COALESCE(notes, ''), COALESCE(bill_number, ''), COALESCE(payment_mode, ''),
+			       COALESCE(status, 'CONFIRMED'), COALESCE(dispute_reason, ''), disputed_at, COALESCE(upi_ref_no, ''),
+			       COALESCE(parchi_image_url, ''), COALESCE(items_summary, ''), created_at
+			FROM khata_transactions
+			WHERE shop_id = $1::uuid AND client_tx_id = $2
+			LIMIT 1
+		`
+		if err := tx.QueryRow(ctx, idemQuery, shopID, cleanClientTxID).Scan(
+			&existingTx.ID, &existingTx.KhataID, &existingTx.ShopID, &existingTx.Type, &existingTx.Amount, &existingTx.BalanceAfter,
+			&existingTx.Notes, &existingTx.BillNumber, &existingTx.PaymentMode, &existingTx.Status, &existingTx.DisputeReason,
+			&existingTx.DisputedAt, &existingTx.UPIRefNo, &pImg, &itmSum, &existingTx.CreatedAt,
+		); err == nil {
+			if pImg != "" {
+				existingTx.ParchiImageURL = &pImg
+			}
+			if itmSum != "" {
+				existingTx.ItemsSummary = &itmSum
+			}
+			existingTx.ClientTxID = &cleanClientTxID
+			return &existingTx, nil
+		}
+	}
 	cleanMobile, err := utils.NormalizeIndianPhone(customerMobile)
 	if err != nil {
 		cleanMobile = strings.TrimSpace(customerMobile)
@@ -232,10 +269,14 @@ func (r *KhataRepo) RecordTransactionWithTx(ctx context.Context, tx pgx.Tx, shop
 		return nil, ErrInvalidTransactionType
 	}
 
-	// 3. Update customer_khata balance and re-activate if previously closed or pending closure
+	// 3. Update customer_khata balance, oldest_unpaid_at, and re-activate if previously closed or pending closure
 	updateQuery := `
 		UPDATE customer_khata
 		SET current_balance = $1,
+		    oldest_unpaid_at = CASE
+		        WHEN $1 <= 0 THEN NULL
+		        ELSE COALESCE(oldest_unpaid_at, NOW())
+		    END,
 		    closure_status = 'ACTIVE',
 		    closure_otp = NULL,
 		    closure_requested_by = NULL,
@@ -251,14 +292,14 @@ func (r *KhataRepo) RecordTransactionWithTx(ctx context.Context, tx pgx.Tx, shop
 	var kTx model.KhataTransaction
 	insertTxQuery := `
 		INSERT INTO khata_transactions (
-			khata_id, shop_id, type, amount, balance_after, notes, bill_number, payment_mode, parchi_image_url, items_summary, status, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), NULLIF($10, ''), 'CONFIRMED', NOW())
+			khata_id, shop_id, type, amount, balance_after, notes, bill_number, payment_mode, parchi_image_url, items_summary, client_tx_id, status, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), 'CONFIRMED', NOW())
 		RETURNING id, khata_id, shop_id, type, amount, balance_after, COALESCE(notes, ''), COALESCE(bill_number, ''), COALESCE(payment_mode, ''),
 		          COALESCE(status, 'CONFIRMED'), COALESCE(dispute_reason, ''), disputed_at, COALESCE(upi_ref_no, ''),
 		          COALESCE(parchi_image_url, ''), COALESCE(items_summary, ''), created_at
 	`
 	var pImg, itmSum string
-	err = tx.QueryRow(ctx, insertTxQuery, khataID, shopID, txType, amount, newBalance, notes, billNumber, paymentMode, strings.TrimSpace(parchiImageURL), strings.TrimSpace(itemsSummary)).Scan(
+	err = tx.QueryRow(ctx, insertTxQuery, khataID, shopID, txType, amount, newBalance, notes, billNumber, paymentMode, strings.TrimSpace(parchiImageURL), strings.TrimSpace(itemsSummary), cleanClientTxID).Scan(
 		&kTx.ID, &kTx.KhataID, &kTx.ShopID, &kTx.Type, &kTx.Amount, &kTx.BalanceAfter, &kTx.Notes, &kTx.BillNumber, &kTx.PaymentMode,
 		&kTx.Status, &kTx.DisputeReason, &kTx.DisputedAt, &kTx.UPIRefNo, &pImg, &itmSum, &kTx.CreatedAt,
 	)
@@ -271,18 +312,39 @@ func (r *KhataRepo) RecordTransactionWithTx(ctx context.Context, tx pgx.Tx, shop
 	if itmSum != "" {
 		kTx.ItemsSummary = &itmSum
 	}
+	if cleanClientTxID != "" {
+		kTx.ClientTxID = &cleanClientTxID
+	}
 
 	return &kTx, nil
 }
 
 // UpdateCreditLimit updates the credit cap for a customer in a shop.
 func (r *KhataRepo) UpdateCreditLimit(ctx context.Context, shopID, customerMobile string, limit float64) error {
+	cleanMobile, err := utils.NormalizeIndianPhone(customerMobile)
+	if err != nil {
+		cleanMobile = strings.TrimSpace(customerMobile)
+	}
+	digitsMobile := ""
+	for _, ch := range cleanMobile {
+		if ch >= '0' && ch <= '9' {
+			digitsMobile += string(ch)
+		}
+	}
+	if len(digitsMobile) > 10 {
+		digitsMobile = digitsMobile[len(digitsMobile)-10:]
+	}
+
 	query := `
 		UPDATE customer_khata
 		SET credit_limit = $1, updated_at = NOW()
-		WHERE shop_id = $2 AND customer_mobile = $3
+		WHERE shop_id = $2 AND (
+			customer_mobile = $3 OR
+			customer_phone = $3 OR
+			($4 != '' AND RIGHT(REGEXP_REPLACE(COALESCE(customer_mobile, customer_phone, ''), '[^0-9]', '', 'g'), 10) = $4)
+		)
 	`
-	res, err := r.db.Exec(ctx, query, limit, shopID, strings.TrimSpace(customerMobile))
+	res, err := r.db.Exec(ctx, query, limit, shopID, cleanMobile, digitsMobile)
 	if err != nil {
 		return fmt.Errorf("failed to update credit limit: %w", err)
 	}
@@ -302,9 +364,9 @@ func (r *KhataRepo) GetAgingReport(ctx context.Context, shopID string) (*dto.Kha
 		SELECT
 			COALESCE(SUM(current_balance), 0),
 			COUNT(*),
-			COALESCE(SUM(CASE WHEN (NOW() - updated_at) <= INTERVAL '30 days' THEN current_balance ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN (NOW() - updated_at) > INTERVAL '30 days' AND (NOW() - updated_at) <= INTERVAL '60 days' THEN current_balance ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN (NOW() - updated_at) > INTERVAL '60 days' THEN current_balance ELSE 0 END), 0)
+			COALESCE(SUM(CASE WHEN (NOW() - COALESCE(oldest_unpaid_at, updated_at)) <= INTERVAL '30 days' THEN current_balance ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN (NOW() - COALESCE(oldest_unpaid_at, updated_at)) > INTERVAL '30 days' AND (NOW() - COALESCE(oldest_unpaid_at, updated_at)) <= INTERVAL '60 days' THEN current_balance ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN (NOW() - COALESCE(oldest_unpaid_at, updated_at)) > INTERVAL '60 days' THEN current_balance ELSE 0 END), 0)
 		FROM customer_khata
 		WHERE shop_id = $1 AND current_balance > 0
 	`
@@ -322,7 +384,7 @@ func (r *KhataRepo) GetAgingReport(ctx context.Context, shopID string) (*dto.Kha
 	listQuery := `
 		SELECT 
 			id, customer_name, customer_mobile, current_balance, COALESCE(credit_limit, 0),
-			GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - updated_at)) / 86400))::int AS days_overdue,
+			GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - COALESCE(oldest_unpaid_at, updated_at))) / 86400))::int AS days_overdue,
 			to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_activity_at
 		FROM customer_khata
 		WHERE shop_id = $1 AND current_balance > 0
@@ -349,14 +411,26 @@ func (r *KhataRepo) GetAgingReport(ctx context.Context, shopID string) (*dto.Kha
 	return report, nil
 }
 
-// ListCustomers returns all customers with their balances, optionally filtering by search or only outstanding dues.
-func (r *KhataRepo) ListCustomers(ctx context.Context, shopID string, search string, onlyWithBalance bool) ([]model.CustomerKhata, error) {
+// ListCustomers returns all customers with their balances, optionally filtering by search, only outstanding dues, and pagination.
+func (r *KhataRepo) ListCustomers(ctx context.Context, shopID string, search string, onlyWithBalance bool, pagination ...int) ([]model.CustomerKhata, error) {
+	limit := 0
+	offset := 0
+	if len(pagination) > 0 && pagination[0] > 0 {
+		limit = pagination[0]
+		if limit > 200 {
+			limit = 200
+		}
+	}
+	if len(pagination) > 1 && pagination[1] > 0 {
+		offset = pagination[1]
+	}
+
 	query := `
 		SELECT ck.id, ck.shop_id, ck.customer_id, ck.customer_name, ck.customer_mobile, ck.current_balance, COALESCE(ck.credit_limit, 0),
 		       COALESCE(ck.credit_otp_required, false), COALESCE(ck.credit_otp_threshold, 0),
 		       COALESCE(ck.closure_status, 'ACTIVE'), ck.closure_otp, ck.closure_requested_by, ck.closure_requested_at, ck.closed_at,
 		       ck.promise_to_pay_date, COALESCE(ck.installment_target, 0),
-		       GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - ck.updated_at)) / 86400))::int AS days_overdue,
+		       GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - COALESCE(ck.oldest_unpaid_at, ck.updated_at))) / 86400))::int AS days_overdue,
 		       (ck.customer_id IS NOT NULL) AS is_registered, ck.created_at, ck.updated_at
 		FROM customer_khata ck
 		WHERE ck.shop_id = $1
@@ -376,6 +450,10 @@ func (r *KhataRepo) ListCustomers(ctx context.Context, shopID string, search str
 	}
 
 	query += " ORDER BY ck.current_balance DESC, ck.updated_at DESC"
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argIdx, argIdx+1)
+		args = append(args, limit, offset)
+	}
 
 	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
@@ -403,8 +481,19 @@ func (r *KhataRepo) ListCustomers(ctx context.Context, shopID string, search str
 	return customers, nil
 }
 
-// GetCustomerHistory retrieves customer info along with their transaction history.
-func (r *KhataRepo) GetCustomerHistory(ctx context.Context, shopID, customerMobile string) (*model.CustomerKhata, []model.KhataTransaction, error) {
+// GetCustomerHistory retrieves customer info along with their transaction history (with optional limit/offset).
+func (r *KhataRepo) GetCustomerHistory(ctx context.Context, shopID, customerMobile string, pagination ...int) (*model.CustomerKhata, []model.KhataTransaction, error) {
+	limit := 0
+	offset := 0
+	if len(pagination) > 0 && pagination[0] > 0 {
+		limit = pagination[0]
+		if limit > 200 {
+			limit = 200
+		}
+	}
+	if len(pagination) > 1 && pagination[1] > 0 {
+		offset = pagination[1]
+	}
 	cleanMobile, err := utils.NormalizeIndianPhone(customerMobile)
 	if err != nil {
 		cleanMobile = strings.TrimSpace(customerMobile)
@@ -417,7 +506,7 @@ func (r *KhataRepo) GetCustomerHistory(ctx context.Context, shopID, customerMobi
 		       COALESCE(ck.credit_otp_required, false), COALESCE(ck.credit_otp_threshold, 0),
 		       COALESCE(ck.closure_status, 'ACTIVE'), ck.closure_otp, ck.closure_requested_by, ck.closure_requested_at, ck.closed_at,
 		       ck.promise_to_pay_date, COALESCE(ck.installment_target, 0),
-		       GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - ck.updated_at)) / 86400))::int AS days_overdue,
+		       GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - COALESCE(ck.oldest_unpaid_at, ck.updated_at))) / 86400))::int AS days_overdue,
 		       (ck.customer_id IS NOT NULL) AS is_registered, ck.created_at, ck.updated_at
 		FROM customer_khata ck
 		WHERE ck.shop_id = $1 AND (
@@ -454,7 +543,12 @@ func (r *KhataRepo) GetCustomerHistory(ctx context.Context, shopID, customerMobi
 		WHERE khata_id = $1
 		ORDER BY created_at DESC
 	`
-	rows, err := r.db.Query(ctx, txQuery, khata.ID)
+	txArgs := []interface{}{khata.ID}
+	if limit > 0 {
+		txQuery += " LIMIT $2 OFFSET $3"
+		txArgs = append(txArgs, limit, offset)
+	}
+	rows, err := r.db.Query(ctx, txQuery, txArgs...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to query khata transactions: %w", err)
 	}
@@ -812,8 +906,14 @@ func (r *KhataRepo) UpdateTransactionNotes(ctx context.Context, shopID, transact
 	return nil
 }
 
-// SubmitUPIPayment records a customer's direct UPI settlement with UTR reference.
+// SubmitUPIPayment records a customer's direct UPI settlement proof with UTR reference as PENDING_APPROVAL.
+// Balance is only deducted once the shopkeeper verifies and approves the UPI receipt.
 func (r *KhataRepo) SubmitUPIPayment(ctx context.Context, khataID string, amount float64, upiRef, notes string) (*model.KhataTransaction, error) {
+	cleanRef := strings.TrimSpace(upiRef)
+	if cleanRef == "" {
+		return nil, errors.New("UPI reference number is required")
+	}
+
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
@@ -830,25 +930,26 @@ func (r *KhataRepo) SubmitUPIPayment(ctx context.Context, khataID string, amount
 		return nil, fmt.Errorf("failed to query khata: %w", err)
 	}
 
-	newBalance := currentBalance - amount
-	if newBalance < 0 {
-		newBalance = 0
-	}
-
-	_, err = tx.Exec(ctx, `UPDATE customer_khata SET current_balance = $1, updated_at = NOW() WHERE id = $2`, newBalance, khataID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to update khata balance: %w", err)
+	// Prevent duplicate UTR submissions on the same khata
+	var dupID string
+	dupCheckQuery := `
+		SELECT id FROM khata_transactions
+		WHERE khata_id = $1 AND LOWER(TRIM(upi_ref_no)) = LOWER($2) AND COALESCE(status, 'CONFIRMED') <> 'REJECTED'
+		LIMIT 1
+	`
+	if err := tx.QueryRow(ctx, dupCheckQuery, khataID, cleanRef).Scan(&dupID); err == nil {
+		return nil, errors.New("ye UPI reference number pehle se submit ho chuka hai")
 	}
 
 	var kTx model.KhataTransaction
 	insertQuery := `
 		INSERT INTO khata_transactions (
 			khata_id, shop_id, type, amount, balance_after, notes, payment_mode, status, upi_ref_no, created_at
-		) VALUES ($1, $2, 'RECEIVE_PAYMENT', $3, $4, $5, 'upi', 'CONFIRMED', $6, NOW())
+		) VALUES ($1, $2, 'RECEIVE_PAYMENT', $3, $4, $5, 'upi', 'PENDING_APPROVAL', $6, NOW())
 		RETURNING id, khata_id, shop_id, type, amount, balance_after, COALESCE(notes, ''), COALESCE(bill_number, ''), COALESCE(payment_mode, ''),
-		          COALESCE(status, 'CONFIRMED'), COALESCE(dispute_reason, ''), disputed_at, COALESCE(upi_ref_no, ''), created_at
+		          COALESCE(status, 'PENDING_APPROVAL'), COALESCE(dispute_reason, ''), disputed_at, COALESCE(upi_ref_no, ''), created_at
 	`
-	err = tx.QueryRow(ctx, insertQuery, khataID, shopID, amount, newBalance, notes, strings.TrimSpace(upiRef)).Scan(
+	err = tx.QueryRow(ctx, insertQuery, khataID, shopID, amount, currentBalance, notes, cleanRef).Scan(
 		&kTx.ID, &kTx.KhataID, &kTx.ShopID, &kTx.Type, &kTx.Amount, &kTx.BalanceAfter, &kTx.Notes, &kTx.BillNumber, &kTx.PaymentMode,
 		&kTx.Status, &kTx.DisputeReason, &kTx.DisputedAt, &kTx.UPIRefNo, &kTx.CreatedAt,
 	)
@@ -861,6 +962,101 @@ func (r *KhataRepo) SubmitUPIPayment(ctx context.Context, khataID string, amount
 	}
 
 	return &kTx, nil
+}
+
+// VerifyUPIPayment allows the merchant to APPROVE or REJECT a customer's pending UPI payment proof.
+func (r *KhataRepo) VerifyUPIPayment(ctx context.Context, shopID, khataID, txID, action, notes string) (*model.KhataTransaction, error) {
+	cleanAction := strings.ToUpper(strings.TrimSpace(action))
+	if cleanAction != "APPROVE" && cleanAction != "REJECT" {
+		return nil, errors.New("invalid action: must be APPROVE or REJECT")
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var origTx model.KhataTransaction
+	fetchQuery := `
+		SELECT id, khata_id, shop_id, type, amount, balance_after, COALESCE(notes, ''), COALESCE(bill_number, ''),
+		       COALESCE(payment_mode, ''), COALESCE(status, 'CONFIRMED'), COALESCE(upi_ref_no, ''), created_at
+		FROM khata_transactions
+		WHERE id = $1::uuid AND khata_id = $2::uuid AND shop_id = $3::uuid
+		FOR UPDATE
+	`
+	err = tx.QueryRow(ctx, fetchQuery, txID, khataID, shopID).Scan(
+		&origTx.ID, &origTx.KhataID, &origTx.ShopID, &origTx.Type, &origTx.Amount, &origTx.BalanceAfter,
+		&origTx.Notes, &origTx.BillNumber, &origTx.PaymentMode, &origTx.Status, &origTx.UPIRefNo, &origTx.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("transaction not found")
+		}
+		return nil, fmt.Errorf("failed to query transaction: %w", err)
+	}
+
+	if origTx.Status != model.KhataTxStatusPendingApproval {
+		return nil, fmt.Errorf("transaction is not pending approval (current status: %s)", origTx.Status)
+	}
+
+	newStatus := model.KhataTxStatusRejected
+	newBalanceAfter := origTx.BalanceAfter
+
+	if cleanAction == "APPROVE" {
+		var currentBalance float64
+		err = tx.QueryRow(ctx, `SELECT current_balance FROM customer_khata WHERE id = $1::uuid FOR UPDATE`, khataID).Scan(&currentBalance)
+		if err != nil {
+			return nil, fmt.Errorf("failed to lock customer khata: %w", err)
+		}
+
+		newBalance := currentBalance - origTx.Amount
+		if newBalance < 0 {
+			newBalance = 0
+		}
+		newBalanceAfter = newBalance
+		newStatus = model.KhataTxStatusConfirmed
+
+		_, err = tx.Exec(ctx, `
+			UPDATE customer_khata
+			SET current_balance = $1,
+			    oldest_unpaid_at = CASE WHEN $1 <= 0 THEN NULL ELSE oldest_unpaid_at END,
+			    updated_at = NOW()
+			WHERE id = $2::uuid
+		`, newBalance, khataID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to update customer khata balance: %w", err)
+		}
+	}
+
+	var updatedTx model.KhataTransaction
+	updateTxQuery := `
+		UPDATE khata_transactions
+		SET status = $1,
+		    balance_after = $2,
+		    resolution_action = $3,
+		    resolution_notes = NULLIF($4, ''),
+		    resolved_at = NOW(),
+		    updated_at = NOW()
+		WHERE id = $5::uuid
+		RETURNING id, khata_id, shop_id, type, amount, balance_after, COALESCE(notes, ''), COALESCE(bill_number, ''),
+		          COALESCE(payment_mode, ''), COALESCE(status, 'CONFIRMED'), resolution_action, resolution_notes, resolved_at,
+		          COALESCE(upi_ref_no, ''), created_at
+	`
+	err = tx.QueryRow(ctx, updateTxQuery, newStatus, newBalanceAfter, cleanAction, strings.TrimSpace(notes), txID).Scan(
+		&updatedTx.ID, &updatedTx.KhataID, &updatedTx.ShopID, &updatedTx.Type, &updatedTx.Amount, &updatedTx.BalanceAfter,
+		&updatedTx.Notes, &updatedTx.BillNumber, &updatedTx.PaymentMode, &updatedTx.Status, &updatedTx.ResolutionAction,
+		&updatedTx.ResolutionNotes, &updatedTx.ResolvedAt, &updatedTx.UPIRefNo, &updatedTx.CreatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update UPI verification status: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit UPI verification: %w", err)
+	}
+
+	return &updatedTx, nil
 }
 
 // RequestKhataClosure initiates a dual-OTP mutual handshake closure request.
@@ -1248,6 +1444,100 @@ func (r *KhataRepo) SetPromiseToPay(ctx context.Context, khataID string, promise
 
 
 // UpdateTransaction safely edits a credit or payment entry with atomic balance recalculation & audit logging.
+// recalculateLedgerBalances replays all active confirmed transactions for a khata in chronological order
+// and updates balance_after on any stale rows as well as customer_khata.current_balance and oldest_unpaid_at.
+func (r *KhataRepo) recalculateLedgerBalances(ctx context.Context, tx pgx.Tx, khataID string) (float64, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT id, type, amount, balance_after, reversal_of_id
+		FROM khata_transactions
+		WHERE khata_id = $1::uuid
+		  AND COALESCE(is_deleted, false) = false
+		  AND COALESCE(status, 'CONFIRMED') NOT IN ('PENDING_APPROVAL', 'REJECTED', 'CANCELLED')
+		ORDER BY created_at ASC, id ASC
+		FOR UPDATE
+	`, khataID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to query ledger rows for recalculation: %w", err)
+	}
+
+	type ledgerRow struct {
+		id           string
+		txType       string
+		amount       float64
+		balanceAfter float64
+		reversalOfID *string
+	}
+	var entries []ledgerRow
+	for rows.Next() {
+		var row ledgerRow
+		if err := rows.Scan(&row.id, &row.txType, &row.amount, &row.balanceAfter, &row.reversalOfID); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("failed to scan ledger row: %w", err)
+		}
+		entries = append(entries, row)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	txTypes := make(map[string]string, len(entries))
+	running := 0.0
+	type balanceUpdate struct {
+		id         string
+		newBalance float64
+	}
+	var updates []balanceUpdate
+
+	for _, e := range entries {
+		txTypes[e.id] = e.txType
+		switch e.txType {
+		case model.KhataTxTypeGiveCredit:
+			running += e.amount
+		case model.KhataTxTypeReceivePayment:
+			running -= e.amount
+			if running < 0 {
+				running = 0
+			}
+		case model.KhataTxTypeReversal:
+			if e.reversalOfID != nil {
+				origType := txTypes[*e.reversalOfID]
+				if origType == model.KhataTxTypeGiveCredit {
+					running -= e.amount
+					if running < 0 {
+						running = 0
+					}
+				} else if origType == model.KhataTxTypeReceivePayment {
+					running += e.amount
+				}
+			}
+		}
+		if e.balanceAfter != running {
+			updates = append(updates, balanceUpdate{id: e.id, newBalance: running})
+		}
+	}
+
+	for _, u := range updates {
+		if _, err := tx.Exec(ctx, `UPDATE khata_transactions SET balance_after = $1 WHERE id = $2::uuid`, u.newBalance, u.id); err != nil {
+			return 0, fmt.Errorf("failed to update recalculated balance_after: %w", err)
+		}
+	}
+
+	_, err = tx.Exec(ctx, `
+		UPDATE customer_khata
+		SET current_balance = $1,
+		    oldest_unpaid_at = CASE WHEN $1 <= 0 THEN NULL ELSE COALESCE(oldest_unpaid_at, NOW()) END,
+		    updated_at = NOW()
+		WHERE id = $2::uuid
+	`, running, khataID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to update customer khata balance: %w", err)
+	}
+
+	return running, nil
+}
+
+// UpdateTransaction edits a credit or payment entry atomically with mandatory audit tracking & recalculates running balances.
 func (r *KhataRepo) UpdateTransaction(ctx context.Context, shopID, khataID, txID string, newAmount float64, newNotes, newBillNumber, editReason, modifiedBy string) (*model.KhataTransaction, error) {
 	if newAmount <= 0 {
 		return nil, errors.New("amount must be greater than zero")
@@ -1290,63 +1580,57 @@ func (r *KhataRepo) UpdateTransaction(ctx context.Context, shopID, khataID, txID
 		return nil, errors.New("cannot edit an automated reversal entry")
 	}
 
-	// 2. Lock customer_khata to recalculate balance
+	// 2. Lock customer_khata row
 	var currentBalance float64
 	err = tx.QueryRow(ctx, `SELECT current_balance FROM customer_khata WHERE id = $1::uuid FOR UPDATE`, khataID).Scan(&currentBalance)
 	if err != nil {
 		return nil, fmt.Errorf("failed to lock customer khata: %w", err)
 	}
 
-	// 3. Compute balance adjustment
-	delta := newAmount - origTx.Amount
-	var newBalance float64
-	if origTx.Type == model.KhataTxTypeGiveCredit {
-		// More credit means higher balance
-		newBalance = currentBalance + delta
-		if newBalance < 0 {
-			newBalance = 0
-		}
-	} else if origTx.Type == model.KhataTxTypeReceivePayment {
-		// More payment means lower balance
-		newBalance = currentBalance - delta
-	} else {
+	if origTx.Type != model.KhataTxTypeGiveCredit && origTx.Type != model.KhataTxTypeReceivePayment {
 		return nil, errors.New("unsupported transaction type for edit")
 	}
 
-	// 4. Update customer_khata balance
-	_, err = tx.Exec(ctx, `UPDATE customer_khata SET current_balance = $1, updated_at = NOW() WHERE id = $2::uuid`, newBalance, khataID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to update customer khata balance: %w", err)
-	}
-
-	// 5. Update the transaction with audit trail
+	// 3. Update the transaction with audit trail first
 	updateTxQuery := `
 		UPDATE khata_transactions
 		SET original_amount = COALESCE(original_amount, amount),
 		    amount = $1,
 		    notes = $2,
 		    bill_number = $3,
-		    balance_after = $4,
-		    edit_reason = $5,
-		    modified_by = $6,
+		    edit_reason = $4,
+		    modified_by = $5,
 		    updated_at = NOW()
-		WHERE id = $7::uuid
-		RETURNING id, khata_id, shop_id, type, amount, balance_after, COALESCE(notes, ''), COALESCE(bill_number, ''),
-		          COALESCE(payment_mode, ''), COALESCE(status, 'CONFIRMED'), COALESCE(is_deleted, false),
-		          deleted_at, COALESCE(deleted_by, ''), COALESCE(delete_reason, ''),
-		          original_amount, COALESCE(edit_reason, ''), COALESCE(modified_by, ''), updated_at, created_at
+		WHERE id = $6::uuid
 	`
-	var updatedTx model.KhataTransaction
-	var delBy, delReas, modByStr, edReas string
-	err = tx.QueryRow(ctx, updateTxQuery,
+	if _, err = tx.Exec(ctx, updateTxQuery,
 		newAmount,
 		strings.TrimSpace(newNotes),
 		strings.TrimSpace(newBillNumber),
-		newBalance,
 		strings.TrimSpace(editReason),
 		strings.TrimSpace(modifiedBy),
 		txID,
-	).Scan(
+	); err != nil {
+		return nil, fmt.Errorf("failed to update transaction entry: %w", err)
+	}
+
+	// 4. Recalculate running balance_after across this and all subsequent ledger rows + customer_khata.current_balance
+	if _, err := r.recalculateLedgerBalances(ctx, tx, khataID); err != nil {
+		return nil, err
+	}
+
+	// 5. Fetch updated transaction with its exact recalculated balance_after
+	selectUpdatedQuery := `
+		SELECT id, khata_id, shop_id, type, amount, balance_after, COALESCE(notes, ''), COALESCE(bill_number, ''),
+		       COALESCE(payment_mode, ''), COALESCE(status, 'CONFIRMED'), COALESCE(is_deleted, false),
+		       deleted_at, COALESCE(deleted_by, ''), COALESCE(delete_reason, ''),
+		       original_amount, COALESCE(edit_reason, ''), COALESCE(modified_by, ''), updated_at, created_at
+		FROM khata_transactions
+		WHERE id = $1::uuid
+	`
+	var updatedTx model.KhataTransaction
+	var delBy, delReas, modByStr, edReas string
+	err = tx.QueryRow(ctx, selectUpdatedQuery, txID).Scan(
 		&updatedTx.ID, &updatedTx.KhataID, &updatedTx.ShopID, &updatedTx.Type, &updatedTx.Amount, &updatedTx.BalanceAfter,
 		&updatedTx.Notes, &updatedTx.BillNumber, &updatedTx.PaymentMode, &updatedTx.Status, &updatedTx.IsDeleted,
 		&updatedTx.DeletedAt, &delBy, &delReas,
@@ -1407,35 +1691,18 @@ func (r *KhataRepo) DeleteTransaction(ctx context.Context, shopID, khataID, txID
 		return nil, errors.New("cannot delete an automated reversal entry")
 	}
 
-	// 2. Lock customer_khata to recalculate balance
+	// 2. Lock customer_khata before recalculating
 	var currentBalance float64
 	err = tx.QueryRow(ctx, `SELECT current_balance FROM customer_khata WHERE id = $1::uuid FOR UPDATE`, khataID).Scan(&currentBalance)
 	if err != nil {
 		return nil, fmt.Errorf("failed to lock customer khata: %w", err)
 	}
 
-	// 3. Compute balance adjustment on deletion
-	var newBalance float64
-	if origTx.Type == model.KhataTxTypeGiveCredit {
-		// Deleting credit reduces the customer debt
-		newBalance = currentBalance - origTx.Amount
-		if newBalance < 0 {
-			newBalance = 0
-		}
-	} else if origTx.Type == model.KhataTxTypeReceivePayment {
-		// Deleting payment restores customer debt
-		newBalance = currentBalance + origTx.Amount
-	} else {
+	if origTx.Type != model.KhataTxTypeGiveCredit && origTx.Type != model.KhataTxTypeReceivePayment {
 		return nil, errors.New("unsupported transaction type for deletion")
 	}
 
-	// 4. Update customer_khata balance
-	_, err = tx.Exec(ctx, `UPDATE customer_khata SET current_balance = $1, updated_at = NOW() WHERE id = $2::uuid`, newBalance, khataID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to update customer khata balance: %w", err)
-	}
-
-	// 5. Soft-delete the transaction with status CANCELLED and audit information
+	// 3. Soft-delete the transaction with status CANCELLED and audit information
 	updateTxQuery := `
 		UPDATE khata_transactions
 		SET is_deleted = true,
@@ -1469,6 +1736,11 @@ func (r *KhataRepo) DeleteTransaction(ctx context.Context, shopID, khataID, txID
 	if delReas != "" { deletedTx.DeleteReason = &delReas }
 	if modByStr != "" { deletedTx.ModifiedBy = &modByStr }
 	if edReas != "" { deletedTx.EditReason = &edReas }
+
+	// 4. Recalculate running balance_after across all remaining active entries + customer_khata.current_balance
+	if _, err := r.recalculateLedgerBalances(ctx, tx, khataID); err != nil {
+		return nil, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("failed to commit transaction deletion: %w", err)

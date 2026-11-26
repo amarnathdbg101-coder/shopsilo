@@ -142,7 +142,7 @@ func (c *CustomerKhataController) SubmitUPIPayment(w http.ResponseWriter, r *htt
 		return
 	}
 
-	reuse.Created(w, "UPI payment recorded and balance settled successfully", tx)
+	reuse.Created(w, "UPI payment proof submitted and pending shopkeeper verification", tx)
 }
 
 // DownloadCustomerPDF downloads the official statement PDF for the customer (Protected - Customer).

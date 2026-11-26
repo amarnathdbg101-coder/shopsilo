@@ -9,6 +9,8 @@ const (
 	KhataTxTypeReversal       = "REVERSAL"        // Galti Sudhar / Reversal
 
 	KhataTxStatusConfirmed        = "CONFIRMED"
+	KhataTxStatusPendingApproval  = "PENDING_APPROVAL"
+	KhataTxStatusRejected         = "REJECTED"
 	KhataTxStatusDisputed         = "DISPUTED"
 	KhataTxStatusResolvedAccepted = "RESOLVED_ACCEPTED"
 	KhataTxStatusResolvedRejected = "RESOLVED_REJECTED"
@@ -63,6 +65,7 @@ type KhataTransaction struct {
 	ResolvedAt       *time.Time `json:"resolved_at,omitempty"`
 	ReversalOfID     *string    `json:"reversal_of_id,omitempty"`
 	UPIRefNo         string     `json:"upi_ref_no,omitempty"`
+	ClientTxID       *string    `json:"client_tx_id,omitempty"`
 	ParchiImageURL   *string    `json:"parchi_image_url,omitempty"`
 	ItemsSummary     *string    `json:"items_summary,omitempty"`
 	IsDeleted        bool       `json:"is_deleted"`
