@@ -73,3 +73,78 @@ func (c *AnalyticsController) GetProductMatrix(w http.ResponseWriter, r *http.Re
 
 	reuse.Success(w, "Product performance matrix retrieved successfully", res)
 }
+
+func parseDateRangeOrMonth(r *http.Request) (time.Time, time.Time) {
+	q := r.URL.Query()
+	now := time.Now()
+	if fromStr, toStr := q.Get("from"), q.Get("to"); fromStr != "" && toStr != "" {
+		if f, err1 := time.Parse("2006-01-02", fromStr); err1 == nil {
+			if t, err2 := time.Parse("2006-01-02", toStr); err2 == nil && !t.Before(f) {
+				return f, t
+			}
+		}
+	}
+	year, _ := strconv.Atoi(q.Get("year"))
+	month, _ := strconv.Atoi(q.Get("month"))
+	if year <= 0 {
+		year = now.Year()
+	}
+	if month <= 0 || month > 12 {
+		month = int(now.Month())
+	}
+	from := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.Local)
+	to := from.AddDate(0, 1, -1)
+	return from, to
+}
+
+// GetShopIntelligence returns GMROI, Inventory Turnover, ABC-XYZ, Market Basket Lift, Peak Hours & Tender Reconciliation.
+func (c *AnalyticsController) GetShopIntelligence(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	fromDate, toDate := parseDateRangeOrMonth(r)
+	res, err := c.service.GetShopIntelligence(r.Context(), claims.UserID, fromDate, toDate)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Shop intelligence analytics retrieved successfully", res)
+}
+
+// DownloadCACSV streams Tally/Excel-compatible UTF-8 BOM CSV for CA audits (sales, expenses, stock, khata).
+func (c *AnalyticsController) DownloadCACSV(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	exportType := r.URL.Query().Get("type")
+	if exportType == "" {
+		exportType = "sales"
+	}
+	fromDate, toDate := parseDateRangeOrMonth(r)
+
+	csvBytes, filename, err := c.service.ExportCACSV(r.Context(), claims.UserID, exportType, fromDate, toDate)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(csvBytes)
+}

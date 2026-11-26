@@ -1495,6 +1495,7 @@ func (r *ProductRepo) GetMonthlyProfitAnalytics(ctx context.Context, shopID stri
 				GROUP BY bill_id
 			) items ON items.bill_id = b.id
 			WHERE b.shop_id = $1
+			  AND COALESCE(b.status, '') <> 'cancelled'
 			  AND EXTRACT(YEAR FROM b.created_at) = $2
 			  AND EXTRACT(MONTH FROM b.created_at) = $3
 		),

@@ -94,3 +94,29 @@ func (s *AnalyticsService) GetProductMatrix(ctx context.Context, shopOwnerUserID
 
 	return s.productRepo.GetProductPerformanceMatrix(ctx, shop.ID)
 }
+
+// GetShopIntelligence returns industrial-grade retail KPIs (GMROI, Turnover, ABC-XYZ, Market Basket, Peak Hours & Tender Reconciliation).
+func (s *AnalyticsService) GetShopIntelligence(ctx context.Context, shopOwnerUserID string, fromDate, toDate time.Time) (*dto.ShopIntelligenceResponse, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, ErrShopNotFound
+		}
+		return nil, err
+	}
+
+	return s.productRepo.GetShopIntelligence(ctx, shop.ID, fromDate, toDate)
+}
+
+// ExportCACSV generates UTF-8 BOM CSV bytes for sales, expenses, stock valuation, or khata receivables.
+func (s *AnalyticsService) ExportCACSV(ctx context.Context, shopOwnerUserID, exportType string, fromDate, toDate time.Time) ([]byte, string, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, "", ErrShopNotFound
+		}
+		return nil, "", err
+	}
+
+	return s.productRepo.ExportCACSV(ctx, shop.ID, exportType, fromDate, toDate)
+}

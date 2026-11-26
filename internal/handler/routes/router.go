@@ -482,8 +482,10 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/shops/me/inventory/reorder/whatsapp", invc.GetSupplierReorderWhatsApp)     // Shop
 
 		// Shop Analytics & Profit Intelligence
-		r.Get("/shops/me/analytics/profit", ac.GetMonthlyProfit)     // Shop
-		r.Get("/shops/me/analytics/products", ac.GetProductMatrix)   // Shop
+		r.Get("/shops/me/analytics/profit", ac.GetMonthlyProfit)             // Shop
+		r.Get("/shops/me/analytics/products", ac.GetProductMatrix)           // Shop
+		r.Get("/shops/me/analytics/intelligence", ac.GetShopIntelligence)    // Shop
+		r.Get("/shops/me/analytics/ca-export.csv", ac.DownloadCACSV)         // Shop
 
 		// Shop Counter POS & Digital Receipts
 		r.Post("/shops/me/pos/sale", posc.CreateSale)
@@ -549,11 +551,12 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/shops/me/khata/{mobile}/statement.pdf", khatac.DownloadStatementPDF) // Shop
 		r.Get("/shops/me/khata/{mobile}/statement/share", khatac.GetStatementShare) // Shop
 		r.Put("/shops/me/khata/{mobile}/credit-limit", khatac.UpdateCreditLimit) // Shop
-		r.Post("/shops/me/khata", khatac.RecordCredit)                           // Shop
-		r.Post("/shops/me/khata/{mobile}/payment", khatac.RecordPayment)         // Shop
+		r.With(middleware.IdempotencyGuard).Post("/shops/me/khata", khatac.RecordCredit)                           // Shop
+		r.With(middleware.IdempotencyGuard).Post("/shops/me/khata/{mobile}/payment", khatac.RecordPayment)         // Shop
 		r.Post("/shops/me/khata/{id}/request-closure", khatac.RequestClosure)   // Shop
 		r.Post("/shops/me/khata/{id}/verify-closure-otp", khatac.VerifyClosureOTP) // Shop
 		r.Post("/shops/me/khata/{id}/transactions/{txId}/reverse", khatac.ReverseTransaction) // Shop
+		r.Post("/shops/me/khata/{id}/transactions/{txId}/verify-upi", khatac.VerifyUPIPayment) // Shop
 		r.Put("/shops/me/khata/{id}/transactions/{txId}", khatac.UpdateTransaction)            // Shop
 		r.Delete("/shops/me/khata/{id}/transactions/{txId}", khatac.DeleteTransaction)        // Shop
 		r.Patch("/shops/me/khata/transactions/{id}/notes", khatac.UpdateTransactionNotes) // Shop
