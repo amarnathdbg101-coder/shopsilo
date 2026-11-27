@@ -307,16 +307,17 @@ CRITICAL CATALOGING SPECIALIST RULES:
      * NEVER add 'Color' to 'attributes'.
      * NEVER append a color shade to the product title (e.g. NEVER write "Fortune Mustard Oil - Yellow").
    - FOR COLOR-CRITICAL PRODUCTS ONLY:
-     * Accurately map the dominant fabric color to standard Indian commercial trade shade cards:
-       - Greens & Parrots: Sugapankhi / Parrot Green (#7CB342), Pista Green (#A8D8B9), Rama Green (#00827F), Mehendi Green (#556B2F), Bottle Green (#004D40), Morpankhi (#005B5C).
-       - Yellows & Oranges: Lemon Yellow (#FFF176), Haldi Yellow (#FFB300), Mustard Yellow (#E5A823), Rust / Gerua (#B7410E), Peach (#FFAB91).
-       - Pinks & Reds: Rani Pink (#D81B60), Baby Pink (#F48FB1), Gajari (#FF6F61), Pyazi (#A36B7E), Blood Red (#D32F2F), Tamatar Red (#E53935), Maroon (#800000), Katha (#5D2524).
-       - Blues & Purples: Firozi / Cyan (#00BCD4), Royal Blue (#1565C0), Navy Blue (#000080), Wine / Jamuni (#4A154B), Purple (#7B1FA2).
-       - Neutrals: Off White (#FAF0E6), Badami / Cream (#FFF8E7), Chiku / Beige (#D7C4B7), Coffee Brown (#4E342E), Slate Grey (#757575), Black (#1A1A1A).
+     * Sample the TRUE dominant RGB pixel color of the item in the photo (do NOT force-fit into a tiny list if the real shade is slightly lighter/darker — output the exact observed #RRGGBB hex!).
+     * Map to exact Indian commercial trade / cosmetic shade names:
+       - Greens & Teals: Sugapankhi / Parrot Green (#7CB342), Mint Green (#66BB6A), Pista Green (#A8D8B9), Olive Green (#6B8E23), Mehendi Green (#556B2F), Emerald Green (#2E7D32), Bottle Green (#004D40), Sea Green (#26A69A), Rama Green (#00827F), Morpankhi (#005B5C).
+       - Yellows & Oranges: Lemon Yellow (#FFF176), Haldi Yellow (#FFB300), Mustard Yellow (#E5A823), Mango Yellow (#FFA000), Saffron / Kesariya (#FF6F00), Tangerine / Orange (#FB8C00), Coral / Sindoori (#FF5722), Rust / Gerua (#B7410E), Peach (#FFAB91).
+       - Pinks, Reds & Cosmetics: Baby Pink (#F48FB1), Rose Pink (#E91E63), Rani Pink (#D81B60), Dark Magenta (#C2185B), Gajari (#FF6F61), Pyazi (#A36B7E), Mauve (#915F6D), Terracotta (#E2725B), Tamatar Red (#E53935), Blood Red (#D32F2F), Crimson Red (#B71C1C), Ruby Red (#9B111E), Maroon (#800000), Katha (#5D2524).
+       - Blues & Purples: Sky Blue (#87CEEB), Firozi (#00BCD4), Peacock Blue (#0097A7), Royal Blue (#1565C0), Denim / Indigo (#283593), Navy Blue (#000080), Lavender (#CE93D8), Purple (#7B1FA2), Plum (#8E4585), Wine (#4A154B).
+       - Neutrals & Metallics: Pure White (#FFFFFF), Ivory / Moti (#FFFFF0), Off White (#FAF0E6), Badami / Cream (#FFF8E7), Champagne (#F5DEB3), Chiku / Beige (#D7C4B7), Nude Beige (#D2A679), Khaki (#C3B091), Camel / Tan (#C19A6B), Coffee Brown (#4E342E), Slate Grey (#757575), Charcoal Grey (#37474F), Z-Black (#1A1A1A), Golden / Zari (#D4AF37), Rose Gold (#B76E79), Silver (#C0C0C0).
      * CAMERA WHITE BALANCE & UNDERTONE RULE:
        - Indoor warm/yellow lighting or camera sensor overexposure often shifts vibrant chartreuse/lime greens (like 'Sugapankhi' / 'Parrot Green' / 'तोता हरा') to look yellowish. Check fabric undertones carefully: if there is a green tint/pigment with high vibrancy, label it as 'Sugapankhi' (सुगापंखी/तोता), NOT plain 'Lemon Yellow'.
-     * STRICT CHROMATIC NEIGHBOR RULE FOR ALTERNATIVES:
-       - 'alternatives' MUST strictly be adjacent shades from the EXACT SAME color family (e.g., if primary is Sugapankhi / Yellow-Green, alternatives can ONLY be Lemon Yellow, Pista Green, Mehendi Green, Haldi Yellow. NEVER suggest distant, unrelated colors like Red, Maroon, Black, or Blue in alternatives!).
+     * STRICT CHROMATIC NEIGHBOR & NO-DUPLICATE RULE FOR ALTERNATIVES:
+       - 'alternatives' MUST strictly be 3-4 distinct adjacent shades from the EXACT SAME color family (e.g., if primary is Rani Pink, alternatives can ONLY be Rose Pink, Baby Pink, Dark Magenta, Pyazi. NEVER repeat the same hex/color twice, and NEVER suggest unrelated colors!).
      * In 'color_details':
        - 'primary_shade': best calibrated match with English shade name, Hindi name, and exact HexCode.
        - 'alternatives': 3 to 4 closest neighboring color shades strictly from the same chromatic family.
@@ -385,6 +386,11 @@ CRITICAL CATALOGING SPECIALIST RULES:
 		}
 	}
 
+	// Calibrate and deduplicate AI color shades by exact RGB hex & chromatic family
+	if resp.ColorDetails != nil {
+		calibrateColorDetails(resp.ColorDetails)
+	}
+
 	// Filter and sanitize attributes: strip useless boilerplate, placeholders, and redundant keys
 	if resp.Attributes != nil {
 		cleanAttrs := make(map[string]string)
@@ -402,6 +408,83 @@ CRITICAL CATALOGING SPECIALIST RULES:
 
 // isUsefulProductAttribute ensures only high-value, commercial product specs are retained,
 // filtering out generic boilerplate advice, dummy placeholders, and redundant keys.
+func normalizeHexCode(raw string) string {
+	clean := strings.ToUpper(strings.TrimPrefix(strings.TrimSpace(raw), "#"))
+	if len(clean) != 6 {
+		return "#808080"
+	}
+	if _, err := hex.DecodeString(clean); err != nil {
+		return "#808080"
+	}
+	return "#" + clean
+}
+
+func parseRGB(hexStr string) (int, int, int, bool) {
+	clean := strings.TrimPrefix(normalizeHexCode(hexStr), "#")
+	b, err := hex.DecodeString(clean)
+	if err != nil || len(b) != 3 {
+		return 128, 128, 128, false
+	}
+	return int(b[0]), int(b[1]), int(b[2]), true
+}
+
+func compuphaseColorDist(hex1, hex2 string) int {
+	r1, g1, b1, _ := parseRGB(hex1)
+	r2, g2, b2, _ := parseRGB(hex2)
+	dr := r1 - r2
+	dg := g1 - g2
+	db := b1 - b2
+	rmean := (r1 + r2) / 2
+	return (((512 + rmean) * dr * dr) >> 8) + 4*dg*dg + (((767 - rmean) * db * db) >> 8)
+}
+
+func calibrateColorDetails(details *dto.AIColorDetails) {
+	if details == nil {
+		return
+	}
+	details.PrimaryShade.HexCode = normalizeHexCode(details.PrimaryShade.HexCode)
+	details.PrimaryShade.ShadeName = strings.TrimSpace(details.PrimaryShade.ShadeName)
+	details.PrimaryShade.HindiName = strings.TrimSpace(details.PrimaryShade.HindiName)
+
+	seenNames := map[string]bool{
+		strings.ToLower(details.PrimaryShade.ShadeName): true,
+	}
+	seenHexes := []string{details.PrimaryShade.HexCode}
+	filtered := make([]dto.ColorShade, 0, len(details.Alternatives))
+
+	for _, alt := range details.Alternatives {
+		name := strings.TrimSpace(alt.ShadeName)
+		if name == "" {
+			continue
+		}
+		lowerName := strings.ToLower(name)
+		if seenNames[lowerName] {
+			continue
+		}
+		normHex := normalizeHexCode(alt.HexCode)
+		isDupHex := false
+		for _, h := range seenHexes {
+			if compuphaseColorDist(normHex, h) < 900 {
+				isDupHex = true
+				break
+			}
+		}
+		if isDupHex {
+			continue
+		}
+		if compuphaseColorDist(normHex, details.PrimaryShade.HexCode) > 45000 {
+			continue
+		}
+		alt.ShadeName = name
+		alt.HindiName = strings.TrimSpace(alt.HindiName)
+		alt.HexCode = normHex
+		seenNames[lowerName] = true
+		seenHexes = append(seenHexes, normHex)
+		filtered = append(filtered, alt)
+	}
+	details.Alternatives = filtered
+}
+
 func isUsefulProductAttribute(k, v string) bool {
 	kClean := strings.ToLower(strings.TrimSpace(k))
 	vClean := strings.ToLower(strings.TrimSpace(v))
