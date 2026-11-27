@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -186,15 +187,11 @@ type geminiCandidateResponse struct {
 
 // ── 1. Packet & Product Vision Scanner (10+ Attributes Extraction) ──
 func (s *AIService) ScanProduct(ctx context.Context, req dto.AIScanProductRequest) (*dto.AIScanProductResponse, error) {
-	mimeType := req.MimeType
-	if mimeType == "" {
-		mimeType = "image/jpeg"
-	}
-
 	cleanBase64 := cleanBase64String(req.ImageBase64)
 	if cleanBase64 == "" {
 		return nil, fmt.Errorf("empty or invalid image data")
 	}
+	mimeType := detectMimeFromBase64(cleanBase64, req.MimeType)
 
 	// Token Optimization: Downscale large image (max 768px, JPEG quality 80)
 	// This reduces Gemini multimodal vision tiles and saves 60-75% input tokens.
@@ -408,6 +405,31 @@ CRITICAL CATALOGING SPECIALIST RULES:
 
 // isUsefulProductAttribute ensures only high-value, commercial product specs are retained,
 // filtering out generic boilerplate advice, dummy placeholders, and redundant keys.
+func detectMimeFromBase64(b64, fallback string) string {
+	sampleLen := len(b64)
+	if sampleLen > 32 {
+		sampleLen = 32
+	}
+	if sampleLen >= 8 {
+		if raw, err := base64.StdEncoding.DecodeString(b64[:(sampleLen/4)*4]); err == nil && len(raw) >= 4 {
+			if raw[0] == 0x89 && raw[1] == 0x50 && raw[2] == 0x4E && raw[3] == 0x47 {
+				return "image/png"
+			}
+			if raw[0] == 0xFF && raw[1] == 0xD8 {
+				return "image/jpeg"
+			}
+			if raw[0] == 0x52 && raw[1] == 0x49 && raw[2] == 0x46 && raw[3] == 0x46 {
+				return "image/webp"
+			}
+		}
+	}
+	m := strings.TrimSpace(fallback)
+	if m == "" {
+		return "image/jpeg"
+	}
+	return m
+}
+
 func normalizeHexCode(raw string) string {
 	clean := strings.ToUpper(strings.TrimPrefix(strings.TrimSpace(raw), "#"))
 	if len(clean) != 6 {
@@ -650,10 +672,7 @@ func (s *AIService) ScanMandiItem(ctx context.Context, req dto.AIMandiScanReques
 		return nil, errors.New("empty image data")
 	}
 
-	mimeType := req.MimeType
-	if mimeType == "" {
-		mimeType = "image/jpeg"
-	}
+	mimeType := detectMimeFromBase64(cleanBase64, req.MimeType)
 
 	// Token & Latency Optimization: Downscale large image (max 768px, JPEG quality 80)
 	// This reduces Gemini multimodal vision tiles and saves 70-85% input tokens.
