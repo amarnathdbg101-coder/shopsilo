@@ -381,6 +381,8 @@ case "split":
 		return nil, errors.New("failed to commit sale transaction")
 	}
 
+	InvalidateAnalyticsCache(shop.ID)
+
 	// Telemetry: Synchronize physical cash received with active shift drawer
 	if s.drawerRepo != nil && (createdBill.CashAmount > 0 || createdBill.PaymentMethod == "cash") {
 		cashToRecord := createdBill.CashAmount
@@ -783,7 +785,11 @@ func (s *POSService) CancelBill(ctx context.Context, shopOwnerUserID, billNumber
 		cleanReason = "Cancelled by cashier at counter"
 	}
 
-	return s.posRepo.CancelBill(ctx, shop.ID, billNumber, cleanReason)
+	if err := s.posRepo.CancelBill(ctx, shop.ID, billNumber, cleanReason); err != nil {
+		return err
+	}
+	InvalidateAnalyticsCache(shop.ID)
+	return nil
 }
 
 // GetCustomerCreditCheck retrieves a customer's registered name, current credit balance, and credit limit.

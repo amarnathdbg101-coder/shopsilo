@@ -52,7 +52,12 @@ func (s *ExpenseService) CreateExpense(ctx context.Context, shopOwnerUserID stri
 		ExpenseDate:   dateStr,
 	}
 
-	return s.expenseRepo.CreateExpense(ctx, shop.ID, exp)
+	created, err := s.expenseRepo.CreateExpense(ctx, shop.ID, exp)
+	if err != nil {
+		return nil, err
+	}
+	InvalidateAnalyticsCache(shop.ID)
+	return created, nil
 }
 
 // ListExpenses returns monthly expenses with total and category breakdown.

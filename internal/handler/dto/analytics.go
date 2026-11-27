@@ -224,14 +224,66 @@ type CapitalSummary struct {
 	CashReleasePotential float64 `json:"cash_release_potential"`
 }
 
+// SeasonalHint highlights products or categories showing significant YoY or MoM demand shifts.
+type SeasonalHint struct {
+	ProductID      string  `json:"product_id"`
+	Name           string  `json:"name"`
+	Category       string  `json:"category"`
+	CurrentQty     int     `json:"current_qty"`
+	ComparisonQty  int     `json:"comparison_qty"`
+	GrowthMultiple float64 `json:"growth_multiple"`
+	ComparisonType string  `json:"comparison_type"` // "yoy" | "mom"
+	Hint           string  `json:"hint"`
+}
+
+// SmartComboSuggestion pairs a fast-moving anchor product with a slow/cash-trap item to liquidate blocked capital.
+type SmartComboSuggestion struct {
+	AnchorProductID   string  `json:"anchor_product_id"`
+	AnchorName        string  `json:"anchor_name"`
+	SlowProductID     string  `json:"slow_product_id"`
+	SlowName          string  `json:"slow_name"`
+	RegularTotal      float64 `json:"regular_total"`
+	BundlePrice       float64 `json:"bundle_price"`
+	CustomerSavings   float64 `json:"customer_savings"`
+	CapitalToUnlock   float64 `json:"capital_to_unlock"`
+	Pitch             string  `json:"pitch"`
+}
+
+// ShrinkageAlert flags unusual bill cancellations or manual counter discounts for owner review.
+type ShrinkageAlert struct {
+	ID       string `json:"id"`
+	Severity string `json:"severity"` // "high" | "medium"
+	Title    string `json:"title"`
+	Detail   string `json:"detail"`
+}
+
 // BusinessAdvisorResponse provides CA & Business Analyst decisions on what sells, why, how much to stock, and what to drop.
 type BusinessAdvisorResponse struct {
-	Capital          CapitalSummary        `json:"capital"`
-	Stars            []AdvisorItemDecision `json:"stars"`
-	CrowdPullers     []AdvisorItemDecision `json:"crowd_pullers"`
-	HiddenGems       []AdvisorItemDecision `json:"hidden_gems"`
-	CashTraps        []AdvisorItemDecision `json:"cash_traps"`
-	ReorderNow       []AdvisorItemDecision `json:"reorder_now"`
-	ExecutiveVerdict string                `json:"executive_verdict"`
-	GeneratedAt      string                `json:"generated_at"`
+	Capital          CapitalSummary         `json:"capital"`
+	Stars            []AdvisorItemDecision  `json:"stars"`
+	CrowdPullers     []AdvisorItemDecision  `json:"crowd_pullers"`
+	HiddenGems       []AdvisorItemDecision  `json:"hidden_gems"`
+	CashTraps        []AdvisorItemDecision  `json:"cash_traps"`
+	ReorderNow       []AdvisorItemDecision  `json:"reorder_now"`
+	SeasonalHints    []SeasonalHint         `json:"seasonal_hints"`
+	SmartCombos      []SmartComboSuggestion `json:"smart_combos"`
+	ShrinkageAlerts  []ShrinkageAlert       `json:"shrinkage_alerts"`
+	ExecutiveVerdict string                 `json:"executive_verdict"`
+	GeneratedAt      string                 `json:"generated_at"`
+}
+
+// EveningDigestResponse holds a ready-to-share end-of-day summary for the shop owner.
+type EveningDigestResponse struct {
+	Date         string   `json:"date"`
+	ShopName     string   `json:"shop_name"`
+	TodayBills   int      `json:"today_bills"`
+	TodaySales   float64  `json:"today_sales"`
+	CashSales    float64  `json:"cash_sales"`
+	UPISales     float64  `json:"upi_sales"`
+	KhataSales   float64  `json:"khata_sales"`
+	TodayExpense float64  `json:"today_expenses"`
+	NetProfit    float64  `json:"net_profit"`
+	TopReorders  []string `json:"top_reorders"`
+	WhatsAppText string   `json:"whatsapp_text"`
+	GeneratedAt  string   `json:"generated_at"`
 }

@@ -53,6 +53,7 @@ func (s *InventoryService) AdjustStock(ctx context.Context, shopOwnerUserID stri
 		"low_stock_threshold": inv.LowStockThreshold,
 	})
 
+	InvalidateAnalyticsCache(shop.ID)
 	return inv, nil
 }
 

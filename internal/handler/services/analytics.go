@@ -384,15 +384,40 @@ type advisorCacheEntry struct {
 	expiresAt time.Time
 }
 
+type seasonalCacheEntry struct {
+	hints     []dto.SeasonalHint
+	expiresAt time.Time
+}
+
 var (
-	advisorCacheMu sync.RWMutex
-	advisorCache   = make(map[string]advisorCacheEntry)
+	advisorCacheMu  sync.RWMutex
+	advisorCache    = make(map[string]advisorCacheEntry)
+	seasonalCacheMu sync.RWMutex
+	seasonalCache   = make(map[string]seasonalCacheEntry)
 )
 
-const advisorCacheTTL = 3 * time.Minute
+const (
+	advisorCacheTTL  = 3 * time.Minute
+	seasonalCacheTTL = 15 * time.Minute
+)
+
+// InvalidateAnalyticsCache clears per-shop pulse and advisor caches immediately after mutations
+// (e.g. POS sale, bill cancel, expense entry, or stock adjustment).
+func InvalidateAnalyticsCache(shopID string) {
+	if shopID == "" {
+		return
+	}
+	pulseCacheMu.Lock()
+	delete(pulseCache, shopID)
+	pulseCacheMu.Unlock()
+
+	advisorCacheMu.Lock()
+	delete(advisorCache, shopID)
+	advisorCacheMu.Unlock()
+}
 
 // GetBusinessAdvisor returns CA-grade product classification (Stars, Crowd Pullers, Hidden Gems, Cash Traps),
-// dynamic reorder quantities, and working-capital release opportunities.
+// dynamic reorder quantities, seasonal hints, and working-capital release opportunities.
 func (s *AnalyticsService) GetBusinessAdvisor(ctx context.Context, shopOwnerUserID string) (*dto.BusinessAdvisorResponse, error) {
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
@@ -410,12 +435,76 @@ func (s *AnalyticsService) GetBusinessAdvisor(ctx context.Context, shopOwnerUser
 	}
 	advisorCacheMu.RUnlock()
 
-	raw, capital, err := s.productRepo.GetAdvisorProductStats(ctx, shop.ID, now)
-	if err != nil {
-		return nil, err
+	var cachedSeasonal []dto.SeasonalHint
+	seasonalHit := false
+	seasonalCacheMu.RLock()
+	if sEntry, ok := seasonalCache[shop.ID]; ok && now.Before(sEntry.expiresAt) {
+		cachedSeasonal = sEntry.hints
+		seasonalHit = true
+	}
+	seasonalCacheMu.RUnlock()
+
+	var (
+		raw        []repository.AdvisorRawProduct
+		capital    dto.CapitalSummary
+		statsErr   error
+		hints      []dto.SeasonalHint
+		hintsErr   error
+		shrinkSig  repository.ShrinkageSignals
+		shrinkErr  error
+		wg         sync.WaitGroup
+	)
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		raw, capital, statsErr = s.productRepo.GetAdvisorProductStats(ctx, shop.ID, now)
+	}()
+	go func() {
+		defer wg.Done()
+		shrinkSig, shrinkErr = s.productRepo.GetShrinkageSignals(ctx, shop.ID, now)
+	}()
+
+	if !seasonalHit {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			hints, hintsErr = s.productRepo.GetSeasonalDemandHints(ctx, shop.ID, now)
+		}()
+	} else {
+		hints = cachedSeasonal
+	}
+
+	wg.Wait()
+	if statsErr != nil {
+		return nil, statsErr
+	}
+	if !seasonalHit && hintsErr == nil {
+		seasonalCacheMu.Lock()
+		if len(seasonalCache) > 500 {
+			for k, v := range seasonalCache {
+				if now.After(v.expiresAt) {
+					delete(seasonalCache, k)
+				}
+			}
+		}
+		seasonalCache[shop.ID] = seasonalCacheEntry{
+			hints:     hints,
+			expiresAt: now.Add(seasonalCacheTTL),
+		}
+		seasonalCacheMu.Unlock()
 	}
 
 	res := buildBusinessAdvisorResponse(raw, capital, now)
+	if hints == nil {
+		hints = []dto.SeasonalHint{}
+	}
+	res.SeasonalHints = hints
+	if shrinkErr == nil {
+		res.ShrinkageAlerts = buildShrinkageAlerts(shrinkSig)
+	} else {
+		res.ShrinkageAlerts = []dto.ShrinkageAlert{}
+	}
 
 	advisorCacheMu.Lock()
 	if len(advisorCache) > 500 {
@@ -568,9 +657,77 @@ func buildBusinessAdvisorResponse(raw []repository.AdvisorRawProduct, capital dt
 		HiddenGems:       gems,
 		CashTraps:        traps,
 		ReorderNow:       reorderNow,
+		SmartCombos:      buildSmartCombos(stars, pullers, traps),
+		ShrinkageAlerts:  []dto.ShrinkageAlert{},
 		ExecutiveVerdict: verdict,
 		GeneratedAt:      now.Format(time.RFC3339),
 	}
+}
+
+func buildSmartCombos(stars, pullers, traps []dto.AdvisorItemDecision) []dto.SmartComboSuggestion {
+	if len(traps) == 0 {
+		return []dto.SmartComboSuggestion{}
+	}
+	anchors := append([]dto.AdvisorItemDecision{}, pullers...)
+	anchors = append(anchors, stars...)
+	if len(anchors) == 0 {
+		return []dto.SmartComboSuggestion{}
+	}
+
+	limit := minInt(len(traps), 3)
+	combos := make([]dto.SmartComboSuggestion, 0, limit)
+	for i := 0; i < limit; i++ {
+		slow := traps[i]
+		anchor := anchors[i%len(anchors)]
+		if slow.Price <= 0 || anchor.Price <= 0 {
+			continue
+		}
+		regular := math.Round((anchor.Price+slow.Price)*100) / 100
+		savings := math.Round(slow.Price * 0.15)
+		if savings < 5 {
+			savings = 5
+		}
+		if savings >= slow.Price {
+			savings = math.Round(slow.Price * 0.10)
+		}
+		bundle := math.Round((regular-savings)*100) / 100
+		combos = append(combos, dto.SmartComboSuggestion{
+			AnchorProductID: anchor.ProductID,
+			AnchorName:      anchor.Name,
+			SlowProductID:   slow.ProductID,
+			SlowName:        slow.Name,
+			RegularTotal:    regular,
+			BundlePrice:     bundle,
+			CustomerSavings: savings,
+			CapitalToUnlock: slow.BlockedCapital,
+			Pitch:           fmt.Sprintf("%s ke saath %s combo ₹%.0f me dein (₹%.0f bachao) — ₹%.0f fasa cash niklega.", anchor.Name, slow.Name, bundle, savings, slow.BlockedCapital),
+		})
+	}
+	return combos
+}
+
+func buildShrinkageAlerts(sig repository.ShrinkageSignals) []dto.ShrinkageAlert {
+	alerts := make([]dto.ShrinkageAlert, 0, 2)
+	if sig.TodayCancelledCount >= 2 || (sig.TodayCancelledCount >= 1 && sig.Avg7DCancelledCount > 0 && float64(sig.TodayCancelledCount) >= sig.Avg7DCancelledCount*2.0) {
+		alerts = append(alerts, dto.ShrinkageAlert{
+			ID:       "cancelled_bills_spike",
+			Severity: "high",
+			Title:    fmt.Sprintf("Aaj %d bills cancel hue (₹%.0f)", sig.TodayCancelledCount, sig.TodayCancelledAmount),
+			Detail:   "Counter par bill cancellation reason aur stock wapas aaya ya nahi zaroor check karein.",
+		})
+	}
+	if sig.TodaySubtotal > 0 && sig.TodayDiscountAmount >= 100 {
+		discPct := (sig.TodayDiscountAmount / sig.TodaySubtotal) * 100
+		if discPct >= 8.0 {
+			alerts = append(alerts, dto.ShrinkageAlert{
+				ID:       "discount_spike",
+				Severity: "medium",
+				Title:    fmt.Sprintf("Aaj %.1f%% extra discount (₹%.0f) diya gaya", discPct, sig.TodayDiscountAmount),
+				Detail:   "Normal se zyada manual discount diya gaya hai — margin bachane ke liye verify karein.",
+			})
+		}
+	}
+	return alerts
 }
 
 func applyStockSizing(d *dto.AdvisorItemDecision, capital *dto.CapitalSummary) {
@@ -606,4 +763,124 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// GetEveningDigest compiles today's sales, cash/UPI/khata split, expenses, net profit,
+// and top 3 morning reorder items into a ready-to-share WhatsApp owner digest.
+func (s *AnalyticsService) GetEveningDigest(ctx context.Context, shopOwnerUserID, lang string) (*dto.EveningDigestResponse, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, ErrShopNotFound
+		}
+		return nil, err
+	}
+
+	now := time.Now()
+	var (
+		bills      int
+		sales      float64
+		cash       float64
+		upi        float64
+		khata      float64
+		grossProf  float64
+		todayExp   float64
+		digestErr  error
+		advisorRes *dto.BusinessAdvisorResponse
+		wg         sync.WaitGroup
+	)
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		bills, sales, cash, upi, khata, grossProf, todayExp, digestErr = s.productRepo.GetTodayCashflowDigest(ctx, shop.ID, now)
+	}()
+	go func() {
+		defer wg.Done()
+		advisorRes, _ = s.GetBusinessAdvisor(ctx, shopOwnerUserID)
+	}()
+	wg.Wait()
+
+	if digestErr != nil {
+		return nil, digestErr
+	}
+
+	var topReorders []string
+	if advisorRes != nil {
+		for i, item := range advisorRes.ReorderNow {
+			if i >= 3 {
+				break
+			}
+			topReorders = append(topReorders, fmt.Sprintf("%s (+%d pcs)", item.Name, item.SuggestedOrder))
+		}
+	}
+
+	return buildEveningDigestResponse(shop.Name, bills, sales, cash, upi, khata, grossProf-todayExp, todayExp, topReorders, lang, now), nil
+}
+
+func buildEveningDigestResponse(
+	shopName string,
+	bills int,
+	sales, cash, upi, khata, netProfit, todayExp float64,
+	topReorders []string,
+	lang string,
+	now time.Time,
+) *dto.EveningDigestResponse {
+	if strings.TrimSpace(shopName) == "" {
+		shopName = "ShopSilo Store"
+	}
+	if topReorders == nil {
+		topReorders = []string{}
+	}
+
+	dateStr := now.Format("02 Jan 2006")
+	var b strings.Builder
+	if strings.HasPrefix(strings.ToLower(lang), "hi") {
+		b.WriteString(fmt.Sprintf("📊 *%s — आज की शाम की रिपोर्ट*\n", shopName))
+		b.WriteString(fmt.Sprintf("📅 %s\n\n", dateStr))
+		b.WriteString(fmt.Sprintf("🧾 *कुल बिल:* %d\n", bills))
+		b.WriteString(fmt.Sprintf("💰 *कुल बिक्री:* ₹%.0f\n", sales))
+		b.WriteString(fmt.Sprintf("   • कैश (गल्ला): ₹%.0f\n", cash))
+		b.WriteString(fmt.Sprintf("   • UPI / ऑनलाइन: ₹%.0f\n", upi))
+		b.WriteString(fmt.Sprintf("   • उधार (खाता): ₹%.0f\n", khata))
+		b.WriteString(fmt.Sprintf("💸 *आज का खर्च:* ₹%.0f\n", todayExp))
+		b.WriteString(fmt.Sprintf("🏆 *शुद्ध बचत (Net Profit):* ₹%.0f\n", netProfit))
+		if len(topReorders) > 0 {
+			b.WriteString("\n📦 *कल सुबह मंगाने वाले टॉप आइटम:*\n")
+			for i, r := range topReorders {
+				b.WriteString(fmt.Sprintf("%d. %s\n", i+1, r))
+			}
+		}
+	} else {
+		b.WriteString(fmt.Sprintf("📊 *%s — Evening Owner Digest*\n", shopName))
+		b.WriteString(fmt.Sprintf("📅 %s\n\n", dateStr))
+		b.WriteString(fmt.Sprintf("🧾 *Total Bills:* %d\n", bills))
+		b.WriteString(fmt.Sprintf("💰 *Today's Sales:* ₹%.0f\n", sales))
+		b.WriteString(fmt.Sprintf("   • Cash in Galla: ₹%.0f\n", cash))
+		b.WriteString(fmt.Sprintf("   • UPI / Online: ₹%.0f\n", upi))
+		b.WriteString(fmt.Sprintf("   • Khata (Credit): ₹%.0f\n", khata))
+		b.WriteString(fmt.Sprintf("💸 *Today's Expenses:* ₹%.0f\n", todayExp))
+		b.WriteString(fmt.Sprintf("🏆 *Net Profit:* ₹%.0f\n", netProfit))
+		if len(topReorders) > 0 {
+			b.WriteString("\n📦 *Top Morning Reorders:*\n")
+			for i, r := range topReorders {
+				b.WriteString(fmt.Sprintf("%d. %s\n", i+1, r))
+			}
+		}
+	}
+
+	return &dto.EveningDigestResponse{
+		Date:         now.Format("2006-01-02"),
+		ShopName:     shopName,
+		TodayBills:   bills,
+		TodaySales:   math.Round(sales*100) / 100,
+		CashSales:    math.Round(cash*100) / 100,
+		UPISales:     math.Round(upi*100) / 100,
+		KhataSales:   math.Round(khata*100) / 100,
+		TodayExpense: math.Round(todayExp*100) / 100,
+		NetProfit:    math.Round(netProfit*100) / 100,
+		TopReorders:  topReorders,
+		WhatsAppText: b.String(),
+		GeneratedAt:  now.Format(time.RFC3339),
+	}
 }

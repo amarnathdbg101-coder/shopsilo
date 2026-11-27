@@ -1055,4 +1055,170 @@ func (r *ProductRepo) GetAdvisorProductStats(ctx context.Context, shopID string,
 	return items, capital, nil
 }
 
+// GetSeasonalDemandHints compares current 30-day product velocity against the same 30-day window last year
+// (falling back to the previous 30 days for newer shops) in a single-pass indexed SQL query.
+func (r *ProductRepo) GetSeasonalDemandHints(ctx context.Context, shopID string, now time.Time) ([]dto.SeasonalHint, error) {
+	refDate := now.Format("2006-01-02")
+	query := `
+		SELECT
+			p.id,
+			p.name,
+			COALESCE(p.category, ''),
+			COALESCE(SUM(bi.quantity) FILTER (
+				WHERE b.created_at >= ($2::date - INTERVAL '30 days')
+			), 0)::int AS current_qty,
+			COALESCE(SUM(bi.quantity) FILTER (
+				WHERE b.created_at >= ($2::date - INTERVAL '1 year' - INTERVAL '30 days')
+				  AND b.created_at <= ($2::date - INTERVAL '1 year')
+			), 0)::int AS yoy_qty,
+			COALESCE(SUM(bi.quantity) FILTER (
+				WHERE b.created_at >= ($2::date - INTERVAL '60 days')
+				  AND b.created_at < ($2::date - INTERVAL '30 days')
+			), 0)::int AS prev_30d_qty
+		FROM pos_bill_items bi
+		JOIN pos_bills b ON b.id = bi.bill_id
+		JOIN products p ON p.id = bi.product_id
+		WHERE b.shop_id = $1
+		  AND p.shop_id = $1
+		  AND p.is_active = true
+		  AND COALESCE(b.status, '') <> 'cancelled'
+		  AND (
+			  b.created_at >= ($2::date - INTERVAL '60 days')
+			  OR (
+				  b.created_at >= ($2::date - INTERVAL '1 year' - INTERVAL '30 days')
+				  AND b.created_at <= ($2::date - INTERVAL '1 year')
+			  )
+		  )
+		GROUP BY p.id, p.name, p.category
+		HAVING COALESCE(SUM(bi.quantity) FILTER (WHERE b.created_at >= ($2::date - INTERVAL '30 days')), 0) >= 5
+	`
+
+	rows, err := r.db.Query(ctx, query, shopID, refDate)
+	if err != nil {
+		r.logger.Error("failed to query seasonal demand hints", zap.Error(err), zap.String("shop_id", shopID))
+		return nil, err
+	}
+	defer rows.Close()
+
+	var hints []dto.SeasonalHint
+	for rows.Next() {
+		var id, name, category string
+		var curQty, yoyQty, prevQty int
+		if err := rows.Scan(&id, &name, &category, &curQty, &yoyQty, &prevQty); err != nil {
+			return nil, err
+		}
+
+		compQty := yoyQty
+		compType := "yoy"
+		if compQty <= 0 {
+			compQty = prevQty
+			compType = "mom"
+		}
+		if compQty <= 0 {
+			continue
+		}
+
+		multiple := math.Round((float64(curQty)/float64(compQty))*10) / 10
+		if multiple < 1.3 {
+			continue
+		}
+
+		var hintText string
+		if compType == "yoy" {
+			hintText = fmt.Sprintf("Pichle saal se %.1fx zyada demand (%d vs %d pcs) — festive/seasonal stock rakhein.", multiple, curQty, compQty)
+		} else {
+			hintText = fmt.Sprintf("Pichle mahine se %.1fx tezi se bik raha hai (%d vs %d pcs).", multiple, curQty, compQty)
+		}
+
+		hints = append(hints, dto.SeasonalHint{
+			ProductID:      id,
+			Name:           name,
+			Category:       category,
+			CurrentQty:     curQty,
+			ComparisonQty:  compQty,
+			GrowthMultiple: multiple,
+			ComparisonType: compType,
+			Hint:           hintText,
+		})
+	}
+
+	sort.Slice(hints, func(i, j int) bool {
+		return hints[i].GrowthMultiple > hints[j].GrowthMultiple
+	})
+	if len(hints) > 5 {
+		hints = hints[:5]
+	}
+	return hints, nil
+}
+
+// GetTodayCashflowDigest aggregates today's sales, payment mode split (cash/UPI/khata), gross profit, and expenses.
+func (r *ProductRepo) GetTodayCashflowDigest(ctx context.Context, shopID string, now time.Time) (bills int, sales, cash, upi, khata, grossProfit, todayExp float64, err error) {
+	refDate := now.Format("2006-01-02")
+
+	salesQuery := `
+		SELECT
+			COUNT(id),
+			COALESCE(SUM(total_amount), 0),
+			COALESCE(SUM(CASE WHEN LOWER(payment_method) = 'cash' THEN total_amount WHEN LOWER(payment_method) = 'split' THEN COALESCE(cash_amount, 0) ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN LOWER(payment_method) IN ('upi', 'online', 'card') THEN total_amount WHEN LOWER(payment_method) = 'split' THEN COALESCE(online_amount, 0) ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN LOWER(payment_method) IN ('khata', 'credit', 'udhar') THEN total_amount WHEN LOWER(payment_method) = 'split' THEN COALESCE(khata_amount, 0) ELSE 0 END), 0),
+			COALESCE(SUM(total_amount - total_cost), 0)
+		FROM pos_bills
+		WHERE shop_id = $1
+		  AND COALESCE(status, '') <> 'cancelled'
+		  AND created_at::date = $2::date
+	`
+	if err = r.db.QueryRow(ctx, salesQuery, shopID, refDate).Scan(
+		&bills, &sales, &cash, &upi, &khata, &grossProfit,
+	); err != nil {
+		r.logger.Error("failed to query today cashflow digest", zap.Error(err), zap.String("shop_id", shopID))
+		return
+	}
+
+	_ = r.db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount), 0)
+		FROM shop_expenses
+		WHERE shop_id = $1 AND expense_date = $2::date
+	`, shopID, refDate).Scan(&todayExp)
+	return
+}
+
+// ShrinkageSignals holds today's bill cancellations and counter discount telemetry vs 7-day baseline.
+type ShrinkageSignals struct {
+	TodayCancelledCount  int
+	TodayCancelledAmount float64
+	Avg7DCancelledCount  float64
+	TodaySubtotal        float64
+	TodayDiscountAmount  float64
+}
+
+// GetShrinkageSignals aggregates today's cancelled bills and discount % against a 7-day baseline.
+func (r *ProductRepo) GetShrinkageSignals(ctx context.Context, shopID string, now time.Time) (ShrinkageSignals, error) {
+	refDate := now.Format("2006-01-02")
+	query := `
+		SELECT
+			COUNT(*) FILTER (WHERE COALESCE(status, '') = 'cancelled' AND COALESCE(cancelled_at, created_at)::date = $2::date)::int,
+			COALESCE(SUM(total_amount) FILTER (WHERE COALESCE(status, '') = 'cancelled' AND COALESCE(cancelled_at, created_at)::date = $2::date), 0),
+			COUNT(*) FILTER (WHERE COALESCE(status, '') = 'cancelled' AND COALESCE(cancelled_at, created_at) >= ($2::date - INTERVAL '7 days'))::float8 / 7.0,
+			COALESCE(SUM(subtotal) FILTER (WHERE COALESCE(status, '') <> 'cancelled' AND created_at::date = $2::date), 0),
+			COALESCE(SUM(discount_amount) FILTER (WHERE COALESCE(status, '') <> 'cancelled' AND created_at::date = $2::date), 0)
+		FROM pos_bills
+		WHERE shop_id = $1
+		  AND created_at >= ($2::date - INTERVAL '7 days')
+	`
+	var sig ShrinkageSignals
+	err := r.db.QueryRow(ctx, query, shopID, refDate).Scan(
+		&sig.TodayCancelledCount,
+		&sig.TodayCancelledAmount,
+		&sig.Avg7DCancelledCount,
+		&sig.TodaySubtotal,
+		&sig.TodayDiscountAmount,
+	)
+	if err != nil {
+		r.logger.Error("failed to query shrinkage signals", zap.Error(err), zap.String("shop_id", shopID))
+		return ShrinkageSignals{}, err
+	}
+	return sig, nil
+}
+
 // BulkImportProducts executes a high-speed batch insert and upsert transaction for importing lakhs of products efficiently and reliably.

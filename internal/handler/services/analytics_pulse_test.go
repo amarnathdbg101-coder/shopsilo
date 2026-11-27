@@ -136,4 +136,69 @@ func TestBuildBusinessAdvisorResponse(t *testing.T) {
 	if res.Capital.CashReleasePotential != 3500 {
 		t.Fatalf("expected CashReleasePotential 3500 (1500 dead + 2000 khata 50%%), got %v", res.Capital.CashReleasePotential)
 	}
+	if len(res.SmartCombos) != 1 || res.SmartCombos[0].SlowProductID != "p4" {
+		t.Fatalf("expected 1 smart combo pairing p4, got %+v", res.SmartCombos)
+	}
+}
+
+func TestBuildShrinkageAlerts(t *testing.T) {
+	alerts := buildShrinkageAlerts(repository.ShrinkageSignals{
+		TodayCancelledCount:  3,
+		TodayCancelledAmount: 1450,
+		Avg7DCancelledCount:  0.5,
+		TodaySubtotal:        5000,
+		TodayDiscountAmount:  500,
+	})
+	if len(alerts) != 2 {
+		t.Fatalf("expected 2 shrinkage alerts, got %+v", alerts)
+	}
+	if alerts[0].ID != "cancelled_bills_spike" || alerts[1].ID != "discount_spike" {
+		t.Fatalf("unexpected alert IDs: %+v", alerts)
+	}
+}
+
+func TestBuildEveningDigestResponse(t *testing.T) {
+	now := time.Date(2026, 11, 27, 21, 30, 0, 0, time.Local)
+	digest := buildEveningDigestResponse(
+		"Gupta Kirana",
+		28,
+		12400,
+		6800,
+		4100,
+		1500,
+		2150,
+		450,
+		[]string{"Amul Milk (+24 pcs)", "Tata Salt (+10 pcs)"},
+		"hi",
+		now,
+	)
+
+	if digest.ShopName != "Gupta Kirana" || digest.TodayBills != 28 || digest.NetProfit != 2150 {
+		t.Fatalf("unexpected digest metrics: %+v", digest)
+	}
+	if len(digest.TopReorders) != 2 {
+		t.Fatalf("expected 2 top reorders, got %+v", digest.TopReorders)
+	}
+	if digest.WhatsAppText == "" || !containsAll(digest.WhatsAppText, []string{"Gupta Kirana", "12400", "2150", "Amul Milk (+24 pcs)"}) {
+		t.Fatalf("unexpected WhatsApp digest text: %q", digest.WhatsAppText)
+	}
+}
+
+func containsAll(haystack string, needles []string) bool {
+	for _, n := range needles {
+		if len(n) == 0 {
+			continue
+		}
+		found := false
+		for i := 0; i+len(n) <= len(haystack); i++ {
+			if haystack[i:i+len(n)] == n {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }

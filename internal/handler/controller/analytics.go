@@ -188,3 +188,24 @@ func (c *AnalyticsController) GetBusinessAdvisor(w http.ResponseWriter, r *http.
 
 	reuse.Success(w, "Business advisor report retrieved successfully", res)
 }
+
+// GetEveningDigest returns today's cashflow split, net profit, top reorders, and WhatsApp-ready digest text.
+func (c *AnalyticsController) GetEveningDigest(w http.ResponseWriter, r *http.Request) {
+	claims, ok := middleware.RequireUserClaims(w, r)
+	if !ok {
+		return
+	}
+
+	lang := r.URL.Query().Get("lang")
+	res, err := c.service.GetEveningDigest(r.Context(), claims.UserID, lang)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Evening digest retrieved successfully", res)
+}
