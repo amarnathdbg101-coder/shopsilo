@@ -225,7 +225,7 @@ func RenderEODReportPDF(
 	pdf.SetStrokeColor(cCardBorder[0], cCardBorder[1], cCardBorder[2])
 	pdf.RectFromUpperLeftWithStyle(contentLeft, curY, contentWidth, breakdownH, "FD")
 
-	breakdownText := fmt.Sprintf("PAYMENT BREAKDOWN:  Cash: Rs. %.0f  |  UPI: Rs. %.0f  |  Khata / Udhar: Rs. %.0f", summary.CashSales, summary.UPISales, summary.CreditGiven)
+	breakdownText := fmt.Sprintf("PAYMENT BREAKDOWN:  Cash: Rs. %.2f  |  UPI: Rs. %.2f  |  Khata / Udhar: Rs. %.2f", summary.CashSales, summary.UPISales, summary.CreditGiven)
 	writeCell(contentLeft, curY, contentWidth, breakdownH, breakdownText, "noto-reg", 8.5, cDark, gopdf.Center | gopdf.Middle)
 	curY += breakdownH + 12.0
 
