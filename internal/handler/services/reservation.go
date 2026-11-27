@@ -79,6 +79,14 @@ func (s *ReservationService) CreateReservation(ctx context.Context, userID strin
 	if err != nil {
 		return nil, errors.New("product not found or unavailable")
 	}
+	if !prod.IsActive {
+		return nil, errors.New("product is currently unavailable")
+	}
+
+	// 1b. Enforce max active reservations per customer to prevent stock hoarding
+	if activeCount, countErr := s.resRepo.CountActiveByUserID(ctx, userID); countErr == nil && activeCount >= 5 {
+		return nil, ErrMaxActiveReservations
+	}
 
 	// 2. Fetch and verify shop
 	shop, err := s.shopRepo.FindByID(ctx, prod.ShopID)
@@ -363,6 +371,8 @@ func (s *ReservationService) VerifyShopReservation(ctx context.Context, shopOwne
 	if err := tx.Commit(ctx); err != nil {
 		return nil, errors.New("failed to commit verification")
 	}
+
+	InvalidateAnalyticsCache(shop.ID)
 
 	wsHub := GetWebSocketHub(nil)
 	wsHub.BroadcastToCustomer(completed.UserID, "RESERVATION_STATUS_MUTATED", map[string]interface{}{

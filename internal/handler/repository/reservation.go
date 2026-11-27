@@ -76,21 +76,12 @@ func (r *ReservationRepo) CountActiveByUserID(ctx context.Context, userID string
 }
 
 func (r *ReservationRepo) CreateWithTx(ctx context.Context, tx pgx.Tx, res *model.Reservation) (*model.Reservation, error) {
-	// 1. Ensure inventory row exists for this product
-	ensureInvQuery := `
-		INSERT INTO inventory (product_id, quantity, reserved_quantity, low_stock_threshold)
-		VALUES ($1, GREATEST($2 * 10, 50), 0, 1)
-		ON CONFLICT (product_id) DO NOTHING
-	`
-	_, _ = tx.Exec(ctx, ensureInvQuery, res.ProductID, res.Quantity)
-
-	// 2. Atomically increment reserved inventory stock
+	// Atomically reserve available stock only when sufficient unreserved quantity exists.
 	invQuery := `
 		UPDATE inventory
-		SET quantity = GREATEST(quantity, reserved_quantity + $1),
-		    reserved_quantity = reserved_quantity + $1,
+		SET reserved_quantity = reserved_quantity + $1,
 		    updated_at = NOW()
-		WHERE product_id = $2
+		WHERE product_id = $2 AND (quantity - reserved_quantity) >= $1
 	`
 	cmdTag, err := tx.Exec(ctx, invQuery, res.Quantity, res.ProductID)
 	if err != nil {
@@ -494,6 +485,7 @@ func (r *ReservationRepo) VerifyAndCompleteWithTx(ctx context.Context, tx pgx.Tx
 		SET status = 'completed', completed_at = NOW(), updated_at = NOW()
 		WHERE shop_id = $1
 		  AND (status = 'active' OR status = 'pending')
+		  AND expires_at >= NOW()
 		  AND (
 		      pickup_code = $2 
 		      OR pickup_code = $3
