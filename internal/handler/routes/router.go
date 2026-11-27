@@ -631,6 +631,7 @@ func RouteSetup(c *app.Container) chi.Router {
 		// User & Merchant management
 		r.Get("/users", uc.AdminListUsers)                       // Admin
 		r.Patch("/users/{id}/status", uc.AdminUpdateUserStatus)   // Admin
+		r.Delete("/users/{id}", uc.AdminDeleteUser)              // Admin
 
 		// 24-Hour Developer Error Telemetry Vault & Live Performance Metrics
 		r.Get("/errors", telc.GetAdminErrors)                    // Admin
@@ -642,6 +643,8 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Post("/catalog/products", mcc.CreateMasterProduct)        // Admin
 		r.Put("/catalog/products/{id}", mcc.UpdateMasterProduct)    // Admin
 		r.Delete("/catalog/products/{id}", mcc.DeleteMasterProduct) // Admin
+		r.Post("/catalog/products/batch", mcc.AdminBatchDeleteMasterProducts) // Admin
+		r.Delete("/catalog/products/all", mcc.AdminDeleteAllMasterProducts)   // Admin
 		r.Get("/catalog/stats", mcc.GetMasterStats)                 // Admin
 		r.Post("/catalog/bulk-seed", mcc.BulkSeed)                  // Admin
 
@@ -649,6 +652,8 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/products/soft-deleted", mcc.ListSoftDeletedProducts) // Admin
 		r.Post("/products/{id}/restore", mcc.RestoreProduct)         // Admin
 		r.Delete("/products/{id}", mcc.AdminHardDeleteProduct)       // Admin
+		r.Post("/products/batch", mcc.AdminBatchHardDeleteProducts)  // Admin
+		r.Delete("/products/all", mcc.AdminHardDeleteAllSoftDeletedProducts) // Admin
 
 		// Database Backups & Snapshots (Admin Only)
 		r.Post("/backup/trigger", backupc.TriggerOnDemandBackup)     // Admin

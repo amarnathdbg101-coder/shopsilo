@@ -304,3 +304,23 @@ func (s *MasterCatalogService) RestoreProduct(ctx context.Context, productID str
 	}
 	return s.repo.RestoreProduct(ctx, cleanID)
 }
+
+// BatchDeleteMasterProducts soft-deletes selected master catalog products.
+func (s *MasterCatalogService) BatchDeleteMasterProducts(ctx context.Context, ids []string) (int64, error) {
+	return s.repo.BatchDeleteMasterProducts(ctx, ids)
+}
+
+// DeleteAllMasterProducts soft-deletes all master catalog products.
+func (s *MasterCatalogService) DeleteAllMasterProducts(ctx context.Context) (int64, error) {
+	return s.repo.DeleteAllMasterProducts(ctx)
+}
+
+// BatchHardDeleteProducts permanently deletes selected soft-deleted products.
+func (s *MasterCatalogService) BatchHardDeleteProducts(ctx context.Context, ids []string) (int64, error) {
+	return s.repo.BatchHardDeleteProducts(ctx, ids)
+}
+
+// HardDeleteAllSoftDeletedProducts permanently deletes all soft-deleted products.
+func (s *MasterCatalogService) HardDeleteAllSoftDeletedProducts(ctx context.Context) (int64, error) {
+	return s.repo.HardDeleteAllSoftDeletedProducts(ctx)
+}

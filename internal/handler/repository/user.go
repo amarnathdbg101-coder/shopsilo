@@ -212,7 +212,6 @@ func (r *UserRepo) FindByPhone(ctx context.Context, phone string) (*model.User, 
 	}
 	return u, nil
 }
-
 func (r *UserRepo) FindByEmail(ctx context.Context, email string) (*model.User, error) {
 	query := `
 		SELECT id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, COALESCE(token_version, 1), created_at, updated_at
@@ -243,7 +242,6 @@ func (r *UserRepo) FindByEmail(ctx context.Context, email string) (*model.User, 
 	}
 	return u, nil
 }
-
 // FindByEmailOrPhone uses an index-backed UNION ALL statement across PostgreSQL functional indexes
 // idx_users_lower_email and idx_users_phone for 0.2ms execution.
 func (r *UserRepo) FindByEmailOrPhone(ctx context.Context, identifier string) (*model.User, error) {
@@ -298,7 +296,6 @@ func (r *UserRepo) FindByEmailOrPhone(ctx context.Context, identifier string) (*
 	}
 	return u, nil
 }
-
 func (r *UserRepo) FindByID(ctx context.Context, id string) (*model.User, error) {
 	query := `
 		SELECT id, email, password_hash, full_name, COALESCE(phone, ''), COALESCE(avatar_url, ''), role, is_active, COALESCE(token_version, 1), created_at, updated_at
@@ -329,7 +326,6 @@ func (r *UserRepo) FindByID(ctx context.Context, id string) (*model.User, error)
 	}
 	return u, nil
 }
-
 // IncrementTokenVersion bumps the user's token_version by 1, instantly revoking all issued sessions/tokens.
 func (r *UserRepo) IncrementTokenVersion(ctx context.Context, userID string) error {
 	query := `
@@ -484,7 +480,6 @@ func (r *UserRepo) UpdateProfile(ctx context.Context, userID, fullName, phone st
 	}
 	return u, nil
 }
-
 func (r *UserRepo) ListUsersForAdmin(ctx context.Context, role, search string, limit, offset int) ([]*model.User, int, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
@@ -609,4 +604,18 @@ func (r *UserRepo) UpdateUserStatusForAdmin(ctx context.Context, userID string, 
 		return nil, err
 	}
 	return u, nil
+}
+
+// DeleteUserForAdmin permanently removes a user account (and cascades their shops/sessions),
+// freeing their email and phone so they can register a fresh account later.
+func (r *UserRepo) DeleteUserForAdmin(ctx context.Context, userID string) error {
+	res, err := r.db.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
+	if err != nil {
+		r.logger.Error("failed to delete user by admin", zap.Error(err), zap.String("user_id", userID))
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return ErrUserNotFound
+	}
+	return nil
 }

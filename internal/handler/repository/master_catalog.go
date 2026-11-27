@@ -384,7 +384,46 @@ func (r *MasterCatalogRepo) HardDeleteProduct(ctx context.Context, productID str
 	return tx.Commit(ctx)
 }
 
-// ListMasterProducts queries master products with pagination, search, brand, category, and verification filter.
+// BatchHardDeleteProducts permanently deletes multiple products and their inventory rows (Admin Only).
+func (r *MasterCatalogRepo) BatchHardDeleteProducts(ctx context.Context, productIDs []string) (int64, error) {
+	if len(productIDs) == 0 {
+		return 0, nil
+	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	_, _ = tx.Exec(ctx, `DELETE FROM inventory WHERE product_id = ANY($1::uuid[])`, productIDs)
+	res, err := tx.Exec(ctx, `DELETE FROM products WHERE id = ANY($1::uuid[])`, productIDs)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return res.RowsAffected(), nil
+}
+
+// HardDeleteAllSoftDeletedProducts permanently deletes all soft-deleted products and their inventory rows (Admin Only).
+func (r *MasterCatalogRepo) HardDeleteAllSoftDeletedProducts(ctx context.Context) (int64, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	_, _ = tx.Exec(ctx, `DELETE FROM inventory WHERE product_id IN (SELECT id FROM products WHERE deleted_at IS NOT NULL)`)
+	res, err := tx.Exec(ctx, `DELETE FROM products WHERE deleted_at IS NOT NULL`)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return res.RowsAffected(), nil
+}
 func (r *MasterCatalogRepo) ListMasterProducts(ctx context.Context, search, brand, category string, isVerified *bool, limit, offset int) ([]*model.MasterCatalogProduct, int64, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
@@ -549,7 +588,46 @@ func (r *MasterCatalogRepo) DeleteMasterProduct(ctx context.Context, id string) 
 	return nil
 }
 
-// GetMasterCatalogStats returns live metrics on master catalog coverage.
+// BatchDeleteMasterProducts soft-deletes multiple master catalog products at once, freeing their barcodes.
+func (r *MasterCatalogRepo) BatchDeleteMasterProducts(ctx context.Context, ids []string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	rows, err := r.db.Query(ctx, `UPDATE master_catalog_products SET deleted_at = NOW() WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL RETURNING barcode`, ids)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var count int64
+	for rows.Next() {
+		var barcode string
+		if err := rows.Scan(&barcode); err == nil && barcode != "" {
+			r.cache.Invalidate(barcode)
+		}
+		count++
+	}
+	return count, rows.Err()
+}
+
+// DeleteAllMasterProducts soft-deletes all active master catalog products, freeing all barcodes for re-adding.
+func (r *MasterCatalogRepo) DeleteAllMasterProducts(ctx context.Context) (int64, error) {
+	rows, err := r.db.Query(ctx, `UPDATE master_catalog_products SET deleted_at = NOW() WHERE deleted_at IS NULL RETURNING barcode`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var count int64
+	for rows.Next() {
+		var barcode string
+		if err := rows.Scan(&barcode); err == nil && barcode != "" {
+			r.cache.Invalidate(barcode)
+		}
+		count++
+	}
+	return count, rows.Err()
+}
 func (r *MasterCatalogRepo) GetMasterCatalogStats(ctx context.Context) (map[string]interface{}, error) {
 	query := `
 		SELECT

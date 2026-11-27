@@ -467,3 +467,36 @@ func (c *UserController) AdminUpdateUserStatus(w http.ResponseWriter, r *http.Re
 
 	reuse.Success(w, "User updated successfully", user)
 }
+
+// AdminDeleteUser permanently removes a user account so they can re-register later (Admin)
+func (c *UserController) AdminDeleteUser(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "id")
+	if strings.TrimSpace(userID) == "" {
+		reuse.Error(w, http.StatusBadRequest, "user id is required")
+		return
+	}
+
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims != nil && claims.UserID == userID {
+		reuse.Error(w, http.StatusBadRequest, "cannot delete your own admin account")
+		return
+	}
+
+	if c.service == nil {
+		reuse.Error(w, http.StatusBadRequest, "service uninitialized")
+		return
+	}
+
+	if err := c.service.DeleteUserForAdmin(r.Context(), userID); err != nil {
+		if errors.Is(err, repository.ErrUserNotFound) {
+			reuse.Error(w, http.StatusNotFound, err.Error())
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "User account removed successfully", map[string]string{
+		"deleted_id": userID,
+	})
+}

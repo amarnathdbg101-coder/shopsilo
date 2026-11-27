@@ -879,3 +879,10 @@ func (s *UserService) UpdateUserStatusForAdmin(ctx context.Context, userID strin
 	}
 	return s.repo.UpdateUserStatusForAdmin(ctx, userID, isActive, role)
 }
+
+func (s *UserService) DeleteUserForAdmin(ctx context.Context, userID string) error {
+	if s == nil || s.repo == nil {
+		return errors.New("user service unavailable")
+	}
+	return s.repo.DeleteUserForAdmin(ctx, userID)
+}

@@ -257,3 +257,61 @@ func (c *MasterCatalogController) RestoreProduct(w http.ResponseWriter, r *http.
 
 	reuse.Success(w, "Product restored to active store catalog", map[string]string{"restored_id": id})
 }
+
+type batchIDsRequest struct {
+	IDs []string `json:"ids"`
+}
+
+// AdminBatchDeleteMasterProducts handles POST /admin/catalog/products/batch
+func (c *MasterCatalogController) AdminBatchDeleteMasterProducts(w http.ResponseWriter, r *http.Request) {
+	var req batchIDsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.IDs) == 0 {
+		reuse.Error(w, http.StatusBadRequest, "ids array is required")
+		return
+	}
+	count, err := c.catalogService.BatchDeleteMasterProducts(r.Context(), req.IDs)
+	if err != nil {
+		c.logger.Error("batch delete master products failed", zap.Error(err))
+		reuse.Error(w, http.StatusInternalServerError, "batch delete failed: "+err.Error())
+		return
+	}
+	reuse.Success(w, "Selected master products deleted", map[string]int64{"deleted_count": count})
+}
+
+// AdminDeleteAllMasterProducts handles DELETE /admin/catalog/products/all
+func (c *MasterCatalogController) AdminDeleteAllMasterProducts(w http.ResponseWriter, r *http.Request) {
+	count, err := c.catalogService.DeleteAllMasterProducts(r.Context())
+	if err != nil {
+		c.logger.Error("delete all master products failed", zap.Error(err))
+		reuse.Error(w, http.StatusInternalServerError, "delete all failed: "+err.Error())
+		return
+	}
+	reuse.Success(w, "All master products deleted", map[string]int64{"deleted_count": count})
+}
+
+// AdminBatchHardDeleteProducts handles POST /admin/products/batch
+func (c *MasterCatalogController) AdminBatchHardDeleteProducts(w http.ResponseWriter, r *http.Request) {
+	var req batchIDsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.IDs) == 0 {
+		reuse.Error(w, http.StatusBadRequest, "ids array is required")
+		return
+	}
+	count, err := c.catalogService.BatchHardDeleteProducts(r.Context(), req.IDs)
+	if err != nil {
+		c.logger.Error("batch hard delete products failed", zap.Error(err))
+		reuse.Error(w, http.StatusInternalServerError, "batch hard delete failed: "+err.Error())
+		return
+	}
+	reuse.Success(w, "Selected products permanently deleted", map[string]int64{"deleted_count": count})
+}
+
+// AdminHardDeleteAllSoftDeletedProducts handles DELETE /admin/products/all
+func (c *MasterCatalogController) AdminHardDeleteAllSoftDeletedProducts(w http.ResponseWriter, r *http.Request) {
+	count, err := c.catalogService.HardDeleteAllSoftDeletedProducts(r.Context())
+	if err != nil {
+		c.logger.Error("hard delete all soft-deleted products failed", zap.Error(err))
+		reuse.Error(w, http.StatusInternalServerError, "delete all failed: "+err.Error())
+		return
+	}
+	reuse.Success(w, "All soft-deleted products permanently deleted", map[string]int64{"deleted_count": count})
+}
