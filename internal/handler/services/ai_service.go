@@ -193,9 +193,8 @@ func (s *AIService) ScanProduct(ctx context.Context, req dto.AIScanProductReques
 	}
 	mimeType := detectMimeFromBase64(cleanBase64, req.MimeType)
 
-	// Token Optimization: Downscale large image (max 768px, JPEG quality 80)
-	// This reduces Gemini multimodal vision tiles and saves 60-75% input tokens.
-	if optBase64, optMime, err := reuse.CompressBase64Image(cleanBase64, 768, 80); err == nil && optBase64 != "" {
+	// Keep package text readable for OCR without sending full camera-resolution images.
+	if optBase64, optMime, err := reuse.CompressBase64Image(cleanBase64, 1024, 92); err == nil && optBase64 != "" {
 		cleanBase64 = optBase64
 		mimeType = optMime
 	}

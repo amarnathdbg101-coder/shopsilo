@@ -34,8 +34,28 @@ func TestCompressImage_JPEG(t *testing.T) {
 		t.Errorf("expected contentType image/jpeg, got %s", cType)
 	}
 
-	if len(compressed) >= rawBuf.Len() {
-		t.Errorf("expected compressed size (%d) to be smaller than raw 100%% quality size (%d)", len(compressed), rawBuf.Len())
+	if !bytes.Equal(compressed, rawBuf.Bytes()) {
+		t.Errorf("expected an in-limit JPEG to be preserved without a second lossy encode")
+	}
+}
+
+func TestCompressBase64Image_PreservesInLimitJPEG(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 800, 600))
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 95}); err != nil {
+		t.Fatalf("failed to encode test image: %v", err)
+	}
+
+	original := base64.StdEncoding.EncodeToString(buf.Bytes())
+	compressed, mimeType, err := CompressBase64Image(original, 1024, 92)
+	if err != nil {
+		t.Fatalf("CompressBase64Image error: %v", err)
+	}
+	if compressed != original {
+		t.Fatal("expected an in-limit JPEG to pass through without another lossy encode")
+	}
+	if mimeType != "image/jpeg" {
+		t.Fatalf("expected image/jpeg, got %s", mimeType)
 	}
 }
 

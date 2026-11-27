@@ -14,13 +14,11 @@ import (
 )
 
 const (
-	// MaxDimension defines the maximum width or height of an uploaded image.
-	// 1600px is standard HD quality for e-commerce product photos and avatars.
-	MaxDimension = 1600
+	// MaxDimension keeps product packaging details sharp while bounding upload size.
+	MaxDimension = 2560
 
 	// JPEGCompressionQuality defines the JPEG compression quality (1-100).
-	// 80 provides 65-85% file size reduction with virtually no visible degradation.
-	JPEGCompressionQuality = 80
+	JPEGCompressionQuality = 92
 )
 
 // CompressImage reads an image stream, resizes it if it exceeds MaxDimension,
@@ -44,6 +42,12 @@ func CompressImage(r io.Reader, contentType string) ([]byte, string, error) {
 	bounds := img.Bounds()
 	width := bounds.Dx()
 	height := bounds.Dy()
+
+	// Avoid a second lossy JPEG encode when the client has already prepared a
+	// high-resolution image within the storage limit.
+	if format == "jpeg" && width <= MaxDimension && height <= MaxDimension {
+		return origBytes, "image/jpeg", nil
+	}
 
 	// 1. Calculate target dimensions if larger than MaxDimension
 	targetWidth := width
@@ -201,7 +205,7 @@ func CompressBase64Image(rawBase64 string, maxDim int, quality int) (string, str
 	}
 
 	// Attempt to decode the image
-	img, _, err := image.Decode(bytes.NewReader(data))
+	img, format, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		// Return original safely if format is not supported by standard image package
 		return clean, mimeType, nil
@@ -212,10 +216,14 @@ func CompressBase64Image(rawBase64 string, maxDim int, quality int) (string, str
 	height := bounds.Dy()
 
 	if maxDim <= 0 {
-		maxDim = 768
+		maxDim = 1024
 	}
 	if quality <= 0 || quality > 100 {
-		quality = 80
+		quality = 92
+	}
+
+	if format == "jpeg" && width <= maxDim && height <= maxDim {
+		return clean, "image/jpeg", nil
 	}
 
 	// If image is larger than maxDim, downscale preserving aspect ratio
