@@ -694,68 +694,42 @@ func (s *AIService) ScanMandiItem(ctx context.Context, req dto.AIMandiScanReques
 		}
 	}
 
-	// 2. Specialized Wholesale Mandi Sourcing Prompt
-	mandiPrompt := `You are "ShopSilo Mandi Procurement AI" — an expert Chief Wholesale Sourcing Specialist for Indian Kirana stores, supermarkets, and Mandi traders.
+	// 2. Specialized Clean Mandi Product Extraction Prompt (Exact Name, Color, Category only)
+	mandiPrompt := `You are "ShopSilo Mandi AI" — a hyper-accurate retail product recognition specialist for Indian Kirana stores, supermarkets, apparel/textile shops, and Mandi traders.
 
-The merchant has taken a photo of a product running low on stock, an empty shelf, a carton, a box, or loose commodities that need to be reordered from the wholesale mandi/market.
+The merchant has taken a photo of a product or item to add to their Mandi list.
 
 YOUR TASK:
-Analyze the image with precision, identify the product(s) needing restock, determine appropriate Indian WHOLESALE purchasing units and quantities (e.g. Box, Bags/Bori, Carton, Quintal, Kg), and estimate current Indian Mandi wholesale rates.
+Extract ONLY the clean, exact product name, exact dominant color, and exact category. Do NOT generate extra notes, prices, quantities, or commentary.
 
 Output pure JSON matching this exact schema:
 {
   "items": [
     {
-      "name": "Full professional commercial product name in Title Case (e.g., 'Fortune Premium Kachi Ghani Pure Mustard Oil - 1 Litre Pouch' or 'Tata Salt Vacuum Evaporated - 1kg' or 'Aashirvaad Shudh Chakki Atta')",
+      "name": "Clean, exact commercial product name in Title Case (e.g., 'Fortune Kachi Ghani Mustard Oil 1L', 'Tata Salt 1kg', 'Cotton Petticoat')",
+      "color": "Clean, exact primary color of the item/packaging (e.g., 'Yellow', 'White', 'Sugapankhi (Parrot Green)', 'Red', 'Blue', or '' if unclear)",
       "category": "Strictly one of: 'Grocery & Staples', 'Snacks & Munchies', 'Beverages & Drinks', 'Dairy & Eggs', 'Personal Care & Beauty', 'Home & Kitchen', 'Clothing & Fashion', 'Electronics & Mobile', 'Hardware & Tools', 'Stationery & Office', 'General Store'",
-      "wholesale_qty": "Realistic commercial reorder quantity with unit: '1 पेटी / बॉक्स (Box)' or '1 बोरी (Bags)' or '1 कार्टन (Carton)' or '25 kg' or '50 kg' or '1 क्विंटल (Qtl)' or '1 टिन / केन (Tin)' or '12 पैकेट (Pkt)' or '24 पीस (Pcs)'",
-      "wholesale_unit": "Strictly one of: 'kg', 'बोरी (Bags)', 'पेटी / बॉक्स (Box)', 'पैकेट (Pkt)', 'लीटर (Ltr)', 'पीस (Pcs)', 'क्विंटल (Qtl)', 'ग्राम (g)', 'दर्जन (Dzn)', 'कार्टन (Carton)', 'टिन / केन (Tin)'",
-      "estimated_wholesale_rate": 1380.0,
-      "estimated_total_budget": 1380.0,
-      "notes": "Brief Hindi/English sourcing note: pack size details, wholesale bundle count (e.g. '12 पाउच प्रति पेटी @ ₹115/पाउच')",
+      "notes": "",
       "confidence": 0.95,
       "color_details": null
     }
   ],
-  "raw_overview": "Short 1-line summary of items detected"
+  "raw_overview": ""
 }
 
 RULES:
-0. MANDATORY REORDER PROPOSAL:
-   - Identify ANY product, item, brand, package, cloth, or commodity visible in the image.
-   - Even if the shelf or container is NOT empty, or if it is just a product snapshot, ALWAYS generate at least one reorder recommendation item.
-   - The 'items' array MUST NEVER BE EMPTY.
-1. WHOLESALE REORDER UNITS:
-   - For edible oil pouches/bottles: suggest 'पेटी / बॉक्स (Box)' (usually 12-16 units per box) or 'टिन / केन (Tin)' (15 Litre).
-   - For grains, flours, pulses, rice, sugar: suggest 'बोरी (Bags)' (25kg or 50kg) or 'क्विंटल (Qtl)'.
-   - For biscuits, snacks, noodles: suggest 'कार्टन (Carton)' (24 to 48 packets per carton).
-   - For soaps, shampoos, toothpastes: suggest 'पेटी / बॉक्स (Box)' or 'पीस (Pcs)'.
-   - For loose commodities: suggest 'kg' (e.g. 25 kg or 50 kg).
-2. PRICING:
-   - Provide realistic Indian Mandi wholesale procurement rates in INR (₹).
-   - 'estimated_wholesale_rate': total price for the requested wholesale quantity (or per bag/box).
-3. MULTIPLE ITEMS:
-   - If multiple distinct low-stock products are visible in the photo, list each one as a separate item in the 'items' array (up to 4 items).
-4. COLOR CALIBRATION (APPLIES TO APPAREL, TEXTILES & COSMETICS ONLY):
-   - CRITICAL REQUIREMENT: This rule applies EXCLUSIVELY to color-critical goods:
-     * Blouse pieces, petticoats, sarees, dupattas, matching fabrics, garments, cosmetics.
-   - FOR ALL GROCERIES, COMMODITIES, GRAINS, OILS, SPICES, SNACKS, AND PACKAGED GOODS:
-     * 'color_details' MUST BE STRICTLY null.
-     * NEVER append a color shade to product name.
-     * NEVER mention 'Shade:' in notes (e.g. do NOT write 'Shade: Yellow' for Mustard Oil or Dal!).
-   - FOR COLOR-CRITICAL GOODS ONLY:
-     * Accurately map the dominant color against standard Indian trade shades:
-       - Greens & Parrots: Sugapankhi / Parrot Green (#7CB342), Pista Green (#A8D8B9), Rama Green (#00827F), Mehendi Green (#556B2F), Bottle Green (#004D40), Morpankhi (#005B5C).
-       - Yellows & Oranges: Lemon Yellow (#FFF176), Haldi Yellow (#FFB300), Mustard Yellow (#E5A823), Rust / Gerua (#B7410E), Peach (#FFAB91).
-       - Pinks & Reds: Rani Pink (#D81B60), Baby Pink (#F48FB1), Gajari (#FF6F61), Pyazi (#A36B7E), Blood Red (#D32F2F), Tamatar Red (#E53935), Maroon (#800000), Katha (#5D2524).
-       - Blues & Purples: Firozi / Cyan (#00BCD4), Royal Blue (#1565C0), Navy Blue (#000080), Wine / Jamuni (#4A154B), Purple (#7B1FA2).
-       - Neutrals: Off White (#FAF0E6), Badami / Cream (#FFF8E7), Chiku / Beige (#D7C4B7), Coffee Brown (#4E342E), Slate Grey (#757575), Black (#1A1A1A).
-     * CAMERA WHITE BALANCE & UNDERTONE RULE:
-       - Indoor warm/yellow lighting or camera sensor overexposure often shifts vibrant chartreuse/lime greens (like 'Sugapankhi' / 'Parrot Green' / 'तोता हरा') to look yellowish. Check fabric undertones carefully: if there is a green tint/pigment with high vibrancy, label it as 'Sugapankhi' (सुगापंखी/तोता), NOT plain 'Lemon Yellow'.
-     * STRICT CHROMATIC NEIGHBOR RULE FOR ALTERNATIVES:
-       - 'alternatives' MUST strictly be adjacent shades from the EXACT SAME color family (e.g., if primary is Sugapankhi / Yellow-Green, alternatives can ONLY be Lemon Yellow, Pista Green, Mehendi Green, Haldi Yellow. NEVER suggest distant, unrelated colors like Red, Maroon, Black, or Blue in alternatives!).
-     * In 'color_details': set 'primary_shade' and 3 to 4 nearest 'alternatives' strictly from the same color family.
-     * Append the shade to the product name (e.g. 'Cotton Petticoat - Sugapankhi (सुगापंखी)') and include 'Shade: Sugapankhi (सुगापंखी)' in notes.
+1. EXACT PRODUCT NAME:
+   - Read brand, product line, and pack size/weight accurately from the photo.
+   - Keep the name clean, concise, and exact — no marketing fluff, no emojis, no parenthetical notes.
+2. EXACT COLOR:
+   - Identify the clean, exact dominant color visible on the product/fabric/packaging.
+   - For textiles/apparel/cosmetics, use accurate Indian trade shades (e.g. 'Sugapankhi (Parrot Green)', 'Rani Pink', 'Haldi Yellow', 'Maroon', 'Navy Blue', 'Off White') and optionally populate 'color_details' with 'primary_shade' and 'alternatives'.
+   - For packaged goods/groceries, set 'color' to the main visible color (e.g. 'Yellow', 'Red', 'Green', 'Blue', 'White') and keep 'color_details' strictly null.
+3. EXACT CATEGORY:
+   - Pick the single most accurate category from the allowed list.
+4. NO EXTRA FIELDS:
+   - Keep 'notes' as "" (empty string) and 'raw_overview' as "".
+   - The 'items' array MUST NEVER BE EMPTY; identify up to 4 distinct items if multiple are clearly visible.
 5. STRICT JSON ONLY:
    - Output valid JSON only. No markdown formatting, no preamble.`
 

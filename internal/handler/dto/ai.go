@@ -99,6 +99,7 @@ type AIMandiScanRequest struct {
 // AIMandiItem represents a single wholesale item detected from the camera snapshot with estimated rate & bulk unit.
 type AIMandiItem struct {
 	Name                   string          `json:"name"`
+	Color                  string          `json:"color,omitempty"`
 	Category               string          `json:"category"`
 	WholesaleQty           string          `json:"wholesale_qty"`
 	WholesaleUnit          string          `json:"wholesale_unit"`
