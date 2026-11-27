@@ -4,8 +4,11 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/repository"
+	"strings"
 	"sync"
 	"time"
 )
@@ -119,4 +122,258 @@ func (s *AnalyticsService) ExportCACSV(ctx context.Context, shopOwnerUserID, exp
 	}
 
 	return s.productRepo.ExportCACSV(ctx, shop.ID, exportType, fromDate, toDate)
+}
+
+type pulseCacheEntry struct {
+	payload   *dto.DukaanPulseResponse
+	expiresAt time.Time
+}
+
+var (
+	pulseCacheMu sync.RWMutex
+	pulseCache   = make(map[string]pulseCacheEntry)
+)
+
+const pulseCacheTTL = 2 * time.Minute
+
+// GetDukaanPulse returns a pre-digested, plain-language executive summary for the merchant dashboard
+// with a 2-minute per-shop cache and parallel SQL aggregation.
+func (s *AnalyticsService) GetDukaanPulse(ctx context.Context, shopOwnerUserID string) (*dto.DukaanPulseResponse, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, ErrShopNotFound
+		}
+		return nil, err
+	}
+
+	now := time.Now()
+	pulseCacheMu.RLock()
+	if entry, ok := pulseCache[shop.ID]; ok && now.Before(entry.expiresAt) {
+		pulseCacheMu.RUnlock()
+		return entry.payload, nil
+	}
+	pulseCacheMu.RUnlock()
+
+	var (
+		headline *dto.PulseHeadline
+		trend    []dto.PulseDayPoint
+		ops      *dto.PulseOperations
+		metricsErr error
+		totalExp float64
+		expErr   error
+		wg       sync.WaitGroup
+	)
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		headline, trend, ops, metricsErr = s.productRepo.GetDukaanPulseMetrics(ctx, shop.ID, now)
+	}()
+	go func() {
+		defer wg.Done()
+		if s.expenseRepo != nil {
+			totalExp, _, expErr = s.expenseRepo.GetTotalExpensesForMonth(ctx, shop.ID, now.Year(), int(now.Month()))
+		}
+	}()
+	wg.Wait()
+
+	if metricsErr != nil {
+		return nil, metricsErr
+	}
+	if expErr != nil {
+		totalExp = 0
+	}
+
+	res := buildDukaanPulseResponse(headline, trend, ops, totalExp, now)
+
+	pulseCacheMu.Lock()
+	if len(pulseCache) > 500 {
+		for k, v := range pulseCache {
+			if now.After(v.expiresAt) {
+				delete(pulseCache, k)
+			}
+		}
+	}
+	pulseCache[shop.ID] = pulseCacheEntry{
+		payload:   res,
+		expiresAt: now.Add(pulseCacheTTL),
+	}
+	pulseCacheMu.Unlock()
+
+	return res, nil
+}
+
+func computeTrendDelta(current, previous float64) (float64, string) {
+	if previous <= 0 {
+		if current > 0 {
+			return 100.0, "up"
+		}
+		return 0.0, "flat"
+	}
+	pct := math.Round(((current-previous)/previous)*1000) / 10
+	if pct >= 1.0 {
+		return pct, "up"
+	}
+	if pct <= -1.0 {
+		return pct, "down"
+	}
+	return pct, "flat"
+}
+
+func buildDukaanPulseResponse(
+	headline *dto.PulseHeadline,
+	trend []dto.PulseDayPoint,
+	ops *dto.PulseOperations,
+	monthExpenses float64,
+	now time.Time,
+) *dto.DukaanPulseResponse {
+	if headline == nil {
+		headline = &dto.PulseHeadline{}
+	}
+	if ops == nil {
+		ops = &dto.PulseOperations{}
+	}
+
+	headline.TodayDeltaPct, headline.TodayTrend = computeTrendDelta(headline.TodayRevenue, headline.YesterdayRevenue)
+	headline.MonthExpenses = monthExpenses
+	headline.MonthNetProfit = headline.MonthGrossProfit - monthExpenses
+	headline.MonthDeltaPct, headline.MonthTrend = computeTrendDelta(headline.MonthRevenue, headline.PrevMonthRevenue)
+
+	var bestLabel string
+	var bestRev, sumRev, maxRev float64
+	for i := range trend {
+		trend[i].Label = strings.TrimSpace(trend[i].Label)
+		sumRev += trend[i].Revenue
+		if trend[i].Revenue > bestRev {
+			bestRev = trend[i].Revenue
+			bestLabel = trend[i].Label
+		}
+		if trend[i].Revenue > maxRev {
+			maxRev = trend[i].Revenue
+		}
+	}
+
+	avgDaily := 0.0
+	if len(trend) > 0 {
+		avgDaily = math.Round((sumRev/float64(len(trend)))*100) / 100
+	}
+	chartMaxY := 1000.0
+	if maxRev > 0 {
+		step := 500.0
+		if maxRev > 10000 {
+			step = 2000.0
+		}
+		chartMaxY = math.Ceil((maxRev*1.15)/step) * step
+	}
+
+	score := 100
+	insights := make([]dto.PulseInsight, 0, 4)
+
+	if ops.OutOfStockCount > 0 {
+		score -= minInt(ops.OutOfStockCount*4, 25)
+		insights = append(insights, dto.PulseInsight{
+			ID:          "out_of_stock",
+			Severity:    "high",
+			Title:       fmt.Sprintf("%d items out of stock hain", ops.OutOfStockCount),
+			Subtitle:    "Selling items khatam hone se billing aur customer miss ho sakte hain.",
+			ActionLabel: "Restock Karein",
+			ActionRoute: "/inventory/low-stock",
+		})
+	}
+
+	if ops.LowStockCount > 0 {
+		score -= minInt(ops.LowStockCount*2, 15)
+		insights = append(insights, dto.PulseInsight{
+			ID:          "low_stock",
+			Severity:    "medium",
+			Title:       fmt.Sprintf("%d items low stock par hain", ops.LowStockCount),
+			Subtitle:    "Mandi order sheet check karke jaldi reorder kar lein.",
+			ActionLabel: "View Low Stock",
+			ActionRoute: "/inventory/low-stock",
+		})
+	}
+
+	if ops.KhataOutstanding > 0 {
+		if ops.KhataOutstanding >= 25000 {
+			score -= 15
+		} else if ops.KhataOutstanding >= 5000 {
+			score -= 8
+		}
+		insights = append(insights, dto.PulseInsight{
+			ID:          "khata_outstanding",
+			Severity:    "medium",
+			Title:       fmt.Sprintf("₹%.0f Udhar %d customers par pending hai", ops.KhataOutstanding, ops.KhataCustomers),
+			Subtitle:    "Pending udhar par WhatsApp reminder bhejne se cashflow fast hota hai.",
+			ActionLabel: "Khata Dekhein",
+			ActionRoute: "/khata",
+		})
+	}
+
+	if ops.DeadStockCount > 0 {
+		score -= minInt(ops.DeadStockCount*2, 15)
+		if len(insights) < 4 {
+			insights = append(insights, dto.PulseInsight{
+				ID:          "dead_stock",
+				Severity:    "info",
+				Title:       fmt.Sprintf("%d items 45+ din se nahi bike", ops.DeadStockCount),
+				Subtitle:    "Dead stock par chhota discount ya combo offer lagakar cash free karein.",
+				ActionLabel: "Dead Stock Dekhein",
+				ActionRoute: "/analytics/matrix",
+			})
+		}
+	}
+
+	if headline.MonthNetProfit < 0 {
+		score -= 15
+	}
+	if score < 0 {
+		score = 0
+	}
+
+	healthStatus := "Healthy"
+	if score < 45 {
+		healthStatus = "Action Required"
+	} else if score < 75 {
+		healthStatus = "Needs Attention"
+	}
+
+	if len(insights) == 0 {
+		insights = append(insights, dto.PulseInsight{
+			ID:          "all_good",
+			Severity:    "info",
+			Title:       "Dukaan bilkul smooth chal rahi hai",
+			Subtitle:    "Stock aur udhar control me hain — aaj ki billing par focus karein.",
+			ActionLabel: "POS Kholein",
+			ActionRoute: "/pos",
+		})
+	}
+
+	summary := fmt.Sprintf("Aaj ki bikri ₹%.0f (%d bills) aur is mahine ka net profit ₹%.0f hai.",
+		headline.TodayRevenue, headline.TodayBills, headline.MonthNetProfit)
+	if bestLabel != "" && bestRev > 0 {
+		summary += fmt.Sprintf(" Pichle 7 din me %s sabse best (₹%.0f) raha.", bestLabel, bestRev)
+	}
+
+	return &dto.DukaanPulseResponse{
+		Headline:        *headline,
+		SevenDayTrend:   trend,
+		BestDayLabel:    bestLabel,
+		BestDayRevenue:  bestRev,
+		AvgDailyRevenue: avgDaily,
+		ChartMaxY:       chartMaxY,
+		Operations:      *ops,
+		HealthScore:     score,
+		HealthStatus:    healthStatus,
+		PlainSummary:    summary,
+		Insights:        insights,
+		GeneratedAt:     now.Format(time.RFC3339),
+	}
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

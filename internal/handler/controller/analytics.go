@@ -148,3 +148,23 @@ func (c *AnalyticsController) DownloadCACSV(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(csvBytes)
 }
+
+// GetDukaanPulse returns a pre-digested executive summary with 7-day trend, health score, and top actionable insights.
+func (c *AnalyticsController) GetDukaanPulse(w http.ResponseWriter, r *http.Request) {
+	claims, ok := middleware.RequireUserClaims(w, r)
+	if !ok {
+		return
+	}
+
+	res, err := c.service.GetDukaanPulse(r.Context(), claims.UserID)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Dukaan pulse retrieved successfully", res)
+}

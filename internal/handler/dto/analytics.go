@@ -128,3 +128,65 @@ type ShopIntelligenceResponse struct {
 	PeakHours           []*PeakHourBucket     `json:"peak_hours"`
 	PeakDays            []*PeakDayBucket      `json:"peak_days"`
 }
+
+// PulseDayPoint represents one pre-bucketed day in the 7-day trend chart.
+type PulseDayPoint struct {
+	Date    string  `json:"date"`
+	Label   string  `json:"label"`
+	Revenue float64 `json:"revenue"`
+	Profit  float64 `json:"profit"`
+	Bills   int     `json:"bills"`
+}
+
+// PulseInsight represents a plain-language actionable alert computed by the backend.
+type PulseInsight struct {
+	ID          string `json:"id"`
+	Severity    string `json:"severity"` // "high" | "medium" | "info"
+	Title       string `json:"title"`
+	Subtitle    string `json:"subtitle"`
+	ActionLabel string `json:"action_label"`
+	ActionRoute string `json:"action_route"`
+}
+
+// PulseHeadline holds pre-computed today and monthly headline KPIs with period-over-period deltas.
+type PulseHeadline struct {
+	TodayRevenue     float64 `json:"today_revenue"`
+	TodayProfit      float64 `json:"today_profit"`
+	TodayBills       int     `json:"today_bills"`
+	YesterdayRevenue float64 `json:"yesterday_revenue"`
+	TodayDeltaPct    float64 `json:"today_delta_pct"`
+	TodayTrend       string  `json:"today_trend"` // "up" | "down" | "flat"
+
+	MonthRevenue     float64 `json:"month_revenue"`
+	MonthGrossProfit float64 `json:"month_gross_profit"`
+	MonthExpenses    float64 `json:"month_expenses"`
+	MonthNetProfit   float64 `json:"month_net_profit"`
+	PrevMonthRevenue float64 `json:"prev_month_revenue"`
+	MonthDeltaPct    float64 `json:"month_delta_pct"`
+	MonthTrend       string  `json:"month_trend"` // "up" | "down" | "flat"
+}
+
+// PulseOperations holds summarized inventory and udhar risk counts.
+type PulseOperations struct {
+	LowStockCount    int     `json:"low_stock_count"`
+	OutOfStockCount  int     `json:"out_of_stock_count"`
+	DeadStockCount   int     `json:"dead_stock_count"`
+	KhataOutstanding float64 `json:"khata_outstanding"`
+	KhataCustomers   int     `json:"khata_customers"`
+}
+
+// DukaanPulseResponse is the unified, plain-language executive summary for the merchant dashboard.
+type DukaanPulseResponse struct {
+	Headline        PulseHeadline   `json:"headline"`
+	SevenDayTrend   []PulseDayPoint `json:"seven_day_trend"`
+	BestDayLabel    string          `json:"best_day_label"`
+	BestDayRevenue  float64         `json:"best_day_revenue"`
+	AvgDailyRevenue float64         `json:"avg_daily_revenue"`
+	ChartMaxY       float64         `json:"chart_max_y"`
+	Operations      PulseOperations `json:"operations"`
+	HealthScore     int             `json:"health_score"`
+	HealthStatus    string          `json:"health_status"` // "Healthy" | "Needs Attention" | "Action Required"
+	PlainSummary    string          `json:"plain_summary"`
+	Insights        []PulseInsight  `json:"insights"`
+	GeneratedAt     string          `json:"generated_at"`
+}

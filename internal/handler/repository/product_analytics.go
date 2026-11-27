@@ -837,4 +837,125 @@ func (r *ProductRepo) FindActiveProductsByTokens(ctx context.Context, shopID str
 	return products, nil
 }
 
+// GetDukaanPulseMetrics computes pre-aggregated headline sales, a 7-day trend series,
+// and inventory/khata operational counts directly in PostgreSQL.
+func (r *ProductRepo) GetDukaanPulseMetrics(ctx context.Context, shopID string, now time.Time) (*dto.PulseHeadline, []dto.PulseDayPoint, *dto.PulseOperations, error) {
+	refDate := now.Format("2006-01-02")
+
+	// 1. Headline sales rollup (Today, Yesterday, Current Month, Previous Month)
+	headlineQuery := `
+		SELECT
+			COALESCE(SUM(CASE WHEN created_at::date = $2::date THEN total_amount ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN created_at::date = $2::date THEN total_amount - total_cost ELSE 0 END), 0),
+			COUNT(CASE WHEN created_at::date = $2::date THEN 1 END),
+			COALESCE(SUM(CASE WHEN created_at::date = ($2::date - INTERVAL '1 day')::date THEN total_amount ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN created_at >= date_trunc('month', $2::date) THEN total_amount ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN created_at >= date_trunc('month', $2::date) THEN total_amount - total_cost ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN created_at >= date_trunc('month', $2::date) - INTERVAL '1 month'
+			                   AND created_at < date_trunc('month', $2::date) THEN total_amount ELSE 0 END), 0)
+		FROM pos_bills
+		WHERE shop_id = $1
+		  AND COALESCE(status, '') <> 'cancelled'
+		  AND created_at >= date_trunc('month', $2::date) - INTERVAL '1 month'
+	`
+	headline := &dto.PulseHeadline{}
+	if err := r.db.QueryRow(ctx, headlineQuery, shopID, refDate).Scan(
+		&headline.TodayRevenue,
+		&headline.TodayProfit,
+		&headline.TodayBills,
+		&headline.YesterdayRevenue,
+		&headline.MonthRevenue,
+		&headline.MonthGrossProfit,
+		&headline.PrevMonthRevenue,
+	); err != nil {
+		r.logger.Error("failed to query dukaan pulse headline", zap.Error(err), zap.String("shop_id", shopID))
+		return nil, nil, nil, err
+	}
+
+	// 2. 7-day pre-bucketed chart series (guaranteed 7 days including 0-sale days)
+	trendQuery := `
+		WITH days AS (
+			SELECT generate_series(($2::date - INTERVAL '6 days')::date, $2::date, INTERVAL '1 day')::date AS day
+		)
+		SELECT
+			to_char(d.day, 'YYYY-MM-DD') AS date_str,
+			to_char(d.day, 'Dy') AS day_label,
+			COALESCE(SUM(b.total_amount), 0) AS revenue,
+			COALESCE(SUM(b.total_amount - b.total_cost), 0) AS profit,
+			COUNT(b.id) AS bills
+		FROM days d
+		LEFT JOIN pos_bills b
+			ON b.shop_id = $1
+		   AND COALESCE(b.status, '') <> 'cancelled'
+		   AND b.created_at::date = d.day
+		GROUP BY d.day
+		ORDER BY d.day ASC
+	`
+	rows, err := r.db.Query(ctx, trendQuery, shopID, refDate)
+	if err != nil {
+		r.logger.Error("failed to query dukaan pulse 7-day trend", zap.Error(err), zap.String("shop_id", shopID))
+		return nil, nil, nil, err
+	}
+	defer rows.Close()
+
+	trend := make([]dto.PulseDayPoint, 0, 7)
+	for rows.Next() {
+		var pt dto.PulseDayPoint
+		if err := rows.Scan(&pt.Date, &pt.Label, &pt.Revenue, &pt.Profit, &pt.Bills); err != nil {
+			return nil, nil, nil, err
+		}
+		trend = append(trend, pt)
+	}
+
+	// 3. Operations summary (Inventory health + Khata outstanding)
+	opsQuery := `
+		WITH inv_stats AS (
+			SELECT
+				COUNT(CASE WHEN COALESCE(i.quantity, 0) <= 0 THEN 1 END) AS out_of_stock,
+				COUNT(CASE WHEN COALESCE(i.quantity, 0) > 0 AND i.quantity <= i.low_stock_threshold THEN 1 END) AS low_stock,
+				COUNT(CASE WHEN COALESCE(i.quantity, 0) > 0
+				            AND p.created_at < ($2::date - INTERVAL '45 days')
+				            AND NOT EXISTS (
+				                SELECT 1
+				                FROM pos_bill_items bi
+				                JOIN pos_bills b ON b.id = bi.bill_id
+				                WHERE bi.product_id = p.id
+				                  AND b.shop_id = $1
+				                  AND COALESCE(b.status, '') <> 'cancelled'
+				                  AND b.created_at >= ($2::date - INTERVAL '45 days')
+				            ) THEN 1 END) AS dead_stock
+			FROM products p
+			LEFT JOIN inventory i ON i.product_id = p.id
+			WHERE p.shop_id = $1 AND p.is_active = true
+		),
+		khata_stats AS (
+			SELECT
+				COALESCE(SUM(CASE WHEN current_balance > 0 THEN current_balance ELSE 0 END), 0) AS outstanding,
+				COUNT(CASE WHEN current_balance > 0 THEN 1 END) AS customers
+			FROM customer_khata
+			WHERE shop_id = $1
+		)
+		SELECT
+			inv_stats.low_stock,
+			inv_stats.out_of_stock,
+			inv_stats.dead_stock,
+			khata_stats.outstanding,
+			khata_stats.customers
+		FROM inv_stats, khata_stats
+	`
+	ops := &dto.PulseOperations{}
+	if err := r.db.QueryRow(ctx, opsQuery, shopID, refDate).Scan(
+		&ops.LowStockCount,
+		&ops.OutOfStockCount,
+		&ops.DeadStockCount,
+		&ops.KhataOutstanding,
+		&ops.KhataCustomers,
+	); err != nil {
+		r.logger.Error("failed to query dukaan pulse operations", zap.Error(err), zap.String("shop_id", shopID))
+		return nil, nil, nil, err
+	}
+
+	return headline, trend, ops, nil
+}
+
 // BulkImportProducts executes a high-speed batch insert and upsert transaction for importing lakhs of products efficiently and reliably.
