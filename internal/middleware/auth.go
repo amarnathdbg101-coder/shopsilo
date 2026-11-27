@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"shopMe/internal/reuse"
 )
 
 type contextKey string
@@ -127,6 +129,16 @@ func GetUserFromContext(ctx context.Context) *Claims {
 		return claims
 	}
 	return nil
+}
+
+// RequireUserClaims extracts authenticated user claims from context or writes 401 Unauthorized.
+func RequireUserClaims(w http.ResponseWriter, r *http.Request) (*Claims, bool) {
+	claims := GetUserFromContext(r.Context())
+	if claims == nil || claims.UserID == "" {
+		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+		return nil, false
+	}
+	return claims, true
 }
 
 func GenerateToken(userID, email, role, secret string) (string, error) {

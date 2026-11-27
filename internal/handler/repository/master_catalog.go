@@ -363,25 +363,20 @@ func (r *MasterCatalogRepo) BulkUpsert(ctx context.Context, items []model.Master
 
 // HardDeleteProduct permanently deletes a product and its inventory row (Admin Only).
 func (r *MasterCatalogRepo) HardDeleteProduct(ctx context.Context, productID string) error {
-	tx, err := r.db.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
+	return utils.WithTx(ctx, r.db, func(tx pgx.Tx) error {
+		// Delete from inventory first
+		_, _ = tx.Exec(ctx, `DELETE FROM inventory WHERE product_id = $1`, productID)
 
-	// Delete from inventory first
-	_, _ = tx.Exec(ctx, `DELETE FROM inventory WHERE product_id = $1`, productID)
-
-	// Delete from products
-	res, err := tx.Exec(ctx, `DELETE FROM products WHERE id = $1`, productID)
-	if err != nil {
-		return err
-	}
-	if res.RowsAffected() == 0 {
-		return errors.New("product not found")
-	}
-
-	return tx.Commit(ctx)
+		// Delete from products
+		res, err := tx.Exec(ctx, `DELETE FROM products WHERE id = $1`, productID)
+		if err != nil {
+			return err
+		}
+		if res.RowsAffected() == 0 {
+			return errors.New("product not found")
+		}
+		return nil
+	})
 }
 
 // BatchHardDeleteProducts permanently deletes multiple products and their inventory rows (Admin Only).
@@ -389,40 +384,32 @@ func (r *MasterCatalogRepo) BatchHardDeleteProducts(ctx context.Context, product
 	if len(productIDs) == 0 {
 		return 0, nil
 	}
-	tx, err := r.db.Begin(ctx)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback(ctx)
-
-	_, _ = tx.Exec(ctx, `DELETE FROM inventory WHERE product_id = ANY($1::uuid[])`, productIDs)
-	res, err := tx.Exec(ctx, `DELETE FROM products WHERE id = ANY($1::uuid[])`, productIDs)
-	if err != nil {
-		return 0, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, err
-	}
-	return res.RowsAffected(), nil
+	var affected int64
+	err := utils.WithTx(ctx, r.db, func(tx pgx.Tx) error {
+		_, _ = tx.Exec(ctx, `DELETE FROM inventory WHERE product_id = ANY($1::uuid[])`, productIDs)
+		res, err := tx.Exec(ctx, `DELETE FROM products WHERE id = ANY($1::uuid[])`, productIDs)
+		if err != nil {
+			return err
+		}
+		affected = res.RowsAffected()
+		return nil
+	})
+	return affected, err
 }
 
 // HardDeleteAllSoftDeletedProducts permanently deletes all soft-deleted products and their inventory rows (Admin Only).
 func (r *MasterCatalogRepo) HardDeleteAllSoftDeletedProducts(ctx context.Context) (int64, error) {
-	tx, err := r.db.Begin(ctx)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback(ctx)
-
-	_, _ = tx.Exec(ctx, `DELETE FROM inventory WHERE product_id IN (SELECT id FROM products WHERE deleted_at IS NOT NULL)`)
-	res, err := tx.Exec(ctx, `DELETE FROM products WHERE deleted_at IS NOT NULL`)
-	if err != nil {
-		return 0, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, err
-	}
-	return res.RowsAffected(), nil
+	var affected int64
+	err := utils.WithTx(ctx, r.db, func(tx pgx.Tx) error {
+		_, _ = tx.Exec(ctx, `DELETE FROM inventory WHERE product_id IN (SELECT id FROM products WHERE deleted_at IS NOT NULL)`)
+		res, err := tx.Exec(ctx, `DELETE FROM products WHERE deleted_at IS NOT NULL`)
+		if err != nil {
+			return err
+		}
+		affected = res.RowsAffected()
+		return nil
+	})
+	return affected, err
 }
 func (r *MasterCatalogRepo) ListMasterProducts(ctx context.Context, search, brand, category string, isVerified *bool, limit, offset int) ([]*model.MasterCatalogProduct, int64, error) {
 	if limit <= 0 || limit > 100 {

@@ -478,8 +478,7 @@ func decodeAssistantToolArgs(raw json.RawMessage, target any) error {
 }
 
 type GeminiMerchantAssistantModel struct {
-	client  *http.Client
-	rotator *ai.KeyRotator
+	gemini *ai.GeminiClient
 }
 
 func NewGeminiMerchantAssistantModel(keys []string) MerchantAssistantModel {
@@ -487,16 +486,16 @@ func NewGeminiMerchantAssistantModel(keys []string) MerchantAssistantModel {
 		config := utils.MustLoad()
 		keys = config.GeminiAPIKeys
 	}
-	return &GeminiMerchantAssistantModel{
-		client: &http.Client{
-			Transport: &http.Transport{
-				MaxIdleConns:        40,
-				MaxIdleConnsPerHost: 10,
-				IdleConnTimeout:     90 * time.Second,
-			},
-			Timeout: 45 * time.Second,
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			MaxIdleConns:        40,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     90 * time.Second,
 		},
-		rotator: ai.NewKeyRotator(keys),
+		Timeout: 45 * time.Second,
+	}
+	return &GeminiMerchantAssistantModel{
+		gemini: ai.NewGeminiClient(httpClient, ai.NewKeyRotator(keys)),
 	}
 }
 
@@ -564,7 +563,7 @@ type geminiAssistantResponse struct {
 }
 
 func (m *GeminiMerchantAssistantModel) Generate(ctx context.Context, system string, turns []MerchantAssistantTurn, tools []MerchantAssistantTool) (MerchantAssistantModelResponse, error) {
-	if m.rotator == nil || !m.rotator.HasKeys() {
+	if m.gemini == nil || m.gemini.Rotator() == nil || !m.gemini.Rotator().HasKeys() {
 		return MerchantAssistantModelResponse{}, ai.ErrNoKeysConfigured
 	}
 
@@ -573,34 +572,46 @@ func (m *GeminiMerchantAssistantModel) Generate(ctx context.Context, system stri
 		return MerchantAssistantModelResponse{}, err
 	}
 
-	keyAttempts := m.rotator.KeyCount()
-	var lastErr error
-	for attempt := 0; attempt < keyAttempts; attempt++ {
-		key, keyErr := m.rotator.GetNextKey()
-		if keyErr != nil {
-			return MerchantAssistantModelResponse{}, keyErr
-		}
-		for _, modelName := range getGeminiModels() {
-			result, status, callErr := m.generateWithModel(ctx, key, modelName, payload)
-			if callErr == nil {
-				m.rotator.MarkSuccess(key)
-				return result, nil
-			}
-			lastErr = callErr
-			if status == http.StatusTooManyRequests {
-				m.rotator.MarkRateLimited(key, time.Minute)
-				break
-			}
-			if status == http.StatusUnauthorized || status == http.StatusForbidden {
-				m.rotator.MarkRateLimited(key, 10*time.Minute)
-				break
-			}
-		}
+	var result MerchantAssistantModelResponse
+	opts := ai.CallOptions{
+		Timeout:          25 * time.Second,
+		MaxResponseBytes: 2 << 20,
 	}
-	if lastErr == nil {
-		lastErr = errors.New("Gemini returned no assistant response")
+	callErr := m.gemini.GenerateContent(ctx, getGeminiModels(), payload, opts, func(responseBody []byte) error {
+		var parsed geminiAssistantResponse
+		if err := json.Unmarshal(responseBody, &parsed); err != nil {
+			return fmt.Errorf("decode Gemini assistant response: %w", err)
+		}
+		if len(parsed.Candidates) == 0 {
+			return errors.New("Gemini assistant returned no candidates")
+		}
+
+		res := MerchantAssistantModelResponse{}
+		for _, part := range parsed.Candidates[0].Content.Parts {
+			if part.Text != "" {
+				res.Text += part.Text
+			}
+			if part.FunctionCall != nil {
+				args, err := json.Marshal(part.FunctionCall.Args)
+				if err != nil {
+					return fmt.Errorf("encode Gemini function arguments: %w", err)
+				}
+				res.FunctionCalls = append(res.FunctionCalls, MerchantAssistantFunctionCall{
+					Name: part.FunctionCall.Name,
+					Args: args,
+				})
+			}
+		}
+		if strings.TrimSpace(res.Text) == "" && len(res.FunctionCalls) == 0 {
+			return errors.New("Gemini assistant returned an empty candidate")
+		}
+		result = res
+		return nil
+	})
+	if callErr != nil {
+		return MerchantAssistantModelResponse{}, callErr
 	}
-	return MerchantAssistantModelResponse{}, lastErr
+	return result, nil
 }
 
 func buildGeminiAssistantPayload(system string, turns []MerchantAssistantTurn, tools []MerchantAssistantTool) (geminiAssistantPayload, error) {
@@ -660,63 +671,4 @@ func buildGeminiAssistantPayload(system string, turns []MerchantAssistantTurn, t
 		return geminiAssistantPayload{}, errors.New("assistant conversation has no turns")
 	}
 	return payload, nil
-}
-
-func (m *GeminiMerchantAssistantModel) generateWithModel(ctx context.Context, key, modelName string, payload geminiAssistantPayload) (MerchantAssistantModelResponse, int, error) {
-	modelCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
-	defer cancel()
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return MerchantAssistantModelResponse{}, 0, fmt.Errorf("encode Gemini assistant request: %w", err)
-	}
-	endpoint := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", modelName, key)
-	req, err := http.NewRequestWithContext(modelCtx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return MerchantAssistantModelResponse{}, 0, fmt.Errorf("create Gemini assistant request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	response, err := m.client.Do(req)
-	if err != nil {
-		return MerchantAssistantModelResponse{}, 0, fmt.Errorf("call Gemini assistant model: %w", err)
-	}
-	defer response.Body.Close()
-
-	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 2<<20))
-	if err != nil {
-		return MerchantAssistantModelResponse{}, response.StatusCode, fmt.Errorf("read Gemini assistant response: %w", err)
-	}
-	if response.StatusCode != http.StatusOK {
-		return MerchantAssistantModelResponse{}, response.StatusCode, fmt.Errorf("Gemini assistant request returned HTTP %d", response.StatusCode)
-	}
-
-	var parsed geminiAssistantResponse
-	if err := json.Unmarshal(responseBody, &parsed); err != nil {
-		return MerchantAssistantModelResponse{}, response.StatusCode, fmt.Errorf("decode Gemini assistant response: %w", err)
-	}
-	if len(parsed.Candidates) == 0 {
-		return MerchantAssistantModelResponse{}, response.StatusCode, errors.New("Gemini assistant returned no candidates")
-	}
-
-	result := MerchantAssistantModelResponse{}
-	for _, part := range parsed.Candidates[0].Content.Parts {
-		if part.Text != "" {
-			result.Text += part.Text
-		}
-		if part.FunctionCall != nil {
-			args, err := json.Marshal(part.FunctionCall.Args)
-			if err != nil {
-				return MerchantAssistantModelResponse{}, response.StatusCode, fmt.Errorf("encode Gemini function arguments: %w", err)
-			}
-			result.FunctionCalls = append(result.FunctionCalls, MerchantAssistantFunctionCall{
-				Name: part.FunctionCall.Name,
-				Args: args,
-			})
-		}
-	}
-	if strings.TrimSpace(result.Text) == "" && len(result.FunctionCalls) == 0 {
-		return MerchantAssistantModelResponse{}, response.StatusCode, errors.New("Gemini assistant returned an empty candidate")
-	}
-	return result, response.StatusCode, nil
 }

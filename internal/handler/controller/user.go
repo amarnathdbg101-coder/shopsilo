@@ -439,14 +439,8 @@ func (c *UserController) AdminUpdateUserStatus(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	var input dto.AdminUpdateUserStatusRequest
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		reuse.Error(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-
-	if err := reuse.ValidateStruct(&input); err != nil {
-		reuse.Error(w, http.StatusBadRequest, err.Error())
+	input, ok := reuse.DecodeAndValidate[dto.AdminUpdateUserStatusRequest](w, r)
+	if !ok {
 		return
 	}
 

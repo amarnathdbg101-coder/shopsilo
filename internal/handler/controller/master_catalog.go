@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -34,9 +33,8 @@ func NewMasterCatalogController(
 
 // Lookup handles GET /shops/me/catalog/lookup/{barcode} (Protected - Merchant)
 func (c *MasterCatalogController) Lookup(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetUserFromContext(r.Context())
-	if claims == nil || claims.UserID == "" {
-		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+	claims, ok := middleware.RequireUserClaims(w, r)
+	if !ok {
 		return
 	}
 
@@ -59,15 +57,12 @@ func (c *MasterCatalogController) Lookup(w http.ResponseWriter, r *http.Request)
 
 // BulkSeed handles POST /admin/catalog/bulk-seed (Protected - Admin Only)
 func (c *MasterCatalogController) BulkSeed(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetUserFromContext(r.Context())
-	if claims == nil || claims.UserID == "" {
-		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+	if _, ok := middleware.RequireUserClaims(w, r); !ok {
 		return
 	}
 
-	var req dto.MasterCatalogBulkSeedRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		reuse.Error(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+	req, ok := reuse.DecodeJSON[dto.MasterCatalogBulkSeedRequest](w, r)
+	if !ok {
 		return
 	}
 
@@ -83,9 +78,7 @@ func (c *MasterCatalogController) BulkSeed(w http.ResponseWriter, r *http.Reques
 
 // AdminHardDeleteProduct handles DELETE /admin/products/{id} (Protected - Admin Only)
 func (c *MasterCatalogController) AdminHardDeleteProduct(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetUserFromContext(r.Context())
-	if claims == nil || claims.UserID == "" {
-		reuse.Error(w, http.StatusUnauthorized, "unauthorized")
+	if _, ok := middleware.RequireUserClaims(w, r); !ok {
 		return
 	}
 
@@ -145,9 +138,8 @@ func (c *MasterCatalogController) ListMasterProducts(w http.ResponseWriter, r *h
 
 // CreateMasterProduct handles POST /admin/catalog/products
 func (c *MasterCatalogController) CreateMasterProduct(w http.ResponseWriter, r *http.Request) {
-	var p model.MasterCatalogProduct
-	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		reuse.Error(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+	p, ok := reuse.DecodeJSON[model.MasterCatalogProduct](w, r)
+	if !ok {
 		return
 	}
 
@@ -169,9 +161,8 @@ func (c *MasterCatalogController) UpdateMasterProduct(w http.ResponseWriter, r *
 		return
 	}
 
-	var p model.MasterCatalogProduct
-	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		reuse.Error(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+	p, ok := reuse.DecodeJSON[model.MasterCatalogProduct](w, r)
+	if !ok {
 		return
 	}
 
@@ -264,8 +255,11 @@ type batchIDsRequest struct {
 
 // AdminBatchDeleteMasterProducts handles POST /admin/catalog/products/batch
 func (c *MasterCatalogController) AdminBatchDeleteMasterProducts(w http.ResponseWriter, r *http.Request) {
-	var req batchIDsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.IDs) == 0 {
+	req, ok := reuse.DecodeJSON[batchIDsRequest](w, r)
+	if !ok {
+		return
+	}
+	if len(req.IDs) == 0 {
 		reuse.Error(w, http.StatusBadRequest, "ids array is required")
 		return
 	}
@@ -291,8 +285,11 @@ func (c *MasterCatalogController) AdminDeleteAllMasterProducts(w http.ResponseWr
 
 // AdminBatchHardDeleteProducts handles POST /admin/products/batch
 func (c *MasterCatalogController) AdminBatchHardDeleteProducts(w http.ResponseWriter, r *http.Request) {
-	var req batchIDsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.IDs) == 0 {
+	req, ok := reuse.DecodeJSON[batchIDsRequest](w, r)
+	if !ok {
+		return
+	}
+	if len(req.IDs) == 0 {
 		reuse.Error(w, http.StatusBadRequest, "ids array is required")
 		return
 	}

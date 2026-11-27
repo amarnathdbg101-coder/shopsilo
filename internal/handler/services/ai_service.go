@@ -1,7 +1,6 @@
 package services
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -9,14 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"log"
 	"net/http"
 	"os"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/repository"
@@ -72,8 +71,7 @@ func setAICache(key, resp string, ttl time.Duration) {
 
 type AIService struct {
 	shopRepo *repository.ShopRepo
-	client   *http.Client
-	rotator  *ai.KeyRotator
+	gemini   *ai.GeminiClient
 }
 
 func NewAIService(shopRepo *repository.ShopRepo) *AIService {
@@ -92,34 +90,23 @@ func NewAIService(shopRepo *repository.ShopRepo) *AIService {
 	}
 
 	if len(keys) == 0 {
-		fmt.Printf("[AIService WARNING] No Gemini API keys found! Set GEMINI_API_KEYS in .env\n")
+		zap.L().Warn("AIService: no Gemini API keys found; set GEMINI_API_KEYS in .env")
 	} else {
-		fmt.Printf("[AIService] Initialized with %d active Gemini key(s). Models: %v\n", len(keys), getGeminiModels())
+		zap.L().Info("AIService initialized", zap.Int("active_keys", len(keys)), zap.Strings("models", getGeminiModels()))
 	}
 
+	httpClient := &http.Client{
+		Transport: transport,
+		Timeout:   45 * time.Second,
+	}
 	return &AIService{
 		shopRepo: shopRepo,
-		client: &http.Client{
-			Transport: transport,
-			Timeout:   45 * time.Second,
-		},
-		rotator: ai.NewKeyRotator(keys),
+		gemini:   ai.NewGeminiClient(httpClient, ai.NewKeyRotator(keys)),
 	}
 }
 
 func getGeminiModels() []string {
-	custom := strings.TrimSpace(os.Getenv("GEMINI_MODEL"))
-	models := []string{
-		"gemini-flash-lite-latest",
-		"gemini-flash-latest",
-		"gemini-2.5-flash",
-		"gemini-2.0-flash",
-		"gemini-1.5-flash",
-	}
-	if custom != "" && custom != "gemini-3.1-pro-preview" && custom != "gemini-2.5-flash" {
-		return append([]string{custom}, models...)
-	}
-	return models
+	return ai.DefaultModels()
 }
 
 func getGeminiAPIKey() string {
@@ -550,93 +537,31 @@ func isUsefulProductAttribute(k, v string) bool {
 	return true
 }
 func (s *AIService) callGeminiWithFallback(ctx context.Context, explicitKey string, payload geminiPayload) (string, error) {
-	keyAttempts := s.rotator.KeyCount()
-	if keyAttempts <= 0 {
-		keyAttempts = 1
+	var reply string
+	opts := ai.CallOptions{
+		ExplicitKey:            explicitKey,
+		Timeout:                35 * time.Second,
+		AllowExhaustedFallback: true,
 	}
-
-	models := getGeminiModels()
-	var lastErr error
-
-	for attempt := 0; attempt < keyAttempts; attempt++ {
-		apiKey := explicitKey
-		if apiKey == "" || attempt > 0 {
-			k, err := s.rotator.GetNextKey()
-			if err != nil && !errors.Is(err, ai.ErrAllKeysExhausted) {
-				return "", err
-			}
-			apiKey = k
+	err := s.gemini.GenerateContent(ctx, getGeminiModels(), payload, opts, func(respBody []byte) error {
+		var parsedResp geminiCandidateResponse
+		if err := json.Unmarshal(respBody, &parsedResp); err != nil {
+			return fmt.Errorf("failed to parse gemini response: %w", err)
 		}
-
-		if apiKey == "" {
-			return "", ai.ErrNoKeysConfigured
+		if len(parsedResp.Candidates) == 0 || len(parsedResp.Candidates[0].Content.Parts) == 0 {
+			return errors.New("empty candidate response from gemini")
 		}
-
-		for _, model := range models {
-			reply, statusCode, err := s.callSingleGeminiModel(ctx, apiKey, model, payload)
-			if err == nil && reply != "" {
-				s.rotator.MarkSuccess(apiKey)
-				return reply, nil
-			}
-
-			lastErr = err
-
-			if statusCode == http.StatusTooManyRequests {
-				s.rotator.MarkRateLimited(apiKey, 60*time.Second)
-				break // Switch to next key in keyAttempts
-			} else if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
-				s.rotator.MarkRateLimited(apiKey, 10*time.Minute)
-				break // Switch to next key in keyAttempts
-			}
-			// Note: 404 is model deprecation / unavailable for tier, and 503 is temporary high demand.
-			// Do NOT penalize the API key for model-specific errors; continue to next fallback model.
+		text := parsedResp.Candidates[0].Content.Parts[0].Text
+		if text == "" {
+			return errors.New("empty text response from gemini")
 		}
-	}
-
-	return "", lastErr
-}
-
-func (s *AIService) callSingleGeminiModel(ctx context.Context, apiKey, model string, payload geminiPayload) (string, int, error) {
-	modelCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
-	defer cancel()
-
-	bodyBytes, err := json.Marshal(payload)
+		reply = text
+		return nil
+	})
 	if err != nil {
-		return "", 0, fmt.Errorf("failed to marshal gemini payload: %w", err)
+		return "", err
 	}
-
-	endpoint := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, apiKey)
-	httpReq, err := http.NewRequestWithContext(modelCtx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return "", 0, fmt.Errorf("failed to create http request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := s.client.Do(httpReq)
-	if err != nil {
-		return "", 0, fmt.Errorf("gemini api request failed for model %s: %w", model, err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", resp.StatusCode, fmt.Errorf("failed to read gemini response body: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return "", resp.StatusCode, fmt.Errorf("gemini api error (model %s, status %d): %s", model, resp.StatusCode, string(respBody))
-	}
-
-	var parsedResp geminiCandidateResponse
-	if err := json.Unmarshal(respBody, &parsedResp); err != nil {
-		return "", resp.StatusCode, fmt.Errorf("failed to parse gemini response: %w", err)
-	}
-
-	if len(parsedResp.Candidates) == 0 || len(parsedResp.Candidates[0].Content.Parts) == 0 {
-		return "", resp.StatusCode, fmt.Errorf("empty candidate response from gemini model %s", model)
-	}
-
-	return parsedResp.Candidates[0].Content.Parts[0].Text, resp.StatusCode, nil
+	return reply, nil
 }
 
 func hashString(s string) string {
@@ -762,13 +687,13 @@ RULES:
 	apiKey := getGeminiAPIKey()
 	rawText, err := s.callGeminiWithFallback(ctx, apiKey, payload)
 	if err != nil {
-		log.Printf("[ScanMandiItem] Gemini call failed: %v", err)
+		zap.L().Error("ScanMandiItem Gemini call failed", zap.Error(err))
 		return nil, fmt.Errorf("gemini mandi vision failed: %w", err)
 	}
 
 	resp, parseErr := parseMandiScanResponse(rawText)
 	if parseErr != nil {
-		log.Printf("[ScanMandiItem] Parse warning: %v. Raw response: %s", parseErr, rawText)
+		zap.L().Warn("ScanMandiItem parse warning", zap.Error(parseErr), zap.String("raw_response", rawText))
 		// Fallback: search for any "name": "..." or overview text in rawText so merchant is never blocked
 		reName := regexp.MustCompile(`"(?:name|product|item)"\s*:\s*"([^"]+)"`)
 		matches := reName.FindStringSubmatch(rawText)

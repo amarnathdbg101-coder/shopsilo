@@ -13,11 +13,8 @@ import (
 
 // GenerateNativeWholesaleReorderPDF creates an executive A4 purchase order sheet for mandi/wholesale restock.
 func GenerateNativeWholesaleReorderPDF(shop *model.Shop, items []*dto.LowStockProduct) ([]byte, error) {
-	pdf := gopdf.GoPdf{}
-	pdf.Start(gopdf.Config{PageSize: *gopdf.PageSizeA4})
-	pdf.AddPage()
-
-	if err := setupInvoiceFonts(&pdf); err != nil {
+	pdf, err := newDevanagariPDF(*gopdf.PageSizeA4)
+	if err != nil {
 		return nil, err
 	}
 
@@ -28,43 +25,23 @@ func GenerateNativeWholesaleReorderPDF(shop *model.Shop, items []*dto.LowStockPr
 	contentRight := contentLeft + contentWidth
 
 	// Executive Color Palette
-	cTopBanner := []uint8{15, 23, 42}   // #0f172a (Dark Navy Executive Bar)
-	cHeaderSub := []uint8{148, 163, 184} // #94a3b8 (Slate Muted)
-	cDark := []uint8{15, 23, 42}        // #0f172a (Primary text)
-	cMuted := []uint8{71, 85, 105}      // #475569 (Secondary text)
-	cTblHeader := []uint8{49, 46, 129}  // #312e81 (Deep Indigo Table Header)
-	cAltRow := []uint8{248, 250, 252}   // #f8fafc (Alternate row)
-	cBorder := []uint8{226, 232, 240}   // #e2e8f0 (Grid borders)
+	pal := executivePalette()
+	cTopBanner := pal.TopBanner
+	cHeaderSub := pal.HeaderSub
+	cDark := pal.Dark
+	cMuted := pal.Muted
+	cTblHeader := pal.TblHeader
+	cAltRow := pal.AltRow
+	cBorder := pal.Border
 	cCardBg := []uint8{241, 245, 249}   // #f1f5f9 (Pill background)
 	cCardBorder := []uint8{203, 213, 225} // #cbd5e1 (Pill border)
 	cBlueAccent := []uint8{30, 58, 138} // #1e3a8a (Pill text)
-	cRed := []uint8{220, 38, 38}        // #dc2626 (Stock alert)
+	cRed := pal.Red
 
-	storeName := "ShopSilo Partner Store"
-	storeAddress := ""
-	storePhone := ""
-
-	if shop != nil && strings.TrimSpace(shop.Name) != "" {
-		storeName = strings.TrimSpace(shop.Name)
-		addrParts := []string{}
-		if strings.TrimSpace(shop.Address) != "" {
-			addrParts = append(addrParts, strings.TrimSpace(shop.Address))
-		}
-		if strings.TrimSpace(shop.City) != "" {
-			cityStr := shop.City
-			if shop.Pincode != "" {
-				cityStr += " " + shop.Pincode
-			}
-			addrParts = append(addrParts, cityStr)
-		}
-		storeAddress = strings.Join(addrParts, ", ")
-
-		if shop.WhatsAppNumber != "" {
-			storePhone = "Phone / WhatsApp: " + shop.WhatsAppNumber
-		} else if shop.Phone != "" {
-			storePhone = "Phone: " + shop.Phone
-		}
-	}
+	meta := extractShopPDFMeta(shop, "ShopSilo Partner Store")
+	storeName := meta.Name
+	storeAddress := meta.Address
+	storePhone := meta.Phone
 
 	// 1. TOP FULL-WIDTH DARK NAVY EXECUTIVE BANNER
 	bannerH := 52.0
@@ -72,7 +49,7 @@ func GenerateNativeWholesaleReorderPDF(shop *model.Shop, items []*dto.LowStockPr
 	pdf.RectFromUpperLeftWithStyle(0, 0, pageW, bannerH, "F")
 
 	// ShopSilo Official Logo
-	_ = DrawShopSiloLogo(&pdf, 20, 10, 32)
+	_ = DrawShopSiloLogo(pdf, 20, 10, 32)
 
 	// Store Name in Banner
 	pdf.SetTextColor(255, 255, 255)
@@ -241,11 +218,8 @@ func GenerateNativeWholesaleReorderPDF(shop *model.Shop, items []*dto.LowStockPr
 
 // GenerateNativeCustomProcurementPDF creates a custom procurement sheet matching executive corporate styling.
 func GenerateNativeCustomProcurementPDF(shop *model.Shop, title string, items []dto.ProcurementPDFItem) ([]byte, error) {
-	pdf := gopdf.GoPdf{}
-	pdf.Start(gopdf.Config{PageSize: *gopdf.PageSizeA4})
-	pdf.AddPage()
-
-	if err := setupInvoiceFonts(&pdf); err != nil {
+	pdf, err := newDevanagariPDF(*gopdf.PageSizeA4)
+	if err != nil {
 		return nil, err
 	}
 
@@ -256,42 +230,23 @@ func GenerateNativeCustomProcurementPDF(shop *model.Shop, title string, items []
 	contentRight := contentLeft + contentWidth
 
 	// Executive Color Palette
-	cTopBanner := []uint8{15, 23, 42}   // #0f172a (Dark Navy Executive Bar)
-	cHeaderSub := []uint8{148, 163, 184} // #94a3b8 (Slate Muted)
-	cDark := []uint8{15, 23, 42}        // #0f172a (Primary text)
-	cMuted := []uint8{71, 85, 105}      // #475569 (Secondary text)
-	cTblHeader := []uint8{49, 46, 129}  // #312e81 (Deep Indigo Table Header)
-	cAltRow := []uint8{248, 250, 252}   // #f8fafc (Alternate row)
-	cBorder := []uint8{226, 232, 240}   // #e2e8f0 (Grid borders)
+	pal := executivePalette()
+	cTopBanner := pal.TopBanner
+	cHeaderSub := pal.HeaderSub
+	cDark := pal.Dark
+	cMuted := pal.Muted
+	cTblHeader := pal.TblHeader
+	cAltRow := pal.AltRow
+	cBorder := pal.Border
 	cCardBg := []uint8{241, 245, 249}   // #f1f5f9 (Pill background)
 	cCardBorder := []uint8{203, 213, 225} // #cbd5e1 (Pill border)
 	cBlueAccent := []uint8{30, 58, 138} // #1e3a8a (Pill text)
 
-	storeName := "ShopSilo Partner Store"
-	storeAddress := ""
-	storePhone := ""
-
-	if shop != nil && strings.TrimSpace(shop.Name) != "" {
-		storeName = strings.TrimSpace(shop.Name)
-		addrParts := []string{}
-		if strings.TrimSpace(shop.Address) != "" {
-			addrParts = append(addrParts, strings.TrimSpace(shop.Address))
-		}
-		if strings.TrimSpace(shop.City) != "" {
-			cityStr := shop.City
-			if shop.Pincode != "" {
-				cityStr += " " + shop.Pincode
-			}
-			addrParts = append(addrParts, cityStr)
-		}
-		storeAddress = strings.Join(addrParts, ", ")
-
-		if shop.WhatsAppNumber != "" {
-			storePhone = "Phone / WhatsApp: " + shop.WhatsAppNumber
-		} else if shop.Phone != "" {
-			storePhone = "Phone: " + shop.Phone
-		}
-	} else if strings.Contains(title, " - ") {
+	meta := extractShopPDFMeta(shop, "ShopSilo Partner Store")
+	storeName := meta.Name
+	storeAddress := meta.Address
+	storePhone := meta.Phone
+	if (shop == nil || strings.TrimSpace(shop.Name) == "") && strings.Contains(title, " - ") {
 		parts := strings.SplitN(title, " - ", 2)
 		if strings.TrimSpace(parts[0]) != "" {
 			storeName = strings.TrimSpace(parts[0])
@@ -309,7 +264,7 @@ func GenerateNativeCustomProcurementPDF(shop *model.Shop, title string, items []
 	pdf.RectFromUpperLeftWithStyle(0, 0, pageW, bannerH, "F")
 
 	// ShopSilo Official Logo
-	_ = DrawShopSiloLogo(&pdf, 20, 10, 32)
+	_ = DrawShopSiloLogo(pdf, 20, 10, 32)
 
 	// Store Name in Banner
 	pdf.SetTextColor(255, 255, 255)

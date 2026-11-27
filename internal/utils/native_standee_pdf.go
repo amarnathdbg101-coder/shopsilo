@@ -11,13 +11,9 @@ import (
 
 // GenerateNativeStoreStandeePDF generates an ultra-crisp, printable A5 counter tabletop QR standee.
 func GenerateNativeStoreStandeePDF(shop *model.Shop) ([]byte, error) {
-	pdf := gopdf.GoPdf{}
-
 	// A5 Size: 420 x 595 points
-	pdf.Start(gopdf.Config{PageSize: *gopdf.PageSizeA5})
-	pdf.AddPage()
-
-	if err := setupInvoiceFonts(&pdf); err != nil {
+	pdf, err := newDevanagariPDF(*gopdf.PageSizeA5)
+	if err != nil {
 		return nil, err
 	}
 
@@ -71,7 +67,7 @@ func GenerateNativeStoreStandeePDF(shop *model.Shop) ([]byte, error) {
 
 	// 2. Header Branding Tag (Light transparent logo for white paper)
 	logoW := 32.0 * 1.19
-	_ = DrawShopSiloLogoLight(&pdf, contentLeft+(contentWidth-logoW)/2.0, 36, 32)
+	_ = DrawShopSiloLogoLight(pdf, contentLeft+(contentWidth-logoW)/2.0, 36, 32)
 
 	pdf.SetFillColor(cLightInd[0], cLightInd[1], cLightInd[2])
 	badgeW := 180.0

@@ -197,6 +197,53 @@ func RouteSetup(c *app.Container) chi.Router {
 		})
 	})
 
+	// Shared POS, Drawer, Scan & Go, Claims, Batches, Micro-Plans & EOD PDF routes
+	registerPOSAndOpsRoutes := func(sub chi.Router) {
+		// POS Financial Shield & Counter Velocity Hotkeys
+		sub.Get("/pos/hotkeys", marginc.ListHotkeys)
+		sub.Post("/pos/hotkeys", marginc.CreateHotkey)
+		sub.Delete("/pos/hotkeys/{id}", marginc.DeleteHotkey)
+		sub.Post("/pos/hotkeys/auto-populate", marginc.AutoPopulateHotkeys)
+
+		// Cash Drawer Shift Accountability & Drawer Telemetry
+		sub.Get("/pos/drawer/current", drawerc.GetCurrentStatus)
+		sub.Post("/pos/drawer/open", drawerc.OpenSession)
+		sub.Post("/pos/drawer/close", drawerc.CloseSession)
+		sub.Post("/pos/drawer/safe-drop", drawerc.RecordSafeDrop)
+		sub.Post("/pos/drawer/expense", drawerc.RecordPettyExpense)
+		sub.Get("/pos/drawer/history", drawerc.ListHistory)
+
+		// Scan & Go Counter Verification & 1-Tap Checkout
+		sub.Get("/pos/scan-go/verify/{code}", scanc.VerifyAtCounter)
+		sub.Post("/pos/scan-go/convert/{code}", scanc.ConvertToBill)
+
+		// Company Damage & Expiry Claim Vault
+		sub.Post("/claims", claimc.CreateClaim)
+		sub.Get("/claims", claimc.ListClaims)
+		sub.Patch("/claims/{id}/status", claimc.UpdateClaimStatus)
+		sub.Get("/claims/distributor/summary", claimc.GetDistributorStatement)
+
+		// Reverse Return Lookup (Receiptless Returns)
+		sub.Get("/pos/returns/lookup", returnLookupc.LookupReturn)
+
+		// Batch Expiry Radar & Near-Expiry Auto-Markdown Engine
+		sub.Post("/batches", batchc.CreateBatch)
+		sub.Get("/batches/near-expiry", batchc.ListNearExpiry)
+		sub.Get("/batches/summary", batchc.GetExpirySummary)
+		sub.Post("/batches/markdown-scan", batchc.RunMarkdownScan)
+		sub.Put("/batches/{id}/markdown", batchc.ApplyMarkdown)
+		sub.Post("/batches/{id}/write-off", batchc.WriteOffBatch)
+
+		// Khata Micro-Installments / Daily Chillar Settle
+		sub.Post("/khata/micro-plans", microPlanc.CreatePlan)
+		sub.Post("/khata/micro-plans/{id}/pay", microPlanc.RecordPayment)
+		sub.Get("/khata/micro-plans/{id}", microPlanc.GetPlanSummary)
+		sub.Get("/khata/micro-plans", microPlanc.ListPlans)
+
+		// Automated End-of-Day P&L PDF via Pure Go gopdf Engine
+		sub.Get("/pos/day-close/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
+	}
+
 	// 🏪 Merchant / Shop Owner Route Group (/api/v1/merchant)
 	r.Route("/api/v1/merchant", func(r chi.Router) {
 		r.Use(middleware.JWTAuth(utils.MustLoad().Jwt))
@@ -292,40 +339,7 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.With(middleware.IdempotencyGuard).Post("/pos/checkout", posc.CreateSale)
 		r.Get("/pos/summary", posc.GetDailySummary)
 
-		// POS Financial Shield & Counter Velocity Hotkeys
-		r.Get("/pos/hotkeys", marginc.ListHotkeys)
-		r.Post("/pos/hotkeys", marginc.CreateHotkey)
-		r.Delete("/pos/hotkeys/{id}", marginc.DeleteHotkey)
-		r.Post("/pos/hotkeys/auto-populate", marginc.AutoPopulateHotkeys)
-
-		// Cash Drawer Shift Accountability & Drawer Telemetry
-		r.Get("/pos/drawer/current", drawerc.GetCurrentStatus)
-		r.Post("/pos/drawer/open", drawerc.OpenSession)
-		r.Post("/pos/drawer/close", drawerc.CloseSession)
-		r.Post("/pos/drawer/safe-drop", drawerc.RecordSafeDrop)
-		r.Post("/pos/drawer/expense", drawerc.RecordPettyExpense)
-		r.Get("/pos/drawer/history", drawerc.ListHistory)
-
-		// Scan & Go Counter Verification & 1-Tap Checkout
-		r.Get("/pos/scan-go/verify/{code}", scanc.VerifyAtCounter)
-		r.Post("/pos/scan-go/convert/{code}", scanc.ConvertToBill)
-
-		// Company Damage & Expiry Claim Vault
-		r.Post("/claims", claimc.CreateClaim)
-		r.Get("/claims", claimc.ListClaims)
-		r.Patch("/claims/{id}/status", claimc.UpdateClaimStatus)
-		r.Get("/claims/distributor/summary", claimc.GetDistributorStatement)
-
-		// Reverse Return Lookup (Receiptless Returns)
-		r.Get("/pos/returns/lookup", returnLookupc.LookupReturn)
-
-		// Batch Expiry Radar & Near-Expiry Auto-Markdown Engine
-		r.Post("/batches", batchc.CreateBatch)
-		r.Get("/batches/near-expiry", batchc.ListNearExpiry)
-		r.Get("/batches/summary", batchc.GetExpirySummary)
-		r.Post("/batches/markdown-scan", batchc.RunMarkdownScan)
-		r.Put("/batches/{id}/markdown", batchc.ApplyMarkdown)
-		r.Post("/batches/{id}/write-off", batchc.WriteOffBatch)
+		registerPOSAndOpsRoutes(r)
 
 		// Batch routes aliases under /shops/me
 		r.Post("/shops/me/batches", batchc.CreateBatch)
@@ -335,16 +349,11 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Put("/shops/me/batches/{id}/markdown", batchc.ApplyMarkdown)
 		r.Post("/shops/me/batches/{id}/write-off", batchc.WriteOffBatch)
 
-		// Khata Micro-Installments / Daily Chillar Settle
-		r.Post("/khata/micro-plans", microPlanc.CreatePlan)
-		r.Post("/khata/micro-plans/{id}/pay", microPlanc.RecordPayment)
-		r.Get("/khata/micro-plans/{id}", microPlanc.GetPlanSummary)
-		r.Get("/khata/micro-plans", microPlanc.ListPlans)
+		// Khata transaction management
 		r.Put("/khata/{id}/transactions/{txId}", khatac.UpdateTransaction)
 		r.Delete("/khata/{id}/transactions/{txId}", khatac.DeleteTransaction)
 
-		// Automated End-of-Day P&L PDF via Pure Go gopdf Engine
-		r.Get("/pos/day-close/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
+		// Automated End-of-Day P&L PDF alias under /shops/me
 		r.Get("/shops/me/pos/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
 
 		// Product Vision & Studio Ingestion (Add Product)
@@ -365,48 +374,7 @@ func RouteSetup(c *app.Container) chi.Router {
 	// 🌐 Direct /api Aliases for POS, Drawer, Claims, Batches, Khata & Scan-Go
 	r.Route("/api", func(r chi.Router) {
 		r.Use(middleware.JWTAuth(utils.MustLoad().Jwt))
-
-		// 1. Touch Counter Hotkeys
-		r.Get("/pos/hotkeys", marginc.ListHotkeys)
-		r.Post("/pos/hotkeys", marginc.CreateHotkey)
-		r.Delete("/pos/hotkeys/{id}", marginc.DeleteHotkey)
-		r.Post("/pos/hotkeys/auto-populate", marginc.AutoPopulateHotkeys)
-
-		// 2. Cash Drawer Shift Accountability & Safe Drops
-		r.Get("/pos/drawer/current", drawerc.GetCurrentStatus)
-		r.Post("/pos/drawer/open", drawerc.OpenSession)
-		r.Post("/pos/drawer/close", drawerc.CloseSession)
-		r.Post("/pos/drawer/safe-drop", drawerc.RecordSafeDrop)
-		r.Post("/pos/drawer/expense", drawerc.RecordPettyExpense)
-		r.Get("/pos/drawer/history", drawerc.ListHistory)
-
-		// 3. Scan & Go Counter Verification & 1-Tap Checkout
-		r.Get("/pos/scan-go/verify/{code}", scanc.VerifyAtCounter)
-		r.Post("/pos/scan-go/convert/{code}", scanc.ConvertToBill)
-
-		// 4. Company Damage Claim Vault & Receiptless Return Lookup
-		r.Post("/claims", claimc.CreateClaim)
-		r.Get("/claims", claimc.ListClaims)
-		r.Patch("/claims/{id}/status", claimc.UpdateClaimStatus)
-		r.Get("/claims/distributor/summary", claimc.GetDistributorStatement)
-		r.Get("/pos/returns/lookup", returnLookupc.LookupReturn)
-
-		// 5. Batch Expiry Radar & Near-Expiry Auto-Markdown Engine
-		r.Post("/batches", batchc.CreateBatch)
-		r.Get("/batches/near-expiry", batchc.ListNearExpiry)
-		r.Get("/batches/summary", batchc.GetExpirySummary)
-		r.Post("/batches/markdown-scan", batchc.RunMarkdownScan)
-		r.Put("/batches/{id}/markdown", batchc.ApplyMarkdown)
-		r.Post("/batches/{id}/write-off", batchc.WriteOffBatch)
-
-		// 6. Khata Daily Micro-Installments
-		r.Post("/khata/micro-plans", microPlanc.CreatePlan)
-		r.Post("/khata/micro-plans/{id}/pay", microPlanc.RecordPayment)
-		r.Get("/khata/micro-plans/{id}", microPlanc.GetPlanSummary)
-		r.Get("/khata/micro-plans", microPlanc.ListPlans)
-
-		// 7. Automated End-of-Day P&L PDF (Pure Go)
-		r.Get("/pos/day-close/eod-report.pdf", eodc.DownloadEndOfDayPLPDF)
+		registerPOSAndOpsRoutes(r)
 	})
 
 	// Protected routes (JWT authentication required)

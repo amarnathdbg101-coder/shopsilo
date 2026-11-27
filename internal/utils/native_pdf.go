@@ -124,17 +124,13 @@ func GenerateNativeBillPDF(bill *model.POSBill, opts NativePDFOptions) ([]byte, 
 		return GenerateNativeThermalBillPDF(bill)
 	}
 
-	pdf := gopdf.GoPdf{}
-
 	// Standard A5 Dimensions: 420.94 x 595.28 points (148mm x 210mm)
 	pageW := 420.94
 	pageH := 595.28
 	pageSize := gopdf.Rect{W: pageW, H: pageH}
 
-	pdf.Start(gopdf.Config{PageSize: pageSize})
-	pdf.AddPage()
-
-	if err := setupInvoiceFonts(&pdf); err != nil {
+	pdf, err := newDevanagariPDF(pageSize)
+	if err != nil {
 		return nil, err
 	}
 
@@ -191,7 +187,7 @@ func GenerateNativeBillPDF(bill *model.POSBill, opts NativePDFOptions) ([]byte, 
 	pdf.RectFromUpperLeftWithStyle(0, 0, pageW, bannerH, "F")
 
 	// ShopSilo Official Logo
-	_ = DrawShopSiloLogo(&pdf, 14, 8, 30)
+	_ = DrawShopSiloLogo(pdf, 14, 8, 30)
 
 	// Store Name in Banner
 	pdf.SetTextColor(255, 255, 255)
@@ -500,8 +496,6 @@ func GenerateNativeThermalBillPDF(bill *model.POSBill) ([]byte, error) {
 		return nil, fmt.Errorf("pos bill is nil")
 	}
 
-	pdf := gopdf.GoPdf{}
-
 	// 80mm width = ~226 points. Height is calculated accurately to prevent cutoffs.
 	pageWidth := 226.0
 	pageHeight := 140.0 + float64(len(bill.Items))*16.0
@@ -521,10 +515,8 @@ func GenerateNativeThermalBillPDF(bill *model.POSBill) ([]byte, error) {
 		pageHeight = 210.0
 	}
 
-	pdf.Start(gopdf.Config{PageSize: gopdf.Rect{W: pageWidth, H: pageHeight}})
-	pdf.AddPage()
-
-	if err := setupInvoiceFonts(&pdf); err != nil {
+	pdf, err := newDevanagariPDF(gopdf.Rect{W: pageWidth, H: pageHeight})
+	if err != nil {
 		return nil, err
 	}
 

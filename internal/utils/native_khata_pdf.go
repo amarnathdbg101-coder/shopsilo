@@ -13,11 +13,8 @@ import (
 
 // GenerateNativeKhataStatementPDF builds an executive A4 customer passbook statement in pure Go.
 func GenerateNativeKhataStatementPDF(customer *model.CustomerKhata, transactions []model.KhataTransaction, shop *model.Shop) ([]byte, error) {
-	pdf := gopdf.GoPdf{}
-	pdf.Start(gopdf.Config{PageSize: *gopdf.PageSizeA4})
-	pdf.AddPage()
-
-	if err := setupInvoiceFonts(&pdf); err != nil {
+	pdf, err := newDevanagariPDF(*gopdf.PageSizeA4)
+	if err != nil {
 		return nil, err
 	}
 
@@ -28,46 +25,23 @@ func GenerateNativeKhataStatementPDF(customer *model.CustomerKhata, transactions
 	contentRight := contentLeft + contentWidth
 
 	// Executive Color Palette matching ShopSilo Design System
-	cTopBanner := []uint8{15, 23, 42}    // #0f172a (Dark Navy Executive Bar)
-	cHeaderSub := []uint8{148, 163, 184}  // #94a3b8 (Slate Muted)
-	cDark := []uint8{15, 23, 42}         // #0f172a (Primary text)
-	cMuted := []uint8{71, 85, 105}       // #475569 (Secondary text)
-	cTblHeader := []uint8{49, 46, 129}   // #312e81 (Deep Indigo Table Header)
-	cAltRow := []uint8{248, 250, 252}    // #f8fafc (Alternate row)
-	cBorder := []uint8{226, 232, 240}    // #e2e8f0 (Grid borders)
-	cRed := []uint8{220, 38, 38}         // #dc2626 (Udhar / Debit)
-	cGreen := []uint8{22, 163, 74}       // #16a34a (Payment / Credit)
-	cCardBg := []uint8{248, 250, 252}    // #f8fafc
+	pal := executivePalette()
+	cTopBanner := pal.TopBanner
+	cHeaderSub := pal.HeaderSub
+	cDark := pal.Dark
+	cMuted := pal.Muted
+	cTblHeader := pal.TblHeader
+	cAltRow := pal.AltRow
+	cBorder := pal.Border
+	cRed := pal.Red
+	cGreen := pal.Green
+	cCardBg := pal.CardBg
 
-	storeName := "ShopSilo Partner Store"
-	storeAddress := ""
-	storePhone := ""
-	storeUPI := ""
-
-	if shop != nil {
-		if strings.TrimSpace(shop.Name) != "" {
-			storeName = strings.TrimSpace(shop.Name)
-		}
-		addrParts := []string{}
-		if strings.TrimSpace(shop.Address) != "" {
-			addrParts = append(addrParts, strings.TrimSpace(shop.Address))
-		}
-		if strings.TrimSpace(shop.City) != "" {
-			cityStr := shop.City
-			if shop.Pincode != "" {
-				cityStr += " " + shop.Pincode
-			}
-			addrParts = append(addrParts, cityStr)
-		}
-		storeAddress = strings.Join(addrParts, ", ")
-
-		if shop.WhatsAppNumber != "" {
-			storePhone = "Phone / WhatsApp: " + shop.WhatsAppNumber
-		} else if shop.Phone != "" {
-			storePhone = "Phone: " + shop.Phone
-		}
-		storeUPI = shop.UPIID
-	}
+	meta := extractShopPDFMeta(shop, "ShopSilo Partner Store")
+	storeName := meta.Name
+	storeAddress := meta.Address
+	storePhone := meta.Phone
+	storeUPI := meta.UPI
 
 	custName := "Customer"
 	custPhone := ""
