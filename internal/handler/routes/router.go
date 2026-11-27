@@ -540,6 +540,10 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Post("/copilot/evaluate-bargain", copilotc.EvaluateBargain)
 		r.Post("/copilot/recalculate", copilotc.Recalculate)
 
+		// Root aliases for AI vision scanners (backward-compatible with /ai/* clients)
+		r.With(middleware.RequireRole("merchant", "shop_owner", "staff", "admin")).Post("/ai/scan-product", aic.ScanProduct)
+		r.With(middleware.RequireRole("merchant", "shop_owner", "staff", "admin")).Post("/ai/mandi-scan", aic.ScanMandiItem)
+
 		// Shop Customer Khata (Udhar & settlement passbook)
 		r.Get("/shops/me/khata/summary", khatac.GetSummary)                      // Shop
 		r.Get("/shops/me/khata/aging", khatac.GetAgingReport)                    // Shop
