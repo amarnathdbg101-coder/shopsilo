@@ -1001,7 +1001,7 @@ func (r *ProductRepo) GetAdvisorProductStats(ctx context.Context, shopID string,
 		SELECT
 			p.id,
 			p.name,
-			COALESCE(p.category, ''),
+			COALESCE(c.name, ''),
 			COALESCE(p.sku, ''),
 			p.price,
 			COALESCE(p.cost_price, 0),
@@ -1011,6 +1011,7 @@ func (r *ProductRepo) GetAdvisorProductStats(ctx context.Context, shopID string,
 			COALESCE(s.co_bills, 0),
 			GREATEST(EXTRACT(DAY FROM ($2::timestamp - p.created_at))::int, 0)
 		FROM products p
+		LEFT JOIN categories c ON c.id = p.category_id
 		LEFT JOIN inventory i ON i.product_id = p.id
 		LEFT JOIN sales_agg s ON s.product_id = p.id
 		WHERE p.shop_id = $1 AND p.is_active = true
@@ -1063,7 +1064,7 @@ func (r *ProductRepo) GetSeasonalDemandHints(ctx context.Context, shopID string,
 		SELECT
 			p.id,
 			p.name,
-			COALESCE(p.category, ''),
+			COALESCE(c.name, ''),
 			COALESCE(SUM(bi.quantity) FILTER (
 				WHERE b.created_at >= ($2::date - INTERVAL '30 days')
 			), 0)::int AS current_qty,
@@ -1078,6 +1079,7 @@ func (r *ProductRepo) GetSeasonalDemandHints(ctx context.Context, shopID string,
 		FROM pos_bill_items bi
 		JOIN pos_bills b ON b.id = bi.bill_id
 		JOIN products p ON p.id = bi.product_id
+		LEFT JOIN categories c ON c.id = p.category_id
 		WHERE b.shop_id = $1
 		  AND p.shop_id = $1
 		  AND p.is_active = true
@@ -1089,7 +1091,7 @@ func (r *ProductRepo) GetSeasonalDemandHints(ctx context.Context, shopID string,
 				  AND b.created_at <= ($2::date - INTERVAL '1 year')
 			  )
 		  )
-		GROUP BY p.id, p.name, p.category
+		GROUP BY p.id, p.name, c.name
 		HAVING COALESCE(SUM(bi.quantity) FILTER (WHERE b.created_at >= ($2::date - INTERVAL '30 days')), 0) >= 5
 	`
 

@@ -782,7 +782,7 @@ func (r *MasterCatalogRepo) ListAllStoreProducts(ctx context.Context, search, sh
 			COALESCE(s.name, 'Unknown Shop') AS shop_name,
 			p.name,
 			COALESCE(p.sku, ''),
-			COALESCE(p.category, ''),
+			COALESCE(c.name, p.attributes->>'category_name', p.attributes->>'category', '') AS category_name,
 			p.price,
 			COALESCE(p.cost_price, 0),
 			COALESCE(i.quantity, 0),
@@ -790,6 +790,7 @@ func (r *MasterCatalogRepo) ListAllStoreProducts(ctx context.Context, search, sh
 			p.created_at
 		FROM products p
 		LEFT JOIN shops s ON s.id = p.shop_id
+		LEFT JOIN categories c ON c.id = p.category_id
 		LEFT JOIN inventory i ON i.product_id = p.id
 		%s
 		ORDER BY p.created_at DESC
@@ -837,7 +838,10 @@ func (r *MasterCatalogRepo) AdminUpdateStoreProduct(ctx context.Context, product
 	res, err := r.db.Exec(ctx, `
 		UPDATE products
 		SET name = $2,
-		    category = $3,
+		    attributes = CASE
+		        WHEN $3 <> '' THEN jsonb_set(COALESCE(attributes, '{}'::jsonb), '{category_name}', to_jsonb($3::text))
+		        ELSE attributes
+		    END,
 		    price = $4,
 		    cost_price = $5,
 		    is_active = $6,
