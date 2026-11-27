@@ -588,6 +588,7 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/shops", modc.ListAdminShops)                     // Admin
 		r.Patch("/shops/{id}/status", modc.UpdateAdminShopStatus) // Admin
 		r.Post("/shops/{id}/ban", modc.BanShop)                   // Admin
+		r.Post("/shops/batch", modc.BatchDeleteAdminShops)        // Admin
 		r.Delete("/shops/{id}", modc.DeleteAdminShop)             // Admin
 
 		r.Get("/reports", modc.ListReports)                      // Admin

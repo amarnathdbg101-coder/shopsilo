@@ -286,3 +286,25 @@ func (c *ModerationController) DeleteAdminShop(w http.ResponseWriter, r *http.Re
 
 	reuse.Success(w, "Shop deleted permanently", map[string]string{"deleted_id": shopID})
 }
+
+// BatchDeleteAdminShops permanently deletes multiple shops and their catalogs (Protected - Admin)
+func (c *ModerationController) BatchDeleteAdminShops(w http.ResponseWriter, r *http.Request) {
+	req, ok := reuse.DecodeJSON[struct {
+		IDs []string `json:"ids"`
+	}](w, r)
+	if !ok {
+		return
+	}
+	if len(req.IDs) == 0 {
+		reuse.Error(w, http.StatusBadRequest, "ids array is required")
+		return
+	}
+
+	count, err := c.service.BatchDeleteShops(r.Context(), req.IDs)
+	if err != nil {
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Selected shops deleted permanently", map[string]int64{"deleted_count": count})
+}

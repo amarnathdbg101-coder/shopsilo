@@ -213,3 +213,8 @@ func (s *ModerationService) UpdateShopStatus(ctx context.Context, shopID, newSta
 func (s *ModerationService) DeleteShop(ctx context.Context, shopID string) error {
 	return s.modRepo.DeleteShop(ctx, shopID)
 }
+
+// BatchDeleteShops permanently removes multiple shops and their products/inventory (Admin Only).
+func (s *ModerationService) BatchDeleteShops(ctx context.Context, shopIDs []string) (int64, error) {
+	return s.modRepo.BatchDeleteShops(ctx, shopIDs)
+}

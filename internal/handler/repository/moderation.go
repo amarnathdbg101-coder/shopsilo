@@ -491,3 +491,22 @@ func (r *ModerationRepo) DeleteShop(ctx context.Context, shopID string) error {
 		return nil
 	})
 }
+
+// BatchDeleteShops permanently removes multiple shops and their products/inventory inside a transaction.
+func (r *ModerationRepo) BatchDeleteShops(ctx context.Context, shopIDs []string) (int64, error) {
+	if len(shopIDs) == 0 {
+		return 0, nil
+	}
+	var deleted int64
+	err := utils.WithTx(ctx, r.db, func(tx pgx.Tx) error {
+		_, _ = tx.Exec(ctx, `DELETE FROM inventory WHERE product_id IN (SELECT id FROM products WHERE shop_id = ANY($1::uuid[]))`, shopIDs)
+		_, _ = tx.Exec(ctx, `DELETE FROM products WHERE shop_id = ANY($1::uuid[])`, shopIDs)
+		res, err := tx.Exec(ctx, `DELETE FROM shops WHERE id = ANY($1::uuid[])`, shopIDs)
+		if err != nil {
+			return err
+		}
+		deleted = res.RowsAffected()
+		return nil
+	})
+	return deleted, err
+}
