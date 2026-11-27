@@ -297,6 +297,7 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/analytics/profit", ac.GetMonthlyProfit)
 		r.Get("/analytics/matrix", ac.GetProductMatrix)
 		r.Get("/analytics/pulse", ac.GetDukaanPulse)
+		r.Get("/analytics/advisor", ac.GetBusinessAdvisor)
 
 		// Merchant Inventory & Reorder Operations
 		r.Get("/inventory/low-stock", invc.GetLowStockAlerts)
@@ -452,6 +453,7 @@ func RouteSetup(c *app.Container) chi.Router {
 
 		// Shop Analytics & Profit Intelligence
 		r.Get("/shops/me/analytics/pulse", ac.GetDukaanPulse)               // Shop
+		r.Get("/shops/me/analytics/advisor", ac.GetBusinessAdvisor)         // Shop
 		r.Get("/shops/me/analytics/profit", ac.GetMonthlyProfit)             // Shop
 		r.Get("/shops/me/analytics/products", ac.GetProductMatrix)           // Shop
 		r.Get("/shops/me/analytics/intelligence", ac.GetShopIntelligence)    // Shop

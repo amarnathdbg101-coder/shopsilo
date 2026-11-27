@@ -190,3 +190,48 @@ type DukaanPulseResponse struct {
 	Insights        []PulseInsight  `json:"insights"`
 	GeneratedAt     string          `json:"generated_at"`
 }
+
+// AdvisorItemDecision holds CA-style stock sizing, 4-quadrant classification, and plain recommendation.
+type AdvisorItemDecision struct {
+	ProductID        string  `json:"product_id"`
+	Name             string  `json:"name"`
+	Category         string  `json:"category"`
+	SKU              string  `json:"sku"`
+	CurrentStock     int     `json:"current_stock"`
+	AvgDailySales    float64 `json:"avg_daily_sales"`
+	DaysOfSupply     float64 `json:"days_of_supply"`
+	RecommendedStock int     `json:"recommended_stock"`
+	SuggestedOrder   int     `json:"suggested_order_qty"`
+	Price            float64 `json:"price"`
+	CostPrice        float64 `json:"cost_price"`
+	MarginPct        float64 `json:"margin_pct"`
+	Sold30D          int     `json:"sold_30d"`
+	Revenue30D       float64 `json:"revenue_30d"`
+	Profit30D        float64 `json:"profit_30d"`
+	BlockedCapital   float64 `json:"blocked_capital"`
+	Quadrant         string  `json:"quadrant"`     // "star" | "crowd_puller" | "hidden_gem" | "cash_trap"
+	StockAction      string  `json:"stock_action"` // "reorder_now" | "keep_stocked" | "overstocked" | "drop_and_clear"
+	WhySellingTag    string  `json:"why_selling_tag"`
+	Recommendation   string  `json:"recommendation"`
+}
+
+// CapitalSummary summarizes working capital locked in inventory and khata vs recoverable cash.
+type CapitalSummary struct {
+	InventoryCapital     float64 `json:"inventory_capital"`
+	OverstockCapital     float64 `json:"overstock_capital"`
+	DeadStockCapital     float64 `json:"dead_stock_capital"`
+	KhataReceivables     float64 `json:"khata_receivables"`
+	CashReleasePotential float64 `json:"cash_release_potential"`
+}
+
+// BusinessAdvisorResponse provides CA & Business Analyst decisions on what sells, why, how much to stock, and what to drop.
+type BusinessAdvisorResponse struct {
+	Capital          CapitalSummary        `json:"capital"`
+	Stars            []AdvisorItemDecision `json:"stars"`
+	CrowdPullers     []AdvisorItemDecision `json:"crowd_pullers"`
+	HiddenGems       []AdvisorItemDecision `json:"hidden_gems"`
+	CashTraps        []AdvisorItemDecision `json:"cash_traps"`
+	ReorderNow       []AdvisorItemDecision `json:"reorder_now"`
+	ExecutiveVerdict string                `json:"executive_verdict"`
+	GeneratedAt      string                `json:"generated_at"`
+}

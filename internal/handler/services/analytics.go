@@ -8,6 +8,7 @@ import (
 	"math"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/repository"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -373,6 +374,235 @@ func buildDukaanPulseResponse(
 
 func minInt(a, b int) int {
 	if a < b {
+		return a
+	}
+	return b
+}
+
+type advisorCacheEntry struct {
+	payload   *dto.BusinessAdvisorResponse
+	expiresAt time.Time
+}
+
+var (
+	advisorCacheMu sync.RWMutex
+	advisorCache   = make(map[string]advisorCacheEntry)
+)
+
+const advisorCacheTTL = 3 * time.Minute
+
+// GetBusinessAdvisor returns CA-grade product classification (Stars, Crowd Pullers, Hidden Gems, Cash Traps),
+// dynamic reorder quantities, and working-capital release opportunities.
+func (s *AnalyticsService) GetBusinessAdvisor(ctx context.Context, shopOwnerUserID string) (*dto.BusinessAdvisorResponse, error) {
+	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrShopNotFound) {
+			return nil, ErrShopNotFound
+		}
+		return nil, err
+	}
+
+	now := time.Now()
+	advisorCacheMu.RLock()
+	if entry, ok := advisorCache[shop.ID]; ok && now.Before(entry.expiresAt) {
+		advisorCacheMu.RUnlock()
+		return entry.payload, nil
+	}
+	advisorCacheMu.RUnlock()
+
+	raw, capital, err := s.productRepo.GetAdvisorProductStats(ctx, shop.ID, now)
+	if err != nil {
+		return nil, err
+	}
+
+	res := buildBusinessAdvisorResponse(raw, capital, now)
+
+	advisorCacheMu.Lock()
+	if len(advisorCache) > 500 {
+		for k, v := range advisorCache {
+			if now.After(v.expiresAt) {
+				delete(advisorCache, k)
+			}
+		}
+	}
+	advisorCache[shop.ID] = advisorCacheEntry{
+		payload:   res,
+		expiresAt: now.Add(advisorCacheTTL),
+	}
+	advisorCacheMu.Unlock()
+
+	return res, nil
+}
+
+func buildBusinessAdvisorResponse(raw []repository.AdvisorRawProduct, capital dto.CapitalSummary, now time.Time) *dto.BusinessAdvisorResponse {
+	var stars, pullers, gems, traps, reorderNow []dto.AdvisorItemDecision
+
+	for _, it := range raw {
+		avgDaily := math.Round((float64(it.Sold30D)/30.0)*100) / 100
+		revenue30 := float64(it.Sold30D) * it.Price
+		unitProfit := it.Price - it.CostPrice
+		if it.CostPrice <= 0 {
+			unitProfit = 0
+		}
+		profit30 := float64(it.Sold30D) * unitProfit
+
+		var marginPct float64
+		if it.Price > 0 && it.CostPrice > 0 {
+			marginPct = math.Round(((it.Price-it.CostPrice)/it.Price)*1000) / 10
+		}
+
+		daysOfSupply := 0.0
+		if avgDaily > 0 {
+			daysOfSupply = math.Round((float64(it.CurrentStock)/avgDaily)*10) / 10
+		} else if it.CurrentStock > 0 {
+			daysOfSupply = 999
+		}
+
+		blockedCap := math.Round((float64(it.CurrentStock)*it.CostPrice)*100) / 100
+		isDeadStock := it.Sold45D == 0 && it.AgeDays >= 45 && it.CurrentStock > 0
+		isHighVelocity := avgDaily >= 0.5
+		isHighMargin := marginPct >= 12.0
+
+		d := dto.AdvisorItemDecision{
+			ProductID:      it.ProductID,
+			Name:           it.Name,
+			Category:       it.Category,
+			SKU:            it.SKU,
+			CurrentStock:   it.CurrentStock,
+			AvgDailySales:  avgDaily,
+			DaysOfSupply:   daysOfSupply,
+			Price:          it.Price,
+			CostPrice:      it.CostPrice,
+			MarginPct:      marginPct,
+			Sold30D:        it.Sold30D,
+			Revenue30D:     math.Round(revenue30*100) / 100,
+			Profit30D:      math.Round(profit30*100) / 100,
+			BlockedCapital: blockedCap,
+		}
+
+		switch {
+		case isDeadStock || (!isHighVelocity && !isHighMargin && daysOfSupply > 45 && it.CurrentStock > 0):
+			d.Quadrant = "cash_trap"
+			d.StockAction = "drop_and_clear"
+			d.RecommendedStock = 0
+			d.SuggestedOrder = 0
+			if isDeadStock {
+				capital.DeadStockCapital += blockedCap
+				d.WhySellingTag = "45+ din se zero bikri — cash block hai"
+			} else {
+				capital.OverstockCapital += blockedCap
+				d.WhySellingTag = "Slow movement + kam margin"
+			}
+			d.Recommendation = fmt.Sprintf("15%% discount ya combo me clear karein aur dubara na rakhein (₹%.0f cash free hoga).", blockedCap)
+			traps = append(traps, d)
+
+		case isHighVelocity && isHighMargin:
+			d.Quadrant = "star"
+			d.RecommendedStock = maxInt(int(math.Ceil(avgDaily*10)), 3)
+			if it.CoBillCount >= 5 {
+				d.WhySellingTag = fmt.Sprintf("Fast mover + %.1f%% margin + %d combo bills", marginPct, it.CoBillCount)
+			} else {
+				d.WhySellingTag = fmt.Sprintf("High profit star (%.1f%% margin, %.1f/day)", marginPct, avgDaily)
+			}
+			applyStockSizing(&d, &capital)
+			stars = append(stars, d)
+
+		case isHighVelocity && !isHighMargin:
+			d.Quadrant = "crowd_puller"
+			d.RecommendedStock = maxInt(int(math.Ceil(avgDaily*10)), 5)
+			if it.CoBillCount >= 3 {
+				d.WhySellingTag = fmt.Sprintf("Traffic anchor: %d multi-item bills me saath bika", it.CoBillCount)
+			} else {
+				d.WhySellingTag = fmt.Sprintf("High-volume daily staple (%.1f/day)", avgDaily)
+			}
+			applyStockSizing(&d, &capital)
+			pullers = append(pullers, d)
+
+		default:
+			d.Quadrant = "hidden_gem"
+			d.RecommendedStock = maxInt(int(math.Ceil(avgDaily*7)), 2)
+			if it.Sold30D == 0 {
+				d.WhySellingTag = "Naya/niche item — visibility badhayein"
+			} else {
+				d.WhySellingTag = fmt.Sprintf("Achha margin (%.1f%%), kam volume — upsell karein", marginPct)
+			}
+			applyStockSizing(&d, &capital)
+			gems = append(gems, d)
+		}
+
+		if d.StockAction == "reorder_now" {
+			reorderNow = append(reorderNow, d)
+		}
+	}
+
+	sort.Slice(stars, func(i, j int) bool { return stars[i].Profit30D > stars[j].Profit30D })
+	sort.Slice(pullers, func(i, j int) bool { return pullers[i].Sold30D > pullers[j].Sold30D })
+	sort.Slice(gems, func(i, j int) bool { return gems[i].MarginPct > gems[j].MarginPct })
+	sort.Slice(traps, func(i, j int) bool { return traps[i].BlockedCapital > traps[j].BlockedCapital })
+	sort.Slice(reorderNow, func(i, j int) bool { return reorderNow[i].DaysOfSupply < reorderNow[j].DaysOfSupply })
+
+	stars = capAdvisorSlice(stars, 10)
+	pullers = capAdvisorSlice(pullers, 10)
+	gems = capAdvisorSlice(gems, 10)
+	traps = capAdvisorSlice(traps, 10)
+	reorderNow = capAdvisorSlice(reorderNow, 10)
+
+	capital.InventoryCapital = math.Round(capital.InventoryCapital*100) / 100
+	capital.OverstockCapital = math.Round(capital.OverstockCapital*100) / 100
+	capital.DeadStockCapital = math.Round(capital.DeadStockCapital*100) / 100
+	capital.KhataReceivables = math.Round(capital.KhataReceivables*100) / 100
+	capital.CashReleasePotential = math.Round((capital.DeadStockCapital+capital.OverstockCapital+(capital.KhataReceivables*0.5))*100) / 100
+
+	verdict := fmt.Sprintf("Total ₹%.0f stock me aur ₹%.0f udhar me laga hai.", capital.InventoryCapital, capital.KhataReceivables)
+	if capital.CashReleasePotential > 0 {
+		verdict += fmt.Sprintf(" Dead/overstock clearance aur udhar recovery se ₹%.0f cash free ho sakta hai.", capital.CashReleasePotential)
+	}
+	if len(reorderNow) > 0 {
+		verdict += fmt.Sprintf(" %d fast-moving items turant reorder karne hain.", len(reorderNow))
+	}
+
+	return &dto.BusinessAdvisorResponse{
+		Capital:          capital,
+		Stars:            stars,
+		CrowdPullers:     pullers,
+		HiddenGems:       gems,
+		CashTraps:        traps,
+		ReorderNow:       reorderNow,
+		ExecutiveVerdict: verdict,
+		GeneratedAt:      now.Format(time.RFC3339),
+	}
+}
+
+func applyStockSizing(d *dto.AdvisorItemDecision, capital *dto.CapitalSummary) {
+	if d.AvgDailySales >= 0.3 && d.DaysOfSupply <= 4.0 {
+		d.StockAction = "reorder_now"
+		d.SuggestedOrder = maxInt(d.RecommendedStock-d.CurrentStock, 1)
+		d.Recommendation = fmt.Sprintf("Abhi %d pcs mangwayein (sirf %.1f din ka stock bacha hai).", d.SuggestedOrder, d.DaysOfSupply)
+		return
+	}
+	if d.DaysOfSupply > 45 && d.CurrentStock > d.RecommendedStock && d.RecommendedStock > 0 {
+		d.StockAction = "overstocked"
+		excessCap := float64(d.CurrentStock-d.RecommendedStock) * d.CostPrice
+		capital.OverstockCapital += excessCap
+		d.Recommendation = fmt.Sprintf("Abhi order na karein — %.0f din ka stock already hai (ideal: %d pcs).", d.DaysOfSupply, d.RecommendedStock)
+		return
+	}
+	d.StockAction = "keep_stocked"
+	d.Recommendation = fmt.Sprintf("Stock sahi hai (ideal: %d pcs, ~10 din cover).", d.RecommendedStock)
+}
+
+func capAdvisorSlice(items []dto.AdvisorItemDecision, limit int) []dto.AdvisorItemDecision {
+	if items == nil {
+		return []dto.AdvisorItemDecision{}
+	}
+	if len(items) > limit {
+		return items[:limit]
+	}
+	return items
+}
+
+func maxInt(a, b int) int {
+	if a > b {
 		return a
 	}
 	return b

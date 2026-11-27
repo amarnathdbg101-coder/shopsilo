@@ -168,3 +168,23 @@ func (c *AnalyticsController) GetDukaanPulse(w http.ResponseWriter, r *http.Requ
 
 	reuse.Success(w, "Dukaan pulse retrieved successfully", res)
 }
+
+// GetBusinessAdvisor returns CA-grade product decisions (what sells, why, how much to stock, and what to drop).
+func (c *AnalyticsController) GetBusinessAdvisor(w http.ResponseWriter, r *http.Request) {
+	claims, ok := middleware.RequireUserClaims(w, r)
+	if !ok {
+		return
+	}
+
+	res, err := c.service.GetBusinessAdvisor(r.Context(), claims.UserID)
+	if err != nil {
+		if errors.Is(err, services.ErrShopNotFound) {
+			reuse.Error(w, http.StatusNotFound, "you have not registered a shop yet")
+			return
+		}
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Business advisor report retrieved successfully", res)
+}

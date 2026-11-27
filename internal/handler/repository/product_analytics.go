@@ -958,4 +958,101 @@ func (r *ProductRepo) GetDukaanPulseMetrics(ctx context.Context, shopID string, 
 	return headline, trend, ops, nil
 }
 
+// AdvisorRawProduct holds per-product sales velocity, basket co-occurrence, and stock metrics from PostgreSQL.
+type AdvisorRawProduct struct {
+	ProductID    string
+	Name         string
+	Category     string
+	SKU          string
+	Price        float64
+	CostPrice    float64
+	CurrentStock int
+	Sold30D      int
+	Sold45D      int
+	CoBillCount  int
+	AgeDays      int
+}
+
+// GetAdvisorProductStats aggregates 30-day & 45-day product velocity, multi-item basket anchor counts,
+// inventory capital, and khata receivables in PostgreSQL.
+func (r *ProductRepo) GetAdvisorProductStats(ctx context.Context, shopID string, now time.Time) ([]AdvisorRawProduct, dto.CapitalSummary, error) {
+	refDate := now.Format("2006-01-02")
+
+	query := `
+		WITH bill_item_counts AS (
+			SELECT bill_id, COUNT(*) AS line_count
+			FROM pos_bill_items
+			GROUP BY bill_id
+		),
+		sales_agg AS (
+			SELECT
+				bi.product_id,
+				COALESCE(SUM(CASE WHEN b.created_at >= ($2::date - INTERVAL '30 days') THEN bi.quantity ELSE 0 END), 0) AS sold_30d,
+				COALESCE(SUM(bi.quantity), 0) AS sold_45d,
+				COUNT(DISTINCT CASE WHEN b.created_at >= ($2::date - INTERVAL '30 days') AND bic.line_count > 1 THEN b.id END) AS co_bills
+			FROM pos_bill_items bi
+			JOIN pos_bills b ON b.id = bi.bill_id
+			LEFT JOIN bill_item_counts bic ON bic.bill_id = b.id
+			WHERE b.shop_id = $1
+			  AND COALESCE(b.status, '') <> 'cancelled'
+			  AND b.created_at >= ($2::date - INTERVAL '45 days')
+			GROUP BY bi.product_id
+		)
+		SELECT
+			p.id,
+			p.name,
+			COALESCE(p.category, ''),
+			COALESCE(p.sku, ''),
+			p.price,
+			COALESCE(p.cost_price, 0),
+			GREATEST(COALESCE(i.quantity, 0), 0),
+			COALESCE(s.sold_30d, 0),
+			COALESCE(s.sold_45d, 0),
+			COALESCE(s.co_bills, 0),
+			GREATEST(EXTRACT(DAY FROM ($2::timestamp - p.created_at))::int, 0)
+		FROM products p
+		LEFT JOIN inventory i ON i.product_id = p.id
+		LEFT JOIN sales_agg s ON s.product_id = p.id
+		WHERE p.shop_id = $1 AND p.is_active = true
+	`
+
+	rows, err := r.db.Query(ctx, query, shopID, refDate)
+	if err != nil {
+		r.logger.Error("failed to query advisor product stats", zap.Error(err), zap.String("shop_id", shopID))
+		return nil, dto.CapitalSummary{}, err
+	}
+	defer rows.Close()
+
+	var items []AdvisorRawProduct
+	var capital dto.CapitalSummary
+	for rows.Next() {
+		var it AdvisorRawProduct
+		if err := rows.Scan(
+			&it.ProductID,
+			&it.Name,
+			&it.Category,
+			&it.SKU,
+			&it.Price,
+			&it.CostPrice,
+			&it.CurrentStock,
+			&it.Sold30D,
+			&it.Sold45D,
+			&it.CoBillCount,
+			&it.AgeDays,
+		); err != nil {
+			return nil, dto.CapitalSummary{}, err
+		}
+		capital.InventoryCapital += float64(it.CurrentStock) * it.CostPrice
+		items = append(items, it)
+	}
+
+	_ = r.db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(CASE WHEN current_balance > 0 THEN current_balance ELSE 0 END), 0)
+		FROM customer_khata
+		WHERE shop_id = $1
+	`, shopID).Scan(&capital.KhataReceivables)
+
+	return items, capital, nil
+}
+
 // BulkImportProducts executes a high-speed batch insert and upsert transaction for importing lakhs of products efficiently and reliably.
