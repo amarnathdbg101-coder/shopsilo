@@ -738,3 +738,133 @@ func (r *MasterCatalogRepo) RestoreProduct(ctx context.Context, productID string
 	}
 	return nil
 }
+
+// ListAllStoreProducts lists all non-deleted products across all shops for admin governance.
+func (r *MasterCatalogRepo) ListAllStoreProducts(ctx context.Context, search, shopID, status string, limit, offset int) ([]map[string]interface{}, int64, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	where := `WHERE p.deleted_at IS NULL`
+	var args []interface{}
+	idx := 1
+
+	if strings.TrimSpace(shopID) != "" {
+		where += fmt.Sprintf(` AND p.shop_id = $%d`, idx)
+		args = append(args, strings.TrimSpace(shopID))
+		idx++
+	}
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "active":
+		where += ` AND p.is_active = true`
+	case "inactive":
+		where += ` AND p.is_active = false`
+	}
+	if strings.TrimSpace(search) != "" {
+		where += fmt.Sprintf(` AND (p.name ILIKE $%d OR COALESCE(p.sku, '') ILIKE $%d OR COALESCE(s.name, '') ILIKE $%d)`, idx, idx, idx)
+		args = append(args, "%"+strings.TrimSpace(search)+"%")
+		idx++
+	}
+
+	var total int64
+	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM products p LEFT JOIN shops s ON s.id = p.shop_id %s`, where)
+	if err := r.db.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	listQuery := fmt.Sprintf(`
+		SELECT
+			p.id,
+			p.shop_id,
+			COALESCE(s.name, 'Unknown Shop') AS shop_name,
+			p.name,
+			COALESCE(p.sku, ''),
+			COALESCE(p.category, ''),
+			p.price,
+			COALESCE(p.cost_price, 0),
+			COALESCE(i.quantity, 0),
+			p.is_active,
+			p.created_at
+		FROM products p
+		LEFT JOIN shops s ON s.id = p.shop_id
+		LEFT JOIN inventory i ON i.product_id = p.id
+		%s
+		ORDER BY p.created_at DESC
+		LIMIT $%d OFFSET $%d
+	`, where, idx, idx+1)
+	args = append(args, limit, offset)
+
+	rows, err := r.db.Query(ctx, listQuery, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := make([]map[string]interface{}, 0)
+	for rows.Next() {
+		var (
+			id, sID, shopName, name, sku, category string
+			price, costPrice                       float64
+			qty                                    int
+			isActive                               bool
+			createdAt                              time.Time
+		)
+		if err := rows.Scan(&id, &sID, &shopName, &name, &sku, &category, &price, &costPrice, &qty, &isActive, &createdAt); err != nil {
+			return nil, 0, err
+		}
+		items = append(items, map[string]interface{}{
+			"id":         id,
+			"shop_id":    sID,
+			"shop_name":  shopName,
+			"name":       name,
+			"sku":        sku,
+			"category":   category,
+			"price":      price,
+			"cost_price": costPrice,
+			"stock":      qty,
+			"is_active":  isActive,
+			"created_at": createdAt,
+		})
+	}
+	return items, total, nil
+}
+
+// AdminUpdateStoreProduct updates core fields of any store product (Admin Only).
+func (r *MasterCatalogRepo) AdminUpdateStoreProduct(ctx context.Context, productID, name, category string, price, costPrice float64, isActive bool) error {
+	res, err := r.db.Exec(ctx, `
+		UPDATE products
+		SET name = $2,
+		    category = $3,
+		    price = $4,
+		    cost_price = $5,
+		    is_active = $6,
+		    updated_at = NOW()
+		WHERE id = $1 AND deleted_at IS NULL
+	`, productID, name, category, price, costPrice, isActive)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return errors.New("product not found")
+	}
+	return nil
+}
+
+// AdminToggleStoreProductStatus activates or deactivates any store product (Admin Only).
+func (r *MasterCatalogRepo) AdminToggleStoreProductStatus(ctx context.Context, productID string, isActive bool) error {
+	res, err := r.db.Exec(ctx, `
+		UPDATE products
+		SET is_active = $2, updated_at = NOW()
+		WHERE id = $1 AND deleted_at IS NULL
+	`, productID, isActive)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return errors.New("product not found")
+	}
+	return nil
+}

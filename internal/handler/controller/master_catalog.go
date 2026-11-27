@@ -312,3 +312,81 @@ func (c *MasterCatalogController) AdminHardDeleteAllSoftDeletedProducts(w http.R
 	}
 	reuse.Success(w, "All soft-deleted products permanently deleted", map[string]int64{"deleted_count": count})
 }
+
+type adminUpdateProductReq struct {
+	Name      string  `json:"name"`
+	Category  string  `json:"category"`
+	Price     float64 `json:"price"`
+	CostPrice float64 `json:"cost_price"`
+	IsActive  bool    `json:"is_active"`
+}
+
+type adminToggleProductStatusReq struct {
+	IsActive bool `json:"is_active"`
+}
+
+// AdminListAllProducts handles GET /admin/products
+func (c *MasterCatalogController) AdminListAllProducts(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	search := q.Get("q")
+	shopID := q.Get("shop_id")
+	status := q.Get("status")
+	limit := 50
+	if l, err := strconv.Atoi(q.Get("limit")); err == nil && l > 0 && l <= 100 {
+		limit = l
+	}
+	offset := 0
+	if o, err := strconv.Atoi(q.Get("offset")); err == nil && o >= 0 {
+		offset = o
+	}
+
+	items, total, err := c.catalogService.ListAllStoreProducts(r.Context(), search, shopID, status, limit, offset)
+	if err != nil {
+		c.logger.Error("admin list all products failed", zap.Error(err))
+		reuse.Error(w, http.StatusInternalServerError, "failed to list products: "+err.Error())
+		return
+	}
+
+	reuse.Success(w, "All store products retrieved", map[string]interface{}{
+		"products": items,
+		"total":    total,
+		"limit":    limit,
+		"offset":   offset,
+	})
+}
+
+// AdminUpdateProduct handles PUT /admin/products/{id}
+func (c *MasterCatalogController) AdminUpdateProduct(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if strings.TrimSpace(id) == "" {
+		reuse.Error(w, http.StatusBadRequest, "product id is required")
+		return
+	}
+	req, ok := reuse.DecodeJSON[adminUpdateProductReq](w, r)
+	if !ok {
+		return
+	}
+	if err := c.catalogService.AdminUpdateStoreProduct(r.Context(), id, req.Name, req.Category, req.Price, req.CostPrice, req.IsActive); err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	reuse.Success(w, "Product updated by admin", map[string]string{"product_id": id})
+}
+
+// AdminToggleProductStatus handles PATCH /admin/products/{id}/status
+func (c *MasterCatalogController) AdminToggleProductStatus(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if strings.TrimSpace(id) == "" {
+		reuse.Error(w, http.StatusBadRequest, "product id is required")
+		return
+	}
+	req, ok := reuse.DecodeJSON[adminToggleProductStatusReq](w, r)
+	if !ok {
+		return
+	}
+	if err := c.catalogService.AdminToggleStoreProductStatus(r.Context(), id, req.IsActive); err != nil {
+		reuse.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	reuse.Success(w, "Product status updated", map[string]interface{}{"product_id": id, "is_active": req.IsActive})
+}

@@ -588,6 +588,7 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/shops", modc.ListAdminShops)                     // Admin
 		r.Patch("/shops/{id}/status", modc.UpdateAdminShopStatus) // Admin
 		r.Post("/shops/{id}/ban", modc.BanShop)                   // Admin
+		r.Delete("/shops/{id}", modc.DeleteAdminShop)             // Admin
 
 		r.Get("/reports", modc.ListReports)                      // Admin
 		r.Post("/reports/{id}/resolve", modc.ResolveReport)      // Admin
@@ -622,7 +623,10 @@ func RouteSetup(c *app.Container) chi.Router {
 		r.Get("/catalog/stats", mcc.GetMasterStats)                 // Admin
 		r.Post("/catalog/bulk-seed", mcc.BulkSeed)                  // Admin
 
-		// Product Soft-Delete & Hard-Delete Governance
+		// Product Soft-Delete, Governance & Full Admin Write
+		r.Get("/products", mcc.AdminListAllProducts)                 // Admin
+		r.Put("/products/{id}", mcc.AdminUpdateProduct)              // Admin
+		r.Patch("/products/{id}/status", mcc.AdminToggleProductStatus) // Admin
 		r.Get("/products/soft-deleted", mcc.ListSoftDeletedProducts) // Admin
 		r.Post("/products/{id}/restore", mcc.RestoreProduct)         // Admin
 		r.Delete("/products/{id}", mcc.AdminHardDeleteProduct)       // Admin

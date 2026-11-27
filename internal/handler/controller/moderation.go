@@ -270,3 +270,19 @@ func (c *ModerationController) UpdateAdminShopStatus(w http.ResponseWriter, r *h
 		"status":  input.Status,
 	})
 }
+
+// DeleteAdminShop permanently deletes a shop and its catalog (Protected - Admin)
+func (c *ModerationController) DeleteAdminShop(w http.ResponseWriter, r *http.Request) {
+	shopID := chi.URLParam(r, "id")
+	if shopID == "" {
+		reuse.Error(w, http.StatusBadRequest, "shop id is required")
+		return
+	}
+
+	if err := c.service.DeleteShop(r.Context(), shopID); err != nil {
+		reuse.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	reuse.Success(w, "Shop deleted permanently", map[string]string{"deleted_id": shopID})
+}

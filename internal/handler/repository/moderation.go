@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
+	"shopMe/internal/utils"
 	"strings"
 	"time"
 
@@ -473,4 +474,20 @@ func (r *ModerationRepo) ListShopsForAdmin(ctx context.Context, status, search s
 	}
 
 	return shops, totalCount, nil
+}
+
+// DeleteShop permanently removes a shop along with its products and inventory rows inside a transaction.
+func (r *ModerationRepo) DeleteShop(ctx context.Context, shopID string) error {
+	return utils.WithTx(ctx, r.db, func(tx pgx.Tx) error {
+		_, _ = tx.Exec(ctx, `DELETE FROM inventory WHERE product_id IN (SELECT id FROM products WHERE shop_id = $1)`, shopID)
+		_, _ = tx.Exec(ctx, `DELETE FROM products WHERE shop_id = $1`, shopID)
+		res, err := tx.Exec(ctx, `DELETE FROM shops WHERE id = $1`, shopID)
+		if err != nil {
+			return err
+		}
+		if res.RowsAffected() == 0 {
+			return errors.New("shop not found")
+		}
+		return nil
+	})
 }

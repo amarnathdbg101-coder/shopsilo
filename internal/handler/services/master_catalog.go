@@ -324,3 +324,32 @@ func (s *MasterCatalogService) BatchHardDeleteProducts(ctx context.Context, ids 
 func (s *MasterCatalogService) HardDeleteAllSoftDeletedProducts(ctx context.Context) (int64, error) {
 	return s.repo.HardDeleteAllSoftDeletedProducts(ctx)
 }
+
+// ListAllStoreProducts lists all store products across shops with filters (Admin Only).
+func (s *MasterCatalogService) ListAllStoreProducts(ctx context.Context, search, shopID, status string, limit, offset int) ([]map[string]interface{}, int64, error) {
+	return s.repo.ListAllStoreProducts(ctx, search, shopID, status, limit, offset)
+}
+
+// AdminUpdateStoreProduct updates any store product's details (Admin Only).
+func (s *MasterCatalogService) AdminUpdateStoreProduct(ctx context.Context, productID, name, category string, price, costPrice float64, isActive bool) error {
+	cleanID := strings.TrimSpace(productID)
+	if cleanID == "" {
+		return errors.New("product id is required")
+	}
+	if strings.TrimSpace(name) == "" {
+		return errors.New("product name is required")
+	}
+	if price < 0 || costPrice < 0 {
+		return errors.New("price and cost_price must be non-negative")
+	}
+	return s.repo.AdminUpdateStoreProduct(ctx, cleanID, strings.TrimSpace(name), strings.TrimSpace(category), price, costPrice, isActive)
+}
+
+// AdminToggleStoreProductStatus toggles active/inactive status of any store product (Admin Only).
+func (s *MasterCatalogService) AdminToggleStoreProductStatus(ctx context.Context, productID string, isActive bool) error {
+	cleanID := strings.TrimSpace(productID)
+	if cleanID == "" {
+		return errors.New("product id is required")
+	}
+	return s.repo.AdminToggleStoreProductStatus(ctx, cleanID, isActive)
+}

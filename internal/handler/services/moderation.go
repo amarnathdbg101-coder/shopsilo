@@ -208,3 +208,8 @@ func (s *ModerationService) ListShopsForAdmin(ctx context.Context, status, searc
 func (s *ModerationService) UpdateShopStatus(ctx context.Context, shopID, newStatus, reason, adminID string) error {
 	return s.modRepo.SetShopStatus(ctx, shopID, newStatus, reason)
 }
+
+// DeleteShop permanently removes a shop and its products/inventory (Admin Only).
+func (s *ModerationService) DeleteShop(ctx context.Context, shopID string) error {
+	return s.modRepo.DeleteShop(ctx, shopID)
+}
