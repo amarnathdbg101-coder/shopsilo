@@ -34,6 +34,12 @@ func ConnectDB(database string) (*pgxpool.Pool, error) {
 		config.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
 	}
 
+	// Force every DB session to UTC so TIMESTAMP/TIMESTAMPTZ values and NOW() never drift by local OS timezone.
+	if config.ConnConfig.RuntimeParams == nil {
+		config.ConnConfig.RuntimeParams = make(map[string]string)
+	}
+	config.ConnConfig.RuntimeParams["timezone"] = "UTC"
+
 	// Production pool tuning for low latency & concurrency (Tuned for 1GB RAM VPS)
 	config.MaxConns = 18
 	config.MinConns = 2

@@ -76,14 +76,15 @@ func (r *POSRepo) CreateSaleWithTx(ctx context.Context, tx pgx.Tx, bill *model.P
 		}
 	}
 
-	// 2. Insert Bill header
+	// 2. Insert Bill header (explicit UTC timestamp so TIMESTAMP/TIMESTAMPTZ never double-shifts)
+	nowUTC := time.Now().UTC()
 	billQuery := `
 		INSERT INTO pos_bills (
 			shop_id, bill_number, customer_phone, customer_user_id,
 			subtotal, discount_amount, total_amount, total_cost, payment_method,
 			cash_amount, online_amount, khata_amount, created_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING id, created_at
 	`
 	err := tx.QueryRow(
@@ -101,6 +102,7 @@ func (r *POSRepo) CreateSaleWithTx(ctx context.Context, tx pgx.Tx, bill *model.P
 		bill.CashAmount,
 		bill.OnlineAmount,
 		bill.KhataAmount,
+		nowUTC,
 	).Scan(&bill.ID, &bill.CreatedAt)
 	if err != nil {
 		r.logger.Error("failed to create pos bill in tx", zap.Error(err))
@@ -484,7 +486,7 @@ func (r *POSRepo) GetDailyCloseReport(ctx context.Context, shopID string, target
 			COALESCE(bi.unit_price, 0),
 			COALESCE(bi.total_price, 0),
 			COALESCE(b.payment_method, 'cash'),
-			TO_CHAR(b.created_at, 'HH24:MI')
+			b.created_at
 		FROM pos_bill_items bi
 		JOIN pos_bills b ON bi.bill_id = b.id
 		WHERE b.shop_id = $1 AND b.created_at >= $2 AND b.created_at < $3
@@ -496,7 +498,9 @@ func (r *POSRepo) GetDailyCloseReport(ctx context.Context, shopID string, target
 		var soldItems []dto.DailySoldProductItem
 		for iRows.Next() {
 			var it dto.DailySoldProductItem
-			if scanErr := iRows.Scan(&it.ProductName, &it.ProductSKU, &it.Quantity, &it.UnitPrice, &it.TotalPrice, &it.PaymentMode, &it.SoldAt); scanErr == nil {
+			var soldTime time.Time
+			if scanErr := iRows.Scan(&it.ProductName, &it.ProductSKU, &it.Quantity, &it.UnitPrice, &it.TotalPrice, &it.PaymentMode, &soldTime); scanErr == nil {
+				it.SoldAt = utils.InUserZone(ctx, soldTime).Format("15:04")
 				soldItems = append(soldItems, it)
 			}
 		}
@@ -598,7 +602,7 @@ func (r *POSRepo) GetRolling10DayCloseReport(ctx context.Context, shopID string)
 			COALESCE(bi.unit_price, 0),
 			COALESCE(bi.total_price, 0),
 			COALESCE(b.payment_method, 'cash'),
-			TO_CHAR(b.created_at, 'DD Mon HH24:MI')
+			b.created_at
 		FROM pos_bill_items bi
 		JOIN pos_bills b ON bi.bill_id = b.id
 		WHERE b.shop_id = $1 AND b.created_at >= NOW() - INTERVAL '10 days'
@@ -610,7 +614,9 @@ func (r *POSRepo) GetRolling10DayCloseReport(ctx context.Context, shopID string)
 		var soldItems []dto.DailySoldProductItem
 		for iRows.Next() {
 			var it dto.DailySoldProductItem
-			if scanErr := iRows.Scan(&it.ProductName, &it.ProductSKU, &it.Quantity, &it.UnitPrice, &it.TotalPrice, &it.PaymentMode, &it.SoldAt); scanErr == nil {
+			var soldTime time.Time
+			if scanErr := iRows.Scan(&it.ProductName, &it.ProductSKU, &it.Quantity, &it.UnitPrice, &it.TotalPrice, &it.PaymentMode, &soldTime); scanErr == nil {
+				it.SoldAt = utils.InUserZone(ctx, soldTime).Format("02 Jan 15:04")
 				soldItems = append(soldItems, it)
 			}
 		}
