@@ -204,7 +204,7 @@ func RenderEODReportPDF(
 		writeCell(0, curY, pageW, 13, phoneStr, "noto-reg", 8.5, cMuted, gopdf.Center | gopdf.Middle)
 		curY += 13.0
 	}
-	dateStr := fmt.Sprintf("Report Window: %s  |  Date Generated: %s", formattedDate, time.Now().Format("02-Jan-2006 15:04"))
+	dateStr := fmt.Sprintf("Report Window: %s  |  Date Generated: %s", formattedDate, utils.IndianNow().Format("02-Jan-2006 15:04"))
 	writeCell(0, curY, pageW, 13, dateStr, "noto-reg", 8.5, cMuted, gopdf.Center | gopdf.Middle)
 	curY += 16.0
 

@@ -8,6 +8,7 @@ import (
 	"math"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/repository"
+	"shopMe/internal/utils"
 	"sort"
 	"strings"
 	"sync"
@@ -38,11 +39,12 @@ func (s *AnalyticsService) GetMonthlyProfit(ctx context.Context, shopOwnerUserID
 		return nil, err
 	}
 
+	now := utils.NowInContext(ctx)
 	if year <= 0 {
-		year = time.Now().Year()
+		year = now.Year()
 	}
 	if month <= 0 || month > 12 {
-		month = int(time.Now().Month())
+		month = int(now.Month())
 	}
 
 	var (
@@ -148,7 +150,7 @@ func (s *AnalyticsService) GetDukaanPulse(ctx context.Context, shopOwnerUserID s
 		return nil, err
 	}
 
-	now := time.Now()
+	now := utils.NowInContext(ctx)
 	pulseCacheMu.RLock()
 	if entry, ok := pulseCache[shop.ID]; ok && now.Before(entry.expiresAt) {
 		pulseCacheMu.RUnlock()
@@ -427,7 +429,7 @@ func (s *AnalyticsService) GetBusinessAdvisor(ctx context.Context, shopOwnerUser
 		return nil, err
 	}
 
-	now := time.Now()
+	now := utils.NowInContext(ctx)
 	advisorCacheMu.RLock()
 	if entry, ok := advisorCache[shop.ID]; ok && now.Before(entry.expiresAt) {
 		advisorCacheMu.RUnlock()
@@ -776,7 +778,7 @@ func (s *AnalyticsService) GetEveningDigest(ctx context.Context, shopOwnerUserID
 		return nil, err
 	}
 
-	now := time.Now()
+	now := utils.NowInContext(ctx)
 	var (
 		bills      int
 		sales      float64

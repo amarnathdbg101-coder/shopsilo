@@ -4,7 +4,6 @@ package utils
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/signintech/gopdf"
 	"shopMe/internal/handler/dto"
@@ -82,7 +81,7 @@ func GenerateNativeWholesaleReorderPDF(shop *model.Shop, items []*dto.LowStockPr
 		_ = pdf.CellWithOption(&gopdf.Rect{W: pageW, H: 13}, storePhone, gopdf.CellOption{Align: gopdf.Center | gopdf.Middle})
 		curY += 13.0
 	}
-	dateStr := "Date Generated: " + time.Now().Format("02-Jan-2006 15:04")
+	dateStr := "Date Generated: " + IndianNow().Format("02-Jan-2006 15:04")
 	pdf.SetXY(0, curY)
 	_ = pdf.CellWithOption(&gopdf.Rect{W: pageW, H: 13}, dateStr, gopdf.CellOption{Align: gopdf.Center | gopdf.Middle})
 	curY += 18.0
@@ -297,7 +296,7 @@ func GenerateNativeCustomProcurementPDF(shop *model.Shop, title string, items []
 		_ = pdf.CellWithOption(&gopdf.Rect{W: pageW, H: 13}, storePhone, gopdf.CellOption{Align: gopdf.Center | gopdf.Middle})
 		curY += 13.0
 	}
-	dateStr := "Date Generated: " + time.Now().Format("02-Jan-2006 15:04")
+	dateStr := "Date Generated: " + IndianNow().Format("02-Jan-2006 15:04")
 	pdf.SetXY(0, curY)
 	_ = pdf.CellWithOption(&gopdf.Rect{W: pageW, H: 13}, dateStr, gopdf.CellOption{Align: gopdf.Center | gopdf.Middle})
 	curY += 18.0

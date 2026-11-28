@@ -6,7 +6,6 @@ import (
 	_ "embed"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/signintech/gopdf"
 	"shopMe/internal/handler/model"
@@ -242,9 +241,9 @@ func GenerateNativeBillPDF(bill *model.POSBill, opts NativePDFOptions) ([]byte, 
 	pdf.SetTextColor(cDark[0], cDark[1], cDark[2])
 	_ = pdf.SetFont("noto-bold", "", 8.5)
 	pdf.SetXY(contentLeft+8, curY+5)
-	createdStr := bill.CreatedAt.Format("02-Jan-2006 15:04")
+	createdStr := bill.CreatedAt.In(IndianLocation).Format("02-Jan-2006 15:04")
 	if bill.CreatedAt.IsZero() {
-		createdStr = time.Now().Format("02-Jan-2006 15:04")
+		createdStr = IndianNow().Format("02-Jan-2006 15:04")
 	}
 	_ = pdf.Cell(&gopdf.Rect{W: 180, H: 14}, fmt.Sprintf("Bill #%s | %s", bill.BillNumber, createdStr))
 
@@ -542,9 +541,9 @@ func GenerateNativeThermalBillPDF(bill *model.POSBill) ([]byte, error) {
 	_ = pdf.CellWithOption(&gopdf.Rect{W: 206, H: 10}, "RETAIL TAX INVOICE #"+bill.BillNumber, gopdf.CellOption{Align: gopdf.Center})
 
 	pdf.SetXY(10, 36)
-	dateStr := bill.CreatedAt.Format("02/01/2006 03:04 PM")
+	dateStr := bill.CreatedAt.In(IndianLocation).Format("02/01/2006 03:04 PM")
 	if bill.CreatedAt.IsZero() {
-		dateStr = time.Now().Format("02/01/2006 03:04 PM")
+		dateStr = IndianNow().Format("02/01/2006 03:04 PM")
 	}
 	_ = pdf.CellWithOption(&gopdf.Rect{W: 206, H: 10}, dateStr, gopdf.CellOption{Align: gopdf.Center})
 

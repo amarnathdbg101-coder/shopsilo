@@ -7,6 +7,7 @@ import (
 	"shopMe/internal/handler/services"
 	"shopMe/internal/middleware"
 	"shopMe/internal/reuse"
+	"shopMe/internal/utils"
 	"strconv"
 	"time"
 )
@@ -76,10 +77,11 @@ func (c *AnalyticsController) GetProductMatrix(w http.ResponseWriter, r *http.Re
 
 func parseDateRangeOrMonth(r *http.Request) (time.Time, time.Time) {
 	q := r.URL.Query()
-	now := time.Now()
+	now := utils.NowInContext(r.Context())
+	loc := utils.LocationFromContext(r.Context())
 	if fromStr, toStr := q.Get("from"), q.Get("to"); fromStr != "" && toStr != "" {
-		if f, err1 := time.Parse("2006-01-02", fromStr); err1 == nil {
-			if t, err2 := time.Parse("2006-01-02", toStr); err2 == nil && !t.Before(f) {
+		if f, err1 := time.ParseInLocation("2006-01-02", fromStr, loc); err1 == nil {
+			if t, err2 := time.ParseInLocation("2006-01-02", toStr, loc); err2 == nil && !t.Before(f) {
 				return f, t
 			}
 		}
@@ -92,7 +94,7 @@ func parseDateRangeOrMonth(r *http.Request) (time.Time, time.Time) {
 	if month <= 0 || month > 12 {
 		month = int(now.Month())
 	}
-	from := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.Local)
+	from := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, loc)
 	to := from.AddDate(0, 1, -1)
 	return from, to
 }

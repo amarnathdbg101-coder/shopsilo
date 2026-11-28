@@ -63,6 +63,7 @@ func RouteSetup(c *app.Container) chi.Router {
 	r.Use(middleware.BanGuard(c.Repos.Moderation))
 	r.Use(chimw.Recoverer)
 	r.Use(middleware.CORS)
+	r.Use(middleware.Timezone)
 	r.Use(middleware.SecurityHeaders)
 	r.Use(middleware.IdempotencyGuard)
 

@@ -560,7 +560,7 @@ func (s *POSService) GetDailySummary(ctx context.Context, shopOwnerUserID string
 		return nil, err
 	}
 
-	return s.posRepo.GetDailySummary(ctx, shop.ID, time.Now())
+	return s.posRepo.GetDailySummary(ctx, shop.ID, utils.NowInContext(ctx))
 }
 
 // GenerateReceiptPDF generates the PDF bytes for a digital bill receipt with concurrency limiting.
@@ -598,9 +598,9 @@ func (s *POSService) GetDailyCloseReport(ctx context.Context, shopOwnerUserID, d
 		return nil, err
 	}
 
-	targetDate := time.Now()
+	targetDate := utils.NowInContext(ctx)
 	if strings.TrimSpace(dateStr) != "" {
-		if t, err := time.Parse("2006-01-02", strings.TrimSpace(dateStr)); err == nil {
+		if t, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(dateStr), utils.LocationFromContext(ctx)); err == nil {
 			targetDate = t
 		}
 	}
@@ -618,11 +618,12 @@ func (s *POSService) GetMonthlyGSTReport(ctx context.Context, shopOwnerUserID st
 		return nil, err
 	}
 
+	now := utils.NowInContext(ctx)
 	if year <= 0 {
-		year = time.Now().Year()
+		year = now.Year()
 	}
 	if month <= 0 || month > 12 {
-		month = int(time.Now().Month())
+		month = int(now.Month())
 	}
 	if taxRate <= 0 {
 		taxRate = 18.0

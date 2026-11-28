@@ -4,7 +4,6 @@ package utils
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/skip2/go-qrcode"
 	"github.com/signintech/gopdf"
@@ -103,7 +102,7 @@ func GenerateNativeKhataStatementPDF(customer *model.CustomerKhata, transactions
 	}
 
 	// Customer Info Centered Line
-	custLine := fmt.Sprintf("Customer: %s (%s) | Statement Date: %s", custName, custPhone, time.Now().Format("02-Jan-2006 15:04"))
+	custLine := fmt.Sprintf("Customer: %s (%s) | Statement Date: %s", custName, custPhone, IndianNow().Format("02-Jan-2006 15:04"))
 	pdf.SetTextColor(cDark[0], cDark[1], cDark[2])
 	_ = pdf.SetFont("noto-bold", "", 9)
 	pdf.SetXY(0, curY)
@@ -264,7 +263,7 @@ func GenerateNativeKhataStatementPDF(customer *model.CustomerKhata, transactions
 		// Date
 		pdf.SetTextColor(cMuted[0], cMuted[1], cMuted[2])
 		_ = pdf.SetFont("noto-reg", "", 8)
-		dateStr := tx.CreatedAt.Format("02-01-2006 15:04")
+		dateStr := tx.CreatedAt.In(IndianLocation).Format("02-01-2006 15:04")
 		if tx.CreatedAt.IsZero() {
 			dateStr = "-"
 		}
