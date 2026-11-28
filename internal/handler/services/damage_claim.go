@@ -4,6 +4,7 @@ package services
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"time"
 
@@ -34,25 +35,44 @@ func NewDamageClaimService(
 	}
 }
 
+// validateCreateDamageClaimInput validates damage claim quantity, cost, distributor, and expiry date.
+func validateCreateDamageClaimInput(req dto.CreateDamageClaimRequest) (*time.Time, error) {
+	if strings.TrimSpace(req.DistributorName) == "" {
+		return nil, errors.New("distributor name is required to file a company claim")
+	}
+	if strings.TrimSpace(req.ProductName) == "" && (req.ProductID == nil || strings.TrimSpace(*req.ProductID) == "") {
+		return nil, errors.New("product_name or product_id is required")
+	}
+	if req.Quantity <= 0 {
+		return nil, errors.New("quantity must be greater than zero")
+	}
+	if math.IsNaN(req.UnitCost) || math.IsInf(req.UnitCost, 0) || req.UnitCost < 0 {
+		return nil, errors.New("unit_cost must be a valid non-negative amount")
+	}
+	var expiryDate *time.Time
+	if req.ExpiryDate != nil && strings.TrimSpace(*req.ExpiryDate) != "" {
+		parsed, err := time.Parse("2006-01-02", strings.TrimSpace(*req.ExpiryDate))
+		if err != nil {
+			return nil, errors.New("invalid expiry_date format; expected YYYY-MM-DD")
+		}
+		expiryDate = &parsed
+	}
+	return expiryDate, nil
+}
+
 // CreateClaim logs a damaged or expired product into the company claim vault.
 func (s *DamageClaimService) CreateClaim(ctx context.Context, shopOwnerUserID string, req dto.CreateDamageClaimRequest) (*model.DamageClaim, error) {
+	expiryDate, err := validateCreateDamageClaimInput(req)
+	if err != nil {
+		return nil, err
+	}
+
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
 		return nil, err
 	}
 
 	distName := strings.TrimSpace(req.DistributorName)
-	if distName == "" {
-		return nil, errors.New("distributor name is required to file a company claim")
-	}
-
-	var expiryDate *time.Time
-	if req.ExpiryDate != nil && *req.ExpiryDate != "" {
-		parsed, err := time.Parse("2006-01-02", *req.ExpiryDate)
-		if err == nil {
-			expiryDate = &parsed
-		}
-	}
 
 	claim := &model.DamageClaim{
 		ShopID:           shop.ID,
@@ -77,6 +97,12 @@ func (s *DamageClaimService) CreateClaim(ctx context.Context, shopOwnerUserID st
 
 // UpdateClaimStatus handles company Sales Representative (SR) settlement (replacement or credit note).
 func (s *DamageClaimService) UpdateClaimStatus(ctx context.Context, shopOwnerUserID, claimID string, req dto.UpdateClaimStatusRequest) (*model.DamageClaim, error) {
+	if strings.TrimSpace(claimID) == "" {
+		return nil, errors.New("claim_id is required")
+	}
+	if strings.TrimSpace(string(req.Status)) == "" {
+		return nil, errors.New("status is required")
+	}
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
 		return nil, err

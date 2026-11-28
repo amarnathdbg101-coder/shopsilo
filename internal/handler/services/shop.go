@@ -111,6 +111,9 @@ func (s *ShopService) CreateShop(
 	clientIP, userAgent, deviceFingerprint string,
 	input dto.CreateShopRequest,
 ) (*dto.ShopResponse, error) {
+	if strings.TrimSpace(input.Name) == "" {
+		return nil, errors.New("shop name is required")
+	}
 	// 0. Unrestricted shop creation: Device, IP, or phone ban restriction removed per user request
 
 	// 1. Verify user doesn't already own a shop

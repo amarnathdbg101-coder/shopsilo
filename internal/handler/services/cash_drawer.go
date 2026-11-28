@@ -87,8 +87,38 @@ func (s *CashDrawerService) GetCurrentStatus(ctx context.Context, staffUserID st
 	}, nil
 }
 
+// validateOpenDrawerInput validates opening cash and optional safe drop threshold.
+func validateOpenDrawerInput(req dto.OpenDrawerSessionRequest) error {
+	if math.IsNaN(req.OpeningCash) || math.IsInf(req.OpeningCash, 0) || req.OpeningCash < 0 {
+		return errors.New("opening_cash must be a valid non-negative amount")
+	}
+	if req.SafeDropThreshold != nil && (math.IsNaN(*req.SafeDropThreshold) || math.IsInf(*req.SafeDropThreshold, 0) || *req.SafeDropThreshold <= 0) {
+		return errors.New("safe_drop_threshold must be positive")
+	}
+	return nil
+}
+
+// validateDrawerAmount validates positive finite cash movement amounts.
+func validateDrawerAmount(amount float64, label string) error {
+	if math.IsNaN(amount) || math.IsInf(amount, 0) || amount <= 0 {
+		return errors.New(label + " must be greater than zero")
+	}
+	return nil
+}
+
+// validateActualCash validates closing drawer count (non-negative finite).
+func validateActualCash(amount float64) error {
+	if math.IsNaN(amount) || math.IsInf(amount, 0) || amount < 0 {
+		return errors.New("actual_cash must be a valid non-negative amount")
+	}
+	return nil
+}
+
 // OpenSession begins a new shift with the given opening float.
 func (s *CashDrawerService) OpenSession(ctx context.Context, staffUserID string, req dto.OpenDrawerSessionRequest) (*model.CashDrawerSession, error) {
+	if err := validateOpenDrawerInput(req); err != nil {
+		return nil, err
+	}
 	shop, err := s.shopRepo.FindByUserID(ctx, staffUserID)
 	if err != nil {
 		return nil, err
@@ -112,6 +142,9 @@ func (s *CashDrawerService) OpenSession(ctx context.Context, staffUserID string,
 
 // RecordSafeDrop transfers surplus cash to safe vault.
 func (s *CashDrawerService) RecordSafeDrop(ctx context.Context, staffUserID string, req dto.RecordSafeDropRequest) (*model.CashDrawerSession, error) {
+	if err := validateDrawerAmount(req.Amount, "safe_drop amount"); err != nil {
+		return nil, err
+	}
 	shop, err := s.shopRepo.FindByUserID(ctx, staffUserID)
 	if err != nil {
 		return nil, err
@@ -136,6 +169,12 @@ func (s *CashDrawerService) RecordSafeDrop(ctx context.Context, staffUserID stri
 
 // RecordPettyExpense logs store expenses paid with drawer cash.
 func (s *CashDrawerService) RecordPettyExpense(ctx context.Context, staffUserID string, req dto.RecordPettyExpenseRequest) (*model.CashDrawerSession, error) {
+	if err := validateDrawerAmount(req.Amount, "petty_expense amount"); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(req.Category) == "" && strings.TrimSpace(req.Reason) == "" {
+		return nil, errors.New("category or reason is required for petty expense")
+	}
 	shop, err := s.shopRepo.FindByUserID(ctx, staffUserID)
 	if err != nil {
 		return nil, err
@@ -163,6 +202,9 @@ func (s *CashDrawerService) RecordPettyExpense(ctx context.Context, staffUserID 
 
 // CloseSession closes the shift and calculates discrepancy amount.
 func (s *CashDrawerService) CloseSession(ctx context.Context, staffUserID string, req dto.CloseDrawerSessionRequest) (*model.CashDrawerSession, error) {
+	if err := validateActualCash(req.ActualCash); err != nil {
+		return nil, err
+	}
 	shop, err := s.shopRepo.FindByUserID(ctx, staffUserID)
 	if err != nil {
 		return nil, err

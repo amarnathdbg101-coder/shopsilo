@@ -17,7 +17,36 @@ type cachedResponse struct {
 var (
 	idempotencyMu    sync.RWMutex
 	idempotencyStore = make(map[string]cachedResponse)
+	inFlightMu       sync.Mutex
+	inFlightLocks    = make(map[string]*inFlightEntry)
 )
+
+type inFlightEntry struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func acquireKeyLock(key string) func() {
+	inFlightMu.Lock()
+	entry, ok := inFlightLocks[key]
+	if !ok {
+		entry = &inFlightEntry{}
+		inFlightLocks[key] = entry
+	}
+	entry.refs++
+	inFlightMu.Unlock()
+
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		inFlightMu.Lock()
+		entry.refs--
+		if entry.refs <= 0 {
+			delete(inFlightLocks, key)
+		}
+		inFlightMu.Unlock()
+	}
+}
 
 func init() {
 	// Background garbage collector for expired idempotency records
@@ -76,6 +105,10 @@ func IdempotencyGuard(next http.Handler) http.Handler {
 		ip := ExtractIP(r)
 		compositeKey := ip + ":" + r.Method + ":" + r.URL.Path + ":" + key
 
+		// Serialize concurrent duplicate double-taps on the exact same idempotency key
+		release := acquireKeyLock(compositeKey)
+		defer release()
+
 		// 1. Check if response is already cached for this idempotency key
 		idempotencyMu.RLock()
 		cached, exists := idempotencyStore[compositeKey]
@@ -101,12 +134,21 @@ func IdempotencyGuard(next http.Handler) http.Handler {
 
 		next.ServeHTTP(rec, r)
 
-		// 3. Cache successful or client-error responses for 60 seconds
+		// 3. Cache successful or client-error responses for 60 seconds (bounded to 5000 entries)
 		if rec.statusCode < 500 {
+			bodyCopy := append([]byte(nil), rec.body.Bytes()...)
 			idempotencyMu.Lock()
+			if len(idempotencyStore) >= 5000 {
+				now := time.Now()
+				for k, v := range idempotencyStore {
+					if now.After(v.expiresAt) {
+						delete(idempotencyStore, k)
+					}
+				}
+			}
 			idempotencyStore[compositeKey] = cachedResponse{
 				statusCode: rec.statusCode,
-				body:       rec.body.Bytes(),
+				body:       bodyCopy,
 				headers:    rec.Header().Clone(),
 				expiresAt:  time.Now().Add(60 * time.Second),
 			}

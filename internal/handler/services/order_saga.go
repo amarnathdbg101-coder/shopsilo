@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -154,8 +156,28 @@ func NewOrderSagaOrchestrator(
 	}
 }
 
+// validateOrderCheckoutSagaInput validates saga checkout parameters before starting orchestration.
+func validateOrderCheckoutSagaInput(input OrderCheckoutSagaInput) error {
+	if strings.TrimSpace(input.ShopOwnerUserID) == "" {
+		return errors.New("shop_owner_user_id is required")
+	}
+	if len(input.Items) == 0 {
+		return errors.New("at least one checkout item is required")
+	}
+	if math.IsNaN(input.DiscountAmount) || math.IsInf(input.DiscountAmount, 0) || input.DiscountAmount < 0 {
+		return errors.New("discount_amount must be a valid non-negative number")
+	}
+	if input.RedeemLoyaltyPoints < 0 {
+		return errors.New("redeem_loyalty_points cannot be negative")
+	}
+	return nil
+}
+
 // Execute runs the complete order checkout saga sequentially with reverse compensation defense.
 func (o *OrderSagaOrchestrator) Execute(ctx context.Context, input OrderCheckoutSagaInput) (*OrderCheckoutSagaResult, error) {
+	if err := validateOrderCheckoutSagaInput(input); err != nil {
+		return nil, err
+	}
 	startTime := time.Now()
 	var (
 		mu           sync.Mutex
@@ -266,7 +288,9 @@ func (o *OrderSagaOrchestrator) Execute(ctx context.Context, input OrderCheckout
 			// COMPENSATION: Deduct voided cash from drawer register
 			if cashRecorded > 0 && shop != nil && billCreated != nil && o.drawerRepo != nil {
 				o.logger.Warn("Compensating cash drawer: adjusting voided cash sale", zap.Float64("amount", cashRecorded))
-				_ = o.drawerRepo.AddCashSale(ctx, shop.ID, billCreated.ID, input.ShopOwnerUserID, -cashRecorded)
+				if err := o.drawerRepo.AddCashSale(ctx, shop.ID, billCreated.ID, input.ShopOwnerUserID, -cashRecorded); err != nil {
+					return err
+				}
 			}
 			return nil
 		},

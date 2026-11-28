@@ -55,6 +55,11 @@ func NewChromedpPDFService(
 // GenerateEndOfDayPLPDF generates an executive End-of-Day P&L statement PDF for the merchant.
 // Leverages bounded semaphore concurrency and sub-millisecond in-memory PDF caching.
 func (s *EODPDFService) GenerateEndOfDayPLPDF(ctx context.Context, shopOwnerUserID string, targetDate time.Time, days int) ([]byte, error) {
+	if strings.TrimSpace(shopOwnerUserID) == "" {
+		return nil, fmt.Errorf("shop owner user id is required")
+	}
+	targetDate = targetDate.In(utils.IndianLocation)
+
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch shop for user %s: %w", shopOwnerUserID, err)

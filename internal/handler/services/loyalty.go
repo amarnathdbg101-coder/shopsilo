@@ -5,12 +5,51 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
 	"shopMe/internal/handler/repository"
+	"shopMe/internal/utils"
 	"strings"
 	"time"
 )
+
+// validateReturnInput validates product return quantity and refund amount.
+func validateReturnInput(input dto.CreateReturnRequest) error {
+	if strings.TrimSpace(input.ProductID) == "" {
+		return errors.New("product_id is required")
+	}
+	if input.Quantity <= 0 {
+		return errors.New("return quantity must be greater than zero")
+	}
+	if math.IsNaN(input.RefundAmount) || math.IsInf(input.RefundAmount, 0) || input.RefundAmount < 0 {
+		return errors.New("refund_amount must be a valid non-negative amount")
+	}
+	return nil
+}
+
+// validateOfferTerms validates store offer title, discount bounds, and order thresholds.
+func validateOfferTerms(title, discType string, discVal, minOrder, maxDisc float64, minPoints int) error {
+	if strings.TrimSpace(title) == "" {
+		return errors.New("offer title is required")
+	}
+	if math.IsNaN(discVal) || math.IsInf(discVal, 0) || discVal < 0 {
+		return errors.New("discount_value must be a valid non-negative number")
+	}
+	if discType == "percentage" && discVal > 100 {
+		return errors.New("percentage discount cannot exceed 100")
+	}
+	if math.IsNaN(minOrder) || math.IsInf(minOrder, 0) || minOrder < 0 {
+		return errors.New("min_order_amount cannot be negative")
+	}
+	if math.IsNaN(maxDisc) || math.IsInf(maxDisc, 0) || maxDisc < 0 {
+		return errors.New("max_discount cannot be negative")
+	}
+	if minPoints < 0 {
+		return errors.New("min_points_required cannot be negative")
+	}
+	return nil
+}
 
 type LoyaltyService struct {
 	loyaltyRepo *repository.LoyaltyRepo
@@ -32,6 +71,9 @@ func NewLoyaltyService(
 
 // ProcessReturn handles in-store customer returns: restocks inventory, adjusts loyalty points, and logs return.
 func (s *LoyaltyService) ProcessReturn(ctx context.Context, shopOwnerUserID string, input dto.CreateReturnRequest) (*model.ProductReturn, error) {
+	if err := validateReturnInput(input); err != nil {
+		return nil, err
+	}
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
 		if errors.Is(err, repository.ErrShopNotFound) {
@@ -99,13 +141,17 @@ func (s *LoyaltyService) CreateOffer(ctx context.Context, shopOwnerUserID string
 
 	var expiresAt *time.Time
 	if input.ExpiresInDays > 0 {
-		exp := time.Now().AddDate(0, 0, input.ExpiresInDays)
+		exp := utils.IndianNow().AddDate(0, 0, input.ExpiresInDays)
 		expiresAt = &exp
 	}
 
 	discType := strings.ToLower(strings.TrimSpace(input.DiscountType))
 	if discType != "flat" && discType != "percentage" {
 		discType = "percentage"
+	}
+
+	if err := validateOfferTerms(input.Title, discType, input.DiscountValue, input.MinOrderAmount, input.MaxDiscount, input.MinPointsRequired); err != nil {
+		return nil, err
 	}
 
 	appDays := strings.ToLower(strings.TrimSpace(input.ApplicableDays))
@@ -178,7 +224,7 @@ func (s *LoyaltyService) UpdateOffer(ctx context.Context, shopOwnerUserID string
 
 	var expiresAt *time.Time
 	if input.ExpiresInDays > 0 {
-		exp := time.Now().AddDate(0, 0, input.ExpiresInDays)
+		exp := utils.IndianNow().AddDate(0, 0, input.ExpiresInDays)
 		expiresAt = &exp
 	} else {
 		expiresAt = existing.ExpiresAt
@@ -435,7 +481,11 @@ func (s *LoyaltyService) GetUserLoyalty(ctx context.Context, userID string) (*mo
 
 // ScanProduct performs instant barcode/SKU/QR lookup for physical camera scanning.
 func (s *LoyaltyService) ScanProduct(ctx context.Context, code string) (*dto.ScanProductResponse, error) {
-	prod, err := s.loyaltyRepo.FindProductByBarcode(ctx, code)
+	cleanCode := strings.TrimSpace(code)
+	if cleanCode == "" {
+		return nil, errors.New("scan code is required")
+	}
+	prod, err := s.loyaltyRepo.FindProductByBarcode(ctx, cleanCode)
 	if err != nil {
 		return nil, fmt.Errorf("no active product matches scanned code '%s'", code)
 	}

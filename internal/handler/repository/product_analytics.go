@@ -26,7 +26,7 @@ func (r *ProductRepo) AdjustInventoryStock(ctx context.Context, shopID, productI
 
 	query := `
 		UPDATE inventory
-		SET quantity = GREATEST(0, quantity + $1),
+		SET quantity = GREATEST(reserved_quantity, quantity + $1),
 		    low_stock_threshold = COALESCE($2, low_stock_threshold),
 		    updated_at = NOW()
 		WHERE product_id = $3

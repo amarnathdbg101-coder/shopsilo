@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
@@ -34,8 +35,24 @@ func NewKhataService(khataRepo *repository.KhataRepo, shopRepo *repository.ShopR
 	}
 }
 
+// validatePositiveAmount ensures monetary inputs are finite and strictly positive.
+func validatePositiveAmount(amount float64) error {
+	if math.IsNaN(amount) || math.IsInf(amount, 0) || amount <= 0 {
+		return ErrInvalidPaymentAmount
+	}
+	return nil
+}
+
 // RecordCredit gives udhar to a customer and increases their balance.
 func (s *KhataService) RecordCredit(ctx context.Context, shopOwnerUserID string, input dto.RecordCreditTransactionRequest) (*model.KhataTransaction, error) {
+	if err := validatePositiveAmount(input.Amount); err != nil {
+		return nil, err
+	}
+	mobile := strings.TrimSpace(input.CustomerMobile)
+	if mobile == "" {
+		return nil, errors.New("customer mobile is required")
+	}
+
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
 		if errors.Is(err, repository.ErrShopNotFound) {
@@ -44,7 +61,6 @@ func (s *KhataService) RecordCredit(ctx context.Context, shopOwnerUserID string,
 		return nil, err
 	}
 
-	mobile := strings.TrimSpace(input.CustomerMobile)
 	name := strings.TrimSpace(input.CustomerName)
 	if name == "" {
 		name = fmt.Sprintf("Customer %s", mobile)
@@ -56,7 +72,7 @@ func (s *KhataService) RecordCredit(ctx context.Context, shopOwnerUserID string,
 		mobile,
 		name,
 		model.KhataTxTypeGiveCredit,
-		input.Amount,
+		math.Round(input.Amount*100)/100,
 		strings.TrimSpace(input.Notes),
 		strings.TrimSpace(input.BillNumber),
 		"",
@@ -72,11 +88,20 @@ func (s *KhataService) RecordCredit(ctx context.Context, shopOwnerUserID string,
 	}
 
 	utils.InvalidateCachedPDF(fmt.Sprintf("khata_stmt:%s:%s", shop.ID, mobile))
+	InvalidateAnalyticsCache(shop.ID)
 	return tx, nil
 }
 
 // RecordPayment records payment received from customer (settlement) and decreases balance.
 func (s *KhataService) RecordPayment(ctx context.Context, shopOwnerUserID, customerMobile string, input dto.RecordPaymentRequest) (*model.KhataTransaction, error) {
+	if err := validatePositiveAmount(input.Amount); err != nil {
+		return nil, err
+	}
+	mobile := strings.TrimSpace(customerMobile)
+	if mobile == "" {
+		return nil, errors.New("customer mobile is required")
+	}
+
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
 		if errors.Is(err, repository.ErrShopNotFound) {
@@ -85,7 +110,6 @@ func (s *KhataService) RecordPayment(ctx context.Context, shopOwnerUserID, custo
 		return nil, err
 	}
 
-	mobile := strings.TrimSpace(customerMobile)
 	name := strings.TrimSpace(input.CustomerName)
 
 	tx, err := s.khataRepo.RecordTransactionWithIdempotency(
@@ -94,7 +118,7 @@ func (s *KhataService) RecordPayment(ctx context.Context, shopOwnerUserID, custo
 		mobile,
 		name,
 		model.KhataTxTypeReceivePayment,
-		input.Amount,
+		math.Round(input.Amount*100)/100,
 		strings.TrimSpace(input.Notes),
 		"",
 		strings.ToLower(strings.TrimSpace(input.PaymentMode)),
@@ -107,11 +131,15 @@ func (s *KhataService) RecordPayment(ctx context.Context, shopOwnerUserID, custo
 	}
 
 	utils.InvalidateCachedPDF(fmt.Sprintf("khata_stmt:%s:%s", shop.ID, mobile))
+	InvalidateAnalyticsCache(shop.ID)
 	return tx, nil
 }
 
 // UpdateCreditLimit updates the credit cap for a customer.
 func (s *KhataService) UpdateCreditLimit(ctx context.Context, shopOwnerUserID, customerMobile string, limit float64) error {
+	if math.IsNaN(limit) || math.IsInf(limit, 0) || limit < 0 {
+		return errors.New("credit limit cannot be negative or invalid")
+	}
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
 		if errors.Is(err, repository.ErrShopNotFound) {

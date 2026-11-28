@@ -264,6 +264,9 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 		})
 	}
 
+	subtotal = math.Round(subtotal*100) / 100
+	totalCost = math.Round(totalCost*100) / 100
+
 	discount := input.DiscountAmount
 	if discount < 0 {
 		discount = 0
@@ -275,8 +278,12 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 		loyaltyDiscount = math.Round(float64(input.RedeemLoyaltyPoints)*0.50*100) / 100
 		discount += loyaltyDiscount
 	}
+	if discount > subtotal {
+		discount = subtotal
+	}
+	discount = math.Round(discount*100) / 100
 
-	totalAmount := subtotal - discount
+	totalAmount := math.Round((subtotal-discount)*100) / 100
 	if totalAmount < 0 {
 		totalAmount = 0
 	}
@@ -290,13 +297,16 @@ func (s *POSService) CreateSale(ctx context.Context, shopOwnerUserID string, inp
 	}
 
 	switch input.PaymentMethod {
-case "split":
+	case "split":
 		if input.SplitPayments == nil {
 			return nil, errors.New("split_payments details required when payment method is split")
 		}
 		cashAmount = input.SplitPayments.CashAmount
 		onlineAmount = input.SplitPayments.OnlineAmount
 		khataAmount = input.SplitPayments.KhataAmount
+		if cashAmount < 0 || onlineAmount < 0 || khataAmount < 0 {
+			return nil, errors.New("split payment amounts cannot be negative")
+		}
 
 		splitSum := cashAmount + onlineAmount + khataAmount
 		if math.Abs(splitSum-totalAmount) > 0.05 {

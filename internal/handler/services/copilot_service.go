@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
@@ -39,11 +40,15 @@ func (s *CopilotService) GetDailyPrescriptions(ctx context.Context, userID strin
 
 // ExecutePrescription handles the 1-tap action execution of a prescription card.
 func (s *CopilotService) ExecutePrescription(ctx context.Context, userID, prescriptionID string) error {
+	cleanID := strings.TrimSpace(prescriptionID)
+	if cleanID == "" {
+		return errors.New("prescription_id is required")
+	}
 	shop, err := s.shopRepo.FindByUserID(ctx, userID)
 	if err != nil {
 		return ErrShopRequired
 	}
-	return s.repo.MarkPrescriptionExecuted(ctx, shop.ID, prescriptionID)
+	return s.repo.MarkPrescriptionExecuted(ctx, shop.ID, cleanID)
 }
 
 // GetDeadCapitalSummary returns aggregate dead capital metrics and monthly carrying cost.
@@ -57,6 +62,9 @@ func (s *CopilotService) GetDeadCapitalSummary(ctx context.Context, userID strin
 
 // EvaluateBargain provides real-time, confidential margin-aware negotiation advice for the cashier.
 func (s *CopilotService) EvaluateBargain(ctx context.Context, userID string, req dto.EvaluateBargainRequest) (*model.BargainEvaluation, error) {
+	if strings.TrimSpace(req.ProductID) == "" {
+		return nil, errors.New("product_id is required")
+	}
 	shop, err := s.shopRepo.FindByUserID(ctx, userID)
 	if err != nil {
 		return nil, ErrShopRequired

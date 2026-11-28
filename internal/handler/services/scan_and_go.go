@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"shopMe/internal/handler/dto"
@@ -45,9 +46,45 @@ func NewScanAndGoService(
 	}
 }
 
+// validateScanAddItemInput validates product/barcode identifier and quantity bounds.
+func validateScanAddItemInput(req *dto.AddItemToCartRequest) error {
+	req.ProductID = strings.TrimSpace(req.ProductID)
+	req.Barcode = strings.TrimSpace(req.Barcode)
+	if req.ProductID == "" && req.Barcode == "" {
+		return errors.New("either product_id or barcode is required")
+	}
+	if req.Quantity == 0 {
+		req.Quantity = 1
+	} else if req.Quantity < 0 || req.Quantity > 500 {
+		return errors.New("quantity must be between 1 and 500")
+	}
+	return nil
+}
+
+// validateConvertToBillInput normalizes payment method and validates split amounts.
+func validateConvertToBillInput(req *dto.ConvertToBillRequest) error {
+	pm := strings.ToLower(strings.TrimSpace(req.PaymentMethod))
+	if pm == "" {
+		pm = "cash"
+	}
+	req.PaymentMethod = pm
+	if pm == "split" {
+		if math.IsNaN(req.SplitCash) || math.IsInf(req.SplitCash, 0) || req.SplitCash < 0 {
+			return errors.New("split_cash must be a valid non-negative amount")
+		}
+		if math.IsNaN(req.SplitUPI) || math.IsInf(req.SplitUPI, 0) || req.SplitUPI < 0 {
+			return errors.New("split_upi must be a valid non-negative amount")
+		}
+	}
+	return nil
+}
+
 // StartSession creates a new mobile cart session when a customer enters the shop.
 func (s *ScanAndGoService) StartSession(ctx context.Context, customerUserID *string, req dto.StartScanSessionRequest) (*dto.ScanSessionResponse, error) {
-	shop, err := s.shopRepo.FindByID(ctx, req.ShopID)
+	if strings.TrimSpace(req.ShopID) == "" {
+		return nil, errors.New("shop_id is required")
+	}
+	shop, err := s.shopRepo.FindByID(ctx, strings.TrimSpace(req.ShopID))
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +126,14 @@ func (s *ScanAndGoService) StartSession(ctx context.Context, customerUserID *str
 
 // AddItemToCart adds a scanned product (by Barcode/SKU or ProductID) into the customer's cart.
 func (s *ScanAndGoService) AddItemToCart(ctx context.Context, sessionID string, req dto.AddItemToCartRequest) (*dto.ScanSessionResponse, error) {
-	session, err := s.scanRepo.GetSessionByID(ctx, sessionID)
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, errors.New("session_id is required")
+	}
+	if err := validateScanAddItemInput(&req); err != nil {
+		return nil, err
+	}
+
+	session, err := s.scanRepo.GetSessionByID(ctx, strings.TrimSpace(sessionID))
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +179,13 @@ func (s *ScanAndGoService) AddItemToCart(ctx context.Context, sessionID string, 
 
 // UpdateItemQuantity modifies the count or deletes an item from the cart.
 func (s *ScanAndGoService) UpdateItemQuantity(ctx context.Context, sessionID, itemID string, quantity int) (*dto.ScanSessionResponse, error) {
-	if err := s.scanRepo.UpdateItemQuantity(ctx, sessionID, itemID, quantity); err != nil {
+	if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(itemID) == "" {
+		return nil, errors.New("session_id and item_id are required")
+	}
+	if quantity < 0 || quantity > 500 {
+		return nil, errors.New("quantity must be between 0 and 500")
+	}
+	if err := s.scanRepo.UpdateItemQuantity(ctx, strings.TrimSpace(sessionID), strings.TrimSpace(itemID), quantity); err != nil {
 		return nil, err
 	}
 	return s.GetSessionDetails(ctx, sessionID)
@@ -171,12 +221,16 @@ func (s *ScanAndGoService) GetSessionDetails(ctx context.Context, sessionID stri
 
 // VerifySessionAtCounter allows cashier to peek customer cart using 6-digit code or QR token.
 func (s *ScanAndGoService) VerifySessionAtCounter(ctx context.Context, shopOwnerUserID, sessionCodeOrToken string) (*dto.ScanSessionResponse, error) {
+	cleanCode := strings.TrimSpace(sessionCodeOrToken)
+	if cleanCode == "" {
+		return nil, errors.New("session code or token is required")
+	}
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
 		return nil, err
 	}
 
-	session, err := s.scanRepo.GetSessionByCode(ctx, shop.ID, sessionCodeOrToken)
+	session, err := s.scanRepo.GetSessionByCode(ctx, shop.ID, cleanCode)
 	if err != nil {
 		return nil, err
 	}
@@ -191,12 +245,20 @@ func (s *ScanAndGoService) ConvertToBill(
 	sessionCodeOrToken string,
 	req dto.ConvertToBillRequest,
 ) (*dto.POSSaleResponse, error) {
+	cleanCode := strings.TrimSpace(sessionCodeOrToken)
+	if cleanCode == "" {
+		return nil, errors.New("session code or token is required")
+	}
+	if err := validateConvertToBillInput(&req); err != nil {
+		return nil, err
+	}
+
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
 		return nil, err
 	}
 
-	session, err := s.scanRepo.GetSessionByCode(ctx, shop.ID, sessionCodeOrToken)
+	session, err := s.scanRepo.GetSessionByCode(ctx, shop.ID, cleanCode)
 	if err != nil {
 		return nil, err
 	}

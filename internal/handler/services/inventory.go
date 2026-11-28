@@ -29,6 +29,13 @@ func NewInventoryService(productRepo *repository.ProductRepo, shopRepo *reposito
 
 // AdjustStock allows shop owner to record wholesale stock arrival (+qty) or audited adjustments.
 func (s *InventoryService) AdjustStock(ctx context.Context, shopOwnerUserID string, input dto.AdjustStockRequest) (*model.Inventory, error) {
+	if strings.TrimSpace(input.ProductID) == "" {
+		return nil, errors.New("product_id is required")
+	}
+	if input.LowStockThreshold != nil && *input.LowStockThreshold < 0 {
+		return nil, errors.New("low_stock_threshold cannot be negative")
+	}
+
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
 		if errors.Is(err, repository.ErrShopNotFound) {

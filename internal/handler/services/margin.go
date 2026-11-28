@@ -3,6 +3,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"shopMe/internal/handler/dto"
@@ -50,8 +51,24 @@ func (s *MarginService) ListHotkeys(ctx context.Context, shopOwnerUserID, timeSl
 	}, nil
 }
 
+// validateCreateHotkeyInput validates product ID and display name for a cashier hotkey.
+func validateCreateHotkeyInput(req *dto.CreateShopHotkeyRequest) error {
+	req.ProductID = strings.TrimSpace(req.ProductID)
+	if req.ProductID == "" {
+		return errors.New("product_id is required")
+	}
+	req.DisplayName = strings.TrimSpace(req.DisplayName)
+	if req.DisplayName == "" {
+		return errors.New("display_name is required")
+	}
+	return nil
+}
+
 // CreateHotkey adds a new quick tile to the cashier grid.
 func (s *MarginService) CreateHotkey(ctx context.Context, shopOwnerUserID string, req dto.CreateShopHotkeyRequest) (*model.ShopHotkey, error) {
+	if err := validateCreateHotkeyInput(&req); err != nil {
+		return nil, err
+	}
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
 		return nil, err
@@ -61,7 +78,7 @@ func (s *MarginService) CreateHotkey(ctx context.Context, shopOwnerUserID string
 		ShopID:      shop.ID,
 		ProductID:   req.ProductID,
 		VariantID:   req.VariantID,
-		DisplayName: strings.TrimSpace(req.DisplayName),
+		DisplayName: req.DisplayName,
 		ColorHex:    strings.TrimSpace(req.ColorHex),
 		SortOrder:   req.SortOrder,
 		TimeSlot:    strings.ToUpper(strings.TrimSpace(req.TimeSlot)),
@@ -73,12 +90,16 @@ func (s *MarginService) CreateHotkey(ctx context.Context, shopOwnerUserID string
 
 // DeleteHotkey removes a tile from the cashier grid.
 func (s *MarginService) DeleteHotkey(ctx context.Context, shopOwnerUserID, id string) error {
+	cleanID := strings.TrimSpace(id)
+	if cleanID == "" {
+		return errors.New("hotkey id is required")
+	}
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
 		return err
 	}
 
-	return s.hotkeyRepo.Delete(ctx, shop.ID, id)
+	return s.hotkeyRepo.Delete(ctx, shop.ID, cleanID)
 }
 
 // AutoPopulateHotkeys scans recent POS bills and automatically populates the top 12 bestsellers.

@@ -57,10 +57,45 @@ func generateReservationNumber() string {
 	return fmt.Sprintf("HLD-%d-%04d", time.Now().Unix()%100000, randPart)
 }
 
+// validateCreateReservationInput validates and normalizes customer reservation input.
+func validateCreateReservationInput(userID string, input *dto.CreateReservationRequest) error {
+	if strings.TrimSpace(userID) == "" {
+		return ErrUserNotFound
+	}
+	if strings.TrimSpace(input.ProductID) == "" {
+		return errors.New("product_id is required")
+	}
+	if input.Quantity == 0 {
+		input.Quantity = 1
+	} else if input.Quantity < 0 || input.Quantity > 500 {
+		return errors.New("quantity must be between 1 and 500")
+	}
+	input.Notes = strings.TrimSpace(input.Notes)
+	if len(input.Notes) > 1000 {
+		input.Notes = input.Notes[:1000]
+	}
+	return nil
+}
+
+// normalizeVerifyCode validates and normalizes pickup code / reservation number inputs.
+func normalizeVerifyCode(pickupCode, reservationNumber string) (string, string, error) {
+	code := strings.TrimSpace(pickupCode)
+	resNum := strings.TrimSpace(reservationNumber)
+	if strings.TrimSpace(strings.TrimPrefix(code, "#")) == "" && strings.TrimSpace(strings.TrimPrefix(resNum, "#")) == "" {
+		return "", "", ErrInvalidVerificationCode
+	}
+	if code != "" && resNum == "" {
+		resNum = code
+	} else if resNum != "" && code == "" {
+		code = resNum
+	}
+	return code, resNum, nil
+}
+
 // CreateReservation lets a customer place an in-store hold on a product.
 func (s *ReservationService) CreateReservation(ctx context.Context, userID string, input dto.CreateReservationRequest) (*model.Reservation, error) {
-	if input.Quantity <= 0 {
-		input.Quantity = 1
+	if err := validateCreateReservationInput(userID, &input); err != nil {
+		return nil, err
 	}
 
 	// 0. Verify customer account exists & is active
@@ -164,7 +199,7 @@ func (s *ReservationService) CreateReservation(ctx context.Context, userID strin
 		"status":             fullRes.Status,
 		"created_at":         fullRes.CreatedAt.In(utils.IndianLocation).Format(time.RFC3339),
 		"expires_at":         fullRes.ExpiresAt.In(utils.IndianLocation).Format(time.RFC3339),
-		"created_at_display": utils.IndianNow().Format("02-Jan 03:04 PM"),
+		"created_at_display": fullRes.CreatedAt.In(utils.IndianLocation).Format("02-Jan 03:04 PM"),
 		"expires_at_display": fullRes.ExpiresAt.In(utils.IndianLocation).Format("03:04 PM"),
 	})
 
@@ -220,6 +255,9 @@ func (s *ReservationService) GetReservationByID(ctx context.Context, id, userID 
 }
 
 func (s *ReservationService) CancelUserReservation(ctx context.Context, id, userID string) (*model.Reservation, error) {
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(userID) == "" {
+		return nil, ErrReservationNotFound
+	}
 	tx, err := s.resRepo.BeginTx(ctx)
 	if err != nil {
 		return nil, errors.New("failed to start transaction")
@@ -286,8 +324,9 @@ func (s *ReservationService) ListShopReservations(ctx context.Context, shopOwner
 
 // VerifyShopReservation validates a customer's 6-digit pickup code at the store counter and completes the hold.
 func (s *ReservationService) VerifyShopReservation(ctx context.Context, shopOwnerUserID string, input dto.VerifyReservationRequest) (*model.Reservation, error) {
-	if strings.TrimSpace(input.PickupCode) == "" && strings.TrimSpace(input.ReservationNumber) == "" {
-		return nil, errors.New("either pickup_code or reservation_number is required")
+	code, resNum, err := normalizeVerifyCode(input.PickupCode, input.ReservationNumber)
+	if err != nil {
+		return nil, err
 	}
 
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
@@ -303,14 +342,6 @@ func (s *ReservationService) VerifyShopReservation(ctx context.Context, shopOwne
 		return nil, errors.New("failed to start transaction")
 	}
 	defer tx.Rollback(ctx)
-
-	code := strings.TrimSpace(input.PickupCode)
-	resNum := strings.TrimSpace(input.ReservationNumber)
-	if code != "" && resNum == "" {
-		resNum = code
-	} else if resNum != "" && code == "" {
-		code = resNum
-	}
 
 	completed, err := s.resRepo.VerifyAndCompleteWithTx(ctx, tx, shop.ID, code, resNum)
 	if err != nil {
@@ -392,6 +423,9 @@ func (s *ReservationService) VerifyShopReservation(ctx context.Context, shopOwne
 
 // CancelShopReservation allows the shopkeeper to cancel an in-store reservation (e.g. damaged or customer no-show).
 func (s *ReservationService) CancelShopReservation(ctx context.Context, id, shopOwnerUserID string) (*model.Reservation, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, ErrReservationNotFound
+	}
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
 		if errors.Is(err, repository.ErrShopNotFound) {

@@ -4,9 +4,11 @@ package services
 import (
 	"context"
 	"errors"
+	"math"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
 	"shopMe/internal/handler/repository"
+	"shopMe/internal/utils"
 	"strings"
 	"time"
 )
@@ -23,8 +25,44 @@ func NewExpenseService(expenseRepo *repository.ExpenseRepo, shopRepo *repository
 	}
 }
 
+// validateCreateExpenseInput validates and normalizes operational expense fields.
+func validateCreateExpenseInput(input *dto.CreateExpenseRequest) error {
+	input.Category = strings.TrimSpace(input.Category)
+	if input.Category == "" {
+		return errors.New("expense category is required")
+	}
+	if math.IsNaN(input.Amount) || math.IsInf(input.Amount, 0) || input.Amount <= 0 {
+		return errors.New("expense amount must be greater than zero")
+	}
+
+	dateStr := strings.TrimSpace(input.ExpenseDate)
+	if dateStr == "" {
+		dateStr = utils.IndianNow().Format("2006-01-02")
+	} else if _, err := time.Parse("2006-01-02", dateStr); err != nil {
+		return errors.New("invalid expense_date format; expected YYYY-MM-DD")
+	}
+	input.ExpenseDate = dateStr
+
+	payMethod := strings.ToLower(strings.TrimSpace(input.PaymentMethod))
+	if payMethod == "" {
+		payMethod = "cash"
+	}
+	switch payMethod {
+	case "cash", "upi", "bank", "card", "online", "other":
+	default:
+		return errors.New("invalid payment_method")
+	}
+	input.PaymentMethod = payMethod
+	input.Notes = strings.TrimSpace(input.Notes)
+	return nil
+}
+
 // CreateExpense records an operational store expense.
 func (s *ExpenseService) CreateExpense(ctx context.Context, shopOwnerUserID string, input dto.CreateExpenseRequest) (*model.ShopExpense, error) {
+	if err := validateCreateExpenseInput(&input); err != nil {
+		return nil, err
+	}
+
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
 		if errors.Is(err, repository.ErrShopNotFound) {
@@ -33,23 +71,13 @@ func (s *ExpenseService) CreateExpense(ctx context.Context, shopOwnerUserID stri
 		return nil, err
 	}
 
-	dateStr := strings.TrimSpace(input.ExpenseDate)
-	if dateStr == "" {
-		dateStr = time.Now().Format("2006-01-02")
-	}
-
-	payMethod := strings.ToLower(strings.TrimSpace(input.PaymentMethod))
-	if payMethod == "" {
-		payMethod = "cash"
-	}
-
 	exp := &model.ShopExpense{
 		ShopID:        shop.ID,
-		Category:      strings.TrimSpace(input.Category),
+		Category:      input.Category,
 		Amount:        input.Amount,
-		Notes:         strings.TrimSpace(input.Notes),
-		PaymentMethod: payMethod,
-		ExpenseDate:   dateStr,
+		Notes:         input.Notes,
+		PaymentMethod: input.PaymentMethod,
+		ExpenseDate:   input.ExpenseDate,
 	}
 
 	created, err := s.expenseRepo.CreateExpense(ctx, shop.ID, exp)
@@ -70,11 +98,12 @@ func (s *ExpenseService) ListExpenses(ctx context.Context, shopOwnerUserID strin
 		return nil, err
 	}
 
+	nowIST := utils.IndianNow()
 	if year <= 0 {
-		year = time.Now().Year()
+		year = nowIST.Year()
 	}
 	if month <= 0 || month > 12 {
-		month = int(time.Now().Month())
+		month = int(nowIST.Month())
 	}
 
 	expenses, total, catTotals, err := s.expenseRepo.ListExpenses(ctx, shop.ID, year, month, strings.TrimSpace(category))
@@ -97,6 +126,11 @@ func (s *ExpenseService) ListExpenses(ctx context.Context, shopOwnerUserID strin
 
 // DeleteExpense deletes an expense.
 func (s *ExpenseService) DeleteExpense(ctx context.Context, shopOwnerUserID, expenseID string) error {
+	cleanID := strings.TrimSpace(expenseID)
+	if cleanID == "" {
+		return errors.New("expense_id is required")
+	}
+
 	shop, err := s.shopRepo.FindByUserID(ctx, shopOwnerUserID)
 	if err != nil {
 		if errors.Is(err, repository.ErrShopNotFound) {
@@ -105,5 +139,9 @@ func (s *ExpenseService) DeleteExpense(ctx context.Context, shopOwnerUserID, exp
 		return err
 	}
 
-	return s.expenseRepo.DeleteExpense(ctx, shop.ID, strings.TrimSpace(expenseID))
+	if err := s.expenseRepo.DeleteExpense(ctx, shop.ID, cleanID); err != nil {
+		return err
+	}
+	InvalidateAnalyticsCache(shop.ID)
+	return nil
 }

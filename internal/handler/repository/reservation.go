@@ -529,7 +529,9 @@ func (r *ReservationRepo) VerifyAndCompleteWithTx(ctx context.Context, tx pgx.Tx
 			    reserved_quantity = GREATEST(0, reserved_quantity - $1)
 			WHERE product_id = $2
 		`
-		_, _ = tx.Exec(ctx, invQuery, res.Quantity, res.ProductID)
+		if _, err := tx.Exec(ctx, invQuery, res.Quantity, res.ProductID); err != nil {
+			return nil, err
+		}
 	}
 
 	return res, nil
@@ -590,7 +592,9 @@ func (r *ReservationRepo) CancelWithTx(ctx context.Context, tx pgx.Tx, id string
 			SET reserved_quantity = GREATEST(0, reserved_quantity - $1)
 			WHERE product_id = $2
 		`
-		_, _ = tx.Exec(ctx, invQuery, res.Quantity, res.ProductID)
+		if _, err := tx.Exec(ctx, invQuery, res.Quantity, res.ProductID); err != nil {
+			return nil, err
+		}
 	}
 
 	return res, nil

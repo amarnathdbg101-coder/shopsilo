@@ -4,11 +4,23 @@ package services
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"shopMe/internal/handler/dto"
 	"shopMe/internal/handler/model"
 	"shopMe/internal/handler/repository"
 )
+
+// validateProcurementPrices ensures estimated and actual prices are finite and non-negative.
+func validateProcurementPrices(estimatedPrice, actualPrice float64) error {
+	if math.IsNaN(estimatedPrice) || math.IsInf(estimatedPrice, 0) || estimatedPrice < 0 {
+		return errors.New("estimated_price must be a valid non-negative amount")
+	}
+	if math.IsNaN(actualPrice) || math.IsInf(actualPrice, 0) || actualPrice < 0 {
+		return errors.New("actual_price must be a valid non-negative amount")
+	}
+	return nil
+}
 
 type ProcurementService struct {
 	repo     *repository.ProcurementRepo
@@ -41,6 +53,9 @@ func (s *ProcurementService) CreateProcurementItem(ctx context.Context, userID s
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		return nil, errors.New("item name is required")
+	}
+	if err := validateProcurementPrices(input.EstimatedPrice, input.ActualPrice); err != nil {
+		return nil, err
 	}
 
 	qty := strings.TrimSpace(input.Qty)
@@ -106,9 +121,15 @@ func (s *ProcurementService) UpdateProcurementItem(ctx context.Context, userID, 
 		existing.Qty = strings.TrimSpace(*input.Qty)
 	}
 	if input.EstimatedPrice != nil {
+		if err := validateProcurementPrices(*input.EstimatedPrice, 0); err != nil {
+			return nil, err
+		}
 		existing.EstimatedPrice = *input.EstimatedPrice
 	}
 	if input.ActualPrice != nil {
+		if err := validateProcurementPrices(0, *input.ActualPrice); err != nil {
+			return nil, err
+		}
 		existing.ActualPrice = *input.ActualPrice
 	}
 	if input.DealerName != nil {
@@ -134,6 +155,9 @@ func (s *ProcurementService) UpdateProcurementItem(ctx context.Context, userID, 
 
 // ToggleProcurementItem flips the completed checkbox for an item.
 func (s *ProcurementService) ToggleProcurementItem(ctx context.Context, userID, id string) (*model.ProcurementItem, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, repository.ErrProcurementItemNotFound
+	}
 	shop, err := s.shopRepo.FindByUserID(ctx, userID)
 	if err != nil {
 		return nil, ErrShopRequired
@@ -149,6 +173,9 @@ func (s *ProcurementService) ToggleProcurementItem(ctx context.Context, userID, 
 
 // DeleteProcurementItem removes an item from the procurement list.
 func (s *ProcurementService) DeleteProcurementItem(ctx context.Context, userID, id string) error {
+	if strings.TrimSpace(id) == "" {
+		return repository.ErrProcurementItemNotFound
+	}
 	shop, err := s.shopRepo.FindByUserID(ctx, userID)
 	if err != nil {
 		return ErrShopRequired
